@@ -1,0 +1,75 @@
+# Brutal CP Grader (โหดจริง ไม่ติงนัง)
+
+Grader แบบ stdlib-only (ไม่ต้องลง lib) รองรับ `.py .cpp .c .java .js .go .rs`
+ตรวจแบบโหด: Time Limit / Memory Limit (RLIMIT บน macOS/Linux), diff แสดง whitespace,
+กับดัก hidden tests (ค่าใหญ่, case-sensitive, trailing space, O(n²) โดน TLE)
+
+## เว็บ (ส่งโค้ดผ่านเบราว์เซอร์)
+
+Stack: FastAPI + Uvicorn (backend) + HTML/CSS/JS ไม่ต้อง build (frontend).
+รองรับ Python / C / C++ ส่งได้ 2 แบบ: วางโค้ดใน editor หรือแนบไฟล์ (คลิก/ลากไฟล์ลง dropzone)
+
+```bash
+pip3 install --user -r requirements.txt
+python3 server.py                  # http://127.0.0.1:8000
+python3 server.py --port 8080
+```
+
+API:
+- `GET /api/health` — สถานะ + รายชื่อโจทย์
+- `GET /api/languages` — ภาษาที่รองรับ (python/c/cpp)
+- `GET /api/problems` — รายการโจทย์
+- `GET /api/problems/{id}` — โจทย์ + statement
+- `POST /api/submit` (multipart: `problem`, `language`, `code` หรือ `file`) — ตรวจแล้วตอบ JSON ทันที
+
+```bash
+curl -F problem=aplusb -F language=python -F code='import sys
+print(sum(map(int, sys.stdin.read().split())))' http://127.0.0.1:8000/api/submit
+```
+
+## โครง
+```
+grader.py
+problems/<id>/config.json      # time_limit, memory_limit, checker (token|exact|float)
+problems/<id>/statement.md
+problems/<id>/tests/*.in|*.out
+examples/                      # โค้ดถูก/ผิด/TLE ไว้ลอง
+server.py                      # FastAPI backend (reuse grader.py)
+static/                        # frontend: index.html, styles.css, app.js
+requirements.txt               # fastapi, uvicorn, python-multipart
+```
+
+## ใช้ยังไง
+```bash
+python3 grader.py list
+python3 grader.py info aplusb
+python3 grader.py run aplusb examples/aplusb_correct.py
+python3 grader.py run fizzbuzz examples/fizzbuzz_correct.py -v
+python3 grader.py run palindrome examples/palindrome_correct.py --strict --stop-on-fail
+python3 grader.py run aplusb examples/aplusb_correct.cpp   # C++ ก็ได้ (auto compile -O2)
+```
+
+## โจทย์ที่มี (ง่าย 3 ข้อ แต่ test โหด)
+| id | ชื่อ | กับดัก |
+|----|------|--------|
+| `aplusb` | A+B (`-1e18..1e18`) | `int` แตก, whitespace, 7 tests |
+| `fizzbuzz` | FizzBuzz ถึง N=100000 | `Fizz` ตัวพิมพ์, trailing space (checker=exact), TLE trap, 5 tests |
+| `palindrome` | Palindrome ยาวถึง 1e6 | `Aa`→NO, ว่าง→YES, space นับด้วย, 8 tests |
+
+## Verdicts
+`AC` ผ่าน / `WA` + diff (·=space) / `TLE` เกินเวลา / `MLE` หน่วยความจำ /
+`RE` traceback บรรทัดสุดท้าย / `CE` compile ไม่ผ่าน
+
+คะแนน OI: `100 * passed/total`, exit code 0 = เต็ม 100 เท่านั้น
+
+## เพิ่มโจทย์เอง
+```bash
+mkdir -p problems/myprob/tests
+# config.json: {"title":"...","time_limit":1.0,"memory_limit":256,"checker":"token"}
+# ใส่ 01.in / 01.out, 02.in / 02.out ... แล้ว run ได้เลย
+```
+
+## หมายเหตุความโหด
+- Memory limit ใช้ `RLIMIT_AS` (ประมาณ, บน macOS วัด peak ด้วย `getrusage`)
+- Time limit คือ wall-time (`communicate(timeout=...)`) + `RLIMIT_CPU` กัน loop อนันต์
+- `--strict` = byte-exact (whitespace nazi mode), default ใช้ checker ตาม config
