@@ -60,11 +60,16 @@ python3 server.py
 # Render/host: เพิ่ม 2 env นี้ใน dashboard แล้ว redeploy
 ```
 4. หน้าเว็บจะมี section History (filter ตามข้อได้) + สถิติ best/avg ต่อข้อ — API: `GET /api/history`, `GET /api/history/{id}`, `GET /api/stats`
+
+Migration (ถ้าสร้างตารางก่อนคอลัมน์ `name`): รันใน SQL Editor
+```sql
+alter table submissions add column if not exists name text not null default '';
+```
 - `GET /api/health` — สถานะ + รายชื่อโจทย์
 - `GET /api/languages` — ภาษาที่รองรับ (python/c/cpp)
 - `GET /api/problems` — รายการโจทย์
 - `GET /api/problems/{id}` — โจทย์ + statement
-- `POST /api/submit` (multipart: `problem`, `language`, `code` หรือ `file`) — ตรวจแล้วตอบ JSON ทันที
+- `POST /api/submit` (multipart: `problem`, `language`, `name` (บังคับ), `code` หรือ `file`) — ตรวจแล้วตอบ JSON ทันที
 
 ```bash
 curl -F problem=aplusb -F language=python -F code='import sys

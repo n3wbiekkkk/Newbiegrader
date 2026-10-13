@@ -222,11 +222,17 @@ async def submit(
     language: str = Form(...),
     code: str = Form(""),
     file: Optional[UploadFile] = File(None),
+    name: str = Form(""),
 ):
     prob = _problem_or_404(problem)
     if language not in LANGS:
         raise HTTPException(status_code=400,
                             detail=f"unsupported language: {language} (choose python/c/cpp)")
+    name = (name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="please enter your name before submitting")
+    if len(name) > 50:
+        raise HTTPException(status_code=400, detail="name too long (max 50 characters)")
 
     source: Optional[str] = None
     filename: Optional[str] = None
@@ -274,8 +280,10 @@ async def submit(
     if "error" in result:
         raise HTTPException(status_code=500, detail=result["error"])
     result["filename"] = filename
+    result["name"] = name
     await _store_submission({
         "problem": prob.pid, "language": language, "filename": filename,
+        "name": name,
         "verdict": result.get("verdict", ""), "accepted": result.get("accepted", False),
         "passed": result.get("passed", 0), "total": result.get("total", 0),
         "score": result.get("score", 0), "counts": result.get("counts", {}),
@@ -292,7 +300,7 @@ def history(problem: Optional[str] = None, limit: int = 20) -> dict:
     limit = max(1, min(limit, 100))
     try:
         q = _sb.table("submissions").select(
-            "id,created_at,problem,language,filename,verdict,accepted,passed,total,score,counts"
+            "id,created_at,problem,language,name,filename,verdict,accepted,passed,total,score,counts"
         ).order("created_at", desc=True).limit(limit)
         if problem:
             q = q.eq("problem", problem)

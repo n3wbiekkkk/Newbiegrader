@@ -411,6 +411,13 @@ $("submit-btn").onclick = async () => {
   if (!state.current) return;
   const btn = $("submit-btn");
   const code = $("editor").value;
+  const name = $("submit-name").value.trim();
+  if (!name) {
+    $("submit-status").textContent = "ใส่ชื่อก่อนส่ง";
+    $("submit-name").focus();
+    return;
+  }
+  try { localStorage.setItem("ng_name", name); } catch (e) { /* ignore */ }
   if (!state.file && !code.trim()) {
     $("submit-status").textContent = "วางโค้ดหรือแนบไฟล์ก่อนส่ง";
     return;
@@ -419,6 +426,7 @@ $("submit-btn").onclick = async () => {
   fd.append("problem", state.current);
   fd.append("language", state.lang);
   fd.append("code", code);
+  fd.append("name", name);
   if (state.file) fd.append("file", state.file, state.file.name);
 
   btn.disabled = true;
@@ -507,14 +515,14 @@ function detailHtml(r) {
 /* ---------------- history ---------------- */
 function historyTable(rows, showProblem) {
   let html = `<table class="tests"><thead><tr>
-    <th>เวลา</th>${showProblem ? "<th>ข้อ</th>" : ""}<th>ภาษา</th><th>ผล</th><th>คะแนน</th><th></th>
+    <th>เวลา</th>${showProblem ? "<th>ข้อ</th>" : ""}<th>ชื่อ</th><th>ภาษา</th><th>ผล</th><th>คะแนน</th><th></th>
   </tr></thead><tbody>`;
   rows.forEach((r) => {
     const when = new Date(r.created_at).toLocaleString();
     const cls = r.accepted ? "AC" : (r.verdict === "CE" ? "CE" : "WA");
     const label = r.accepted ? "AC" : (r.verdict || "REJECTED");
     html += `<tr>
-      <td>${esc(when)}</td>${showProblem ? `<td>${esc(r.problem)}</td>` : ""}<td>${esc(r.language)}</td>
+      <td>${esc(when)}</td>${showProblem ? `<td>${esc(r.problem)}</td>` : ""}<td>${esc(r.name || "—")}</td><td>${esc(r.language)}</td>
       <td>${badge(label, cls)}</td><td>${r.passed}/${r.total} (${r.score})</td>
       <td><button class="ghost-btn" data-view="${esc(r.id)}">ดูผล</button></td>
     </tr>`;
@@ -623,6 +631,7 @@ async function init() {
   });
   hf.onchange = loadHistory;
   $("hist-refresh").onclick = loadHistory;
+  try { $("submit-name").value = localStorage.getItem("ng_name") || ""; } catch (e) { /* ignore */ }
 
   router();
 }
