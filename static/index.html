@@ -3,92 +3,148 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Newbiegrader — Competitive Programming Judge</title>
+<title>Newbiegrader — ฝึกเขียนโปรแกรมด้วยโจทย์ภาษาไทย</title>
 <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">NEWBIE<span class="brand-acc">GRADER</span></div>
-  <nav id="problem-tabs" class="tabs" aria-label="problems"></nav>
+  <a class="brand" href="#/">NEWBIE<span class="brand-acc">GRADER</span></a>
+  <nav class="nav" aria-label="main">
+    <a class="nav-link" data-route="home" href="#/">Home</a>
+    <a class="nav-link" data-route="tasks" href="#/tasks">Tasks</a>
+    <a class="nav-link" data-route="history" href="#/history">History</a>
+  </nav>
   <div id="health" class="health" title="server status">...</div>
 </header>
 
-<main class="layout">
-  <div class="filterbar">
-    <input id="q" type="search" placeholder="search id / title..." aria-label="search problems">
-    <select id="f-diff" aria-label="filter by difficulty">
-      <option value="">all levels</option>
-    </select>
-    <select id="f-tag" aria-label="filter by tag">
-      <option value="">all tags</option>
-    </select>
-    <span id="filter-count" class="meta"></span>
-  </div>
-  <section class="card statement">
-    <div class="card-head">
-      <h2 id="prob-title">Loading...</h2>
-      <div id="prob-meta" class="meta"></div>
-    </div>
-    <div id="pdf-link" class="hidden" style="margin-bottom:8px">
-      <a id="pdf-anchor" target="_blank" rel="noopener" class="ghost-btn" style="text-decoration:none">open PDF statement</a>
-    </div>
-    <div id="prob-body" class="md">Loading problem...</div>
-  </section>
-
-  <section class="card submit">
-    <div class="card-head">
-      <h2>Submit solution</h2>
-      <div class="lang-group" id="lang-group" role="radiogroup" aria-label="language">
-        <button data-lang="python" class="lang-btn active">Python</button>
-        <button data-lang="c" class="lang-btn">C</button>
-        <button data-lang="cpp" class="lang-btn">C++</button>
+<main>
+  <!-- HOME -->
+  <section id="view-home" class="view">
+    <div class="hero">
+      <h1>ฝึกฝนทักษะการเขียนโปรแกรม<br>ด้วยโจทย์ภาษาไทย</h1>
+      <p class="lede">ส่งโค้ด Python, C หรือ C++ แล้วรู้ผลทันที — ตรวจแบบโหดทั้งเวลา หน่วยความจำ และเอาต์พุต</p>
+      <div class="hero-btns">
+        <a class="btn-primary" href="#/tasks">เริ่มทำโจทย์</a>
+        <a class="btn-ghost" href="#/history">ดูประวัติการส่ง</a>
+      </div>
+      <div class="stat-strip">
+        <div class="stat"><div class="stat-num" id="stat-problems">0</div><div class="stat-label">โจทย์ทั้งหมด</div></div>
+        <div class="stat"><div class="stat-num" id="stat-subs">0</div><div class="stat-label"> submissions</div></div>
+        <div class="stat"><div class="stat-num" id="stat-accepted">0</div><div class="stat-label">ผ่านแล้ว</div></div>
       </div>
     </div>
-
-    <div id="dropzone" class="dropzone">
-      <p><strong>Attach file</strong> (.py / .c / .cpp) — click to browse or drop file here</p>
-      <p class="dim">or paste your code in the editor below</p>
-      <input type="file" id="file-input" accept=".py,.c,.cpp,.cc,.cxx" hidden>
+    <div class="features">
+      <div class="feature">
+        <h3>ระบบตรวจสุดโหด</h3>
+        <p>Time limit / Memory limit จริง จับ TLE, MLE, RE, WA พร้อม diff บอกตำแหน่งผิดแบบเห็นช่องว่าง</p>
+      </div>
+      <div class="feature">
+        <h3>3 ภาษา</h3>
+        <p>Python 3, C (C11), C++ (C++17) วางโค้ดหรือแนบไฟล์ก็ได้ คอมไพล์ด้วย -O2 -Wall ให้อัตโนมัติ</p>
+      </div>
+      <div class="feature">
+        <h3>โจทย์ PDF + filter</h3>
+        <p>โจทย์มาจากไฟล์ PDF พร้อมปุ่มเปิดต้นฉบับ ค้นหาและกรองตามระดับความยากและ tag ได้</p>
+      </div>
     </div>
-    <div id="file-chip" class="file-chip hidden">
-      <span id="file-name"></span>
-      <button id="file-load" type="button" title="load file text into editor">load into editor</button>
-      <button id="file-clear" type="button" title="remove attached file">remove</button>
-    </div>
-
-    <textarea id="editor" spellcheck="false" placeholder="// paste your code here, or attach a file above"></textarea>
-    <div class="submit-row">
-      <button id="template-btn" type="button" class="ghost-btn">load starter template</button>
-      <button id="submit-btn" type="button" class="submit-btn">JUDGE IT</button>
-    </div>
-    <div id="submit-status" class="status dim"></div>
   </section>
 
-  <section class="card results">
-    <div class="card-head">
-      <h2>Verdict</h2>
-      <div id="score-line" class="meta"></div>
+  <!-- TASKS -->
+  <section id="view-tasks" class="view">
+    <div class="page-head">
+      <h2>Tasks</h2>
+      <p class="dim">เลือกโจทย์แล้วกดเข้าไปส่งโค้ดได้เลย</p>
     </div>
-    <div id="result-body" class="dim">No submission yet. Pick a problem, paste code or attach a file, then hit JUDGE IT.</div>
+    <div class="filterbar">
+      <input id="q" type="search" placeholder="ค้นหา id / ชื่อโจทย์..." aria-label="search problems">
+      <select id="f-diff" aria-label="filter by difficulty">
+        <option value="">ทุกระดับ</option>
+      </select>
+      <select id="f-tag" aria-label="filter by tag">
+        <option value="">ทุก tag</option>
+      </select>
+      <span id="filter-count" class="meta"></span>
+    </div>
+    <div class="card table-card">
+      <table class="tests tasks-table">
+        <thead><tr>
+          <th>ID</th><th>ชื่อโจทย์</th><th>ระดับ</th><th>tags</th><th>tests</th><th>คะแนนดีสุด</th>
+        </tr></thead>
+        <tbody id="tasks-body"></tbody>
+      </table>
+      <div id="tasks-empty" class="dim hidden" style="padding:16px">
+        ยังไม่มีโจทย์ — ส่งไฟล์ PDF มาเพื่อสร้างข้อใหม่
+      </div>
+    </div>
   </section>
 
-  <section class="card history">
-    <div class="card-head">
+  <!-- TASK DETAIL -->
+  <section id="view-task" class="view">
+    <a class="backlink" href="#/tasks">&larr; กลับไป Tasks</a>
+    <div class="task-grid">
+      <div class="card">
+        <h2 id="task-title">Loading...</h2>
+        <div id="task-meta" class="meta"></div>
+        <div id="pdf-link" class="hidden" style="margin:10px 0">
+          <a id="pdf-anchor" target="_blank" rel="noopener" class="btn-ghost" style="text-decoration:none">เปิดโจทย์ PDF</a>
+        </div>
+        <div id="task-body" class="md">Loading...</div>
+        <h3>Submissions ข้อนี้</h3>
+        <div id="task-hist-body" class="dim">—</div>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <h2>Submit</h2>
+          <div class="lang-group" role="radiogroup" aria-label="language">
+            <button data-lang="python" class="lang-btn active">Python</button>
+            <button data-lang="c" class="lang-btn">C</button>
+            <button data-lang="cpp" class="lang-btn">C++</button>
+          </div>
+        </div>
+        <div id="dropzone" class="dropzone">
+          <p><strong>แนบไฟล์</strong> (.py / .c / .cpp) — คลิกหรือลากไฟล์มาวาง</p>
+          <p class="dim">หรือวางโค้ดในช่องด้านล่าง</p>
+          <input type="file" id="file-input" accept=".py,.c,.cpp,.cc,.cxx" hidden>
+        </div>
+        <div id="file-chip" class="file-chip hidden">
+          <span id="file-name"></span>
+          <button id="file-load" type="button" title="load file text into editor">ใส่ใน editor</button>
+          <button id="file-clear" type="button" title="remove attached file">ลบออก</button>
+        </div>
+        <textarea id="editor" spellcheck="false" placeholder="// วางโค้ดที่นี่ หรือแนบไฟล์ด้านบน"></textarea>
+        <div class="submit-row">
+          <button id="template-btn" type="button" class="ghost-btn">starter template</button>
+          <button id="submit-btn" type="button" class="submit-btn">ส่งคำตอบ</button>
+        </div>
+        <div id="submit-status" class="status dim"></div>
+        <hr class="sep">
+        <div class="card-head"><h2>ผลการตรวจ</h2><div id="score-line" class="meta"></div></div>
+        <div id="result-body" class="dim">ส่งโค้ดแล้วผลจะขึ้นตรงนี้</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- HISTORY -->
+  <section id="view-history" class="view">
+    <div class="page-head">
       <h2>History</h2>
       <div class="history-tools">
         <select id="hist-filter" aria-label="filter history by problem">
-          <option value="">all problems</option>
+          <option value="">ทุกข้อ</option>
         </select>
         <button id="hist-refresh" type="button" class="ghost-btn">refresh</button>
       </div>
     </div>
     <div id="hist-stats" class="meta"></div>
-    <div id="hist-body" class="dim">Loading history...</div>
+    <div class="card table-card">
+      <div id="hist-body" class="dim" style="padding:16px">Loading history...</div>
+    </div>
   </section>
 </main>
 
-<footer class="foot dim">
-  Newbiegrader — strict TL/MEM, zero-tolerance diff. Languages: Python 3, C (C11), C++ (C++17).
+<footer class="foot">
+  <div class="foot-brand">NEWBIE<span class="brand-acc">GRADER</span></div>
+  <p class="dim">เว็บฝึกเขียนโปรแกรมเพื่อการแข่งขัน — ตรวจโหด รู้ผลทันที รองรับ Python 3, C (C11), C++ (C++17)</p>
 </footer>
 
 <script src="/config.js"></script>

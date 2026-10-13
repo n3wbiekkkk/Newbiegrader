@@ -1,46 +1,20 @@
-/* Brutal Grader SPA — vanilla JS, no build step. */
+/* Newbiegrader SPA — hash-routed views (home / tasks / task / history), no build step. */
 "use strict";
+
+const $ = (id) => document.getElementById(id);
+
+/* Split-deploy support: static host + separate backend.
+ * Set window.GRADER_API_BASE in config.js ("" = same origin). */
+const API = (window.GRADER_API_BASE || "").replace(/\/$/, "");
 
 const state = {
   problems: [],
+  stats: {},
   current: null,
   lang: "python",
   file: null,
   filter: { q: "", diff: "", tag: "" },
 };
-
-function filteredProblems() {
-  const q = state.filter.q.trim().toLowerCase();
-  return state.problems.filter((p) => {
-    if (state.filter.diff && (p.difficulty || "") !== state.filter.diff) return false;
-    if (state.filter.tag && !(p.tags || []).includes(state.filter.tag)) return false;
-    if (q && !(`${p.id} ${p.title}`.toLowerCase().includes(q))) return false;
-    return true;
-  });
-}
-
-function renderTabs() {
-  const tabs = $("problem-tabs");
-  tabs.innerHTML = "";
-  const list = filteredProblems();
-  list.forEach((p) => {
-    const b = document.createElement("button");
-    b.className = "tab" + (p.id === state.current ? " active" : "");
-    b.textContent = p.difficulty ? `${p.id} [${p.difficulty}]` : p.id;
-    b.title = `${p.title}${(p.tags || []).length ? " — " + p.tags.join(", ") : ""}`;
-    b.onclick = () => selectProblem(p.id);
-    tabs.appendChild(b);
-  });
-  $("filter-count").textContent = `${list.length}/${state.problems.length} problems`;
-  if (!list.length) {
-    $("prob-title").textContent = "No match";
-    $("prob-body").textContent = "No problems match the current filter.";
-  } else if (!list.some((p) => p.id === state.current)) {
-    selectProblem(list[0].id);
-  }
-}
-
-const $ = (id) => document.getElementById(id);
 
 function esc(s) {
   return String(s)
@@ -74,6 +48,16 @@ function renderMd(src) {
     return `<p>${inlineMd(line)}</p>`;
   });
   return lines.join("\n").replace(/((?:<li>.*<\/li>\n?)+)/g, "<ul>$1</ul>");
+}
+
+function badge(text, cls) {
+  cls = cls || text;
+  return `<span class="badge b-${esc(cls)}">${esc(text)}</span>`;
+}
+
+function diffBadge(d) {
+  if (!d) return `<span class="dim">—</span>`;
+  return `<span class="diff-tag diff-${esc(d)}">${esc(d)}</span>`;
 }
 
 /* ---------------- starter templates (all correct) ---------------- */
@@ -228,76 +212,113 @@ int main() {
   },
 };
 
-/* ---------------- problems ---------------- */
-/* Split-deploy support: static host + separate backend.
- * Set window.GRADER_API_BASE in config.js ("" = same origin). */
-const API = (window.GRADER_API_BASE || "").replace(/\/$/, "");
-
+/* ---------------- api ---------------- */
 async function apiGet(path) {
   const r = await fetch(API + path);
-  if (!r.ok) throw new Error(`GET ${path}: ${r.status}`);
+  if (!r.ok) {
+    const body = await r.json().catch(() => ({}));
+    throw new Error(body.detail || `GET ${path}: ${r.status}`);
+  }
   return r.json();
 }
 
-async function init() {
+async function fetchStats() {
   try {
-    const h = await apiGet("/api/health");
-    $("health").textContent = `online - ${h.problems.length} problems`;
-    $("health").classList.add("ok");
+    const s = await apiGet("/api/stats");
+    state.stats = (s && s.configured && s.stats) || {};
   } catch (e) {
-    $("health").textContent = "offline";
-    $("prob-body").textContent = "Cannot reach server: " + e.message;
-    return;
+    state.stats = {};
   }
-  const data = await apiGet("/api/problems");
-  state.problems = data.problems;
-  // filter dropdowns (dynamic from data)
-  const diffs = [...new Set(state.problems.map((p) => p.difficulty).filter(Boolean))].sort();
-  const tags = [...new Set(state.problems.flatMap((p) => p.tags || []))].sort();
-  const fd = $("f-diff"), ft = $("f-tag");
-  diffs.forEach((d) => {
-    const o = document.createElement("option");
-    o.value = d; o.textContent = d;
-    fd.appendChild(o);
-  });
-  tags.forEach((t) => {
-    const o = document.createElement("option");
-    o.value = t; o.textContent = t;
-    ft.appendChild(o);
-  });
-  $("q").oninput = (e) => { state.filter.q = e.target.value; renderTabs(); };
-  fd.onchange = (e) => { state.filter.diff = e.target.value; renderTabs(); };
-  ft.onchange = (e) => { state.filter.tag = e.target.value; renderTabs(); };
-  renderTabs();
-  if (!state.problems.length) {
-    $("prob-title").textContent = "No problems yet";
-    $("prob-body").textContent = "All problems were removed. Send a PDF to create new ones.";
-  }
-  const hf = $("hist-filter");
-  state.problems.forEach((p) => {
-    const o = document.createElement("option");
-    o.value = p.id;
-    o.textContent = `${p.id} - ${p.title}`;
-    hf.appendChild(o);
-  });
-  hf.onchange = loadHistory;
-  $("hist-refresh").onclick = loadHistory;
-  loadHistory();
 }
 
+/* ---------------- router ---------------- */
+function show(view) {
+  document.querySelectorAll(".view").forEach((v) =>
+    v.classList.toggle("active", v.id === "view-" + view));
+  document.querySelectorAll(".nav-link").forEach((a) =>
+    a.classList.toggle("active",
+      a.dataset.route === view || (view === "task" && a.dataset.route === "tasks")));
+  window.scrollTo(0, 0);
+}
+
+function router() {
+  const h = location.hash || "#/";
+  if (h.startsWith("#/task/")) {
+    const pid = decodeURIComponent(h.slice("#/task/".length));
+    if (state.problems.some((p) => p.id === pid)) {
+      show("task");
+      selectProblem(pid);
+    } else {
+      location.hash = "#/tasks";
+    }
+    return;
+  }
+  if (h === "#/tasks") { show("tasks"); renderTasksTable(); return; }
+  if (h === "#/history") { show("history"); loadHistory(); return; }
+  show("home");
+  renderHome();
+}
+window.addEventListener("hashchange", router);
+
+/* ---------------- home ---------------- */
+function renderHome() {
+  $("stat-problems").textContent = state.problems.length;
+  let subs = 0, acc = 0;
+  Object.values(state.stats).forEach((s) => { subs += s.subs || 0; acc += s.accepted || 0; });
+  $("stat-subs").textContent = subs;
+  $("stat-accepted").textContent = acc;
+}
+
+/* ---------------- tasks table ---------------- */
+function filteredProblems() {
+  const q = state.filter.q.trim().toLowerCase();
+  return state.problems.filter((p) => {
+    if (state.filter.diff && (p.difficulty || "") !== state.filter.diff) return false;
+    if (state.filter.tag && !(p.tags || []).includes(state.filter.tag)) return false;
+    if (q && !(`${p.id} ${p.title}`.toLowerCase().includes(q))) return false;
+    return true;
+  });
+}
+
+function renderTasksTable() {
+  const list = filteredProblems();
+  $("filter-count").textContent = `${list.length}/${state.problems.length} ข้อ`;
+  const tb = $("tasks-body");
+  tb.innerHTML = "";
+  $("tasks-empty").classList.toggle("hidden", list.length > 0);
+  if (!state.problems.length) {
+    $("tasks-empty").textContent = "ยังไม่มีโจทย์ — ส่งไฟล์ PDF มาเพื่อสร้างข้อใหม่";
+    $("tasks-empty").classList.remove("hidden");
+    return;
+  }
+  list.forEach((p) => {
+    const best = (state.stats[p.id] && state.stats[p.id].best != null)
+      ? `${state.stats[p.id].best}/100` : "—";
+    const tags = (p.tags || []).map((t) => `<span class="tag-chip">${esc(t)}</span>`).join("");
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td><strong>${esc(p.id)}</strong></td><td>${esc(p.title)}</td>
+      <td>${diffBadge(p.difficulty)}</td><td>${tags || '<span class="dim">—</span>'}</td>
+      <td>${p.tests}</td><td>${esc(String(best))}</td>`;
+    tr.onclick = () => { location.hash = "#/task/" + encodeURIComponent(p.id); };
+    tb.appendChild(tr);
+  });
+}
+
+/* ---------------- task detail ---------------- */
 async function selectProblem(pid) {
   state.current = pid;
-  renderTabs();
-  $("prob-title").textContent = "Loading...";
-  $("prob-body").textContent = "Loading problem...";
+  $("task-title").textContent = "Loading...";
+  $("task-body").textContent = "Loading problem...";
+  $("result-body").innerHTML = `<span class="dim">ส่งโค้ดแล้วผลจะขึ้นตรงนี้</span>`;
+  $("score-line").textContent = "";
   try {
     const p = await apiGet(`/api/problems/${encodeURIComponent(pid)}`);
-    $("prob-title").textContent = `${p.id} - ${p.title}`;
+    $("task-title").textContent = `${p.id} — ${p.title}`;
     const extra = [p.difficulty, ...((p.tags || []))].filter(Boolean).join(" · ");
-    $("prob-meta").textContent =
+    $("task-meta").textContent =
       `TL ${p.time_limit}s | MEM ${p.memory_limit}MB | checker ${p.checker} | ${p.tests} tests` +
       (extra ? ` | ${extra}` : "");
-    $("prob-body").innerHTML = renderMd(p.statement || "(no statement)");
+    $("task-body").innerHTML = renderMd(p.statement || "(no statement)");
     const pl = $("pdf-link");
     if (p.has_pdf) {
       pl.classList.remove("hidden");
@@ -305,8 +326,31 @@ async function selectProblem(pid) {
     } else {
       pl.classList.add("hidden");
     }
+    loadTaskHistory();
   } catch (e) {
-    $("prob-body").textContent = "Failed to load problem: " + e.message;
+    $("task-body").textContent = "โหลดโจทย์ไม่สำเร็จ: " + e.message;
+  }
+}
+
+async function loadTaskHistory() {
+  const body = $("task-hist-body");
+  if (!state.current) return;
+  try {
+    const h = await apiGet(`/api/history?limit=10&problem=${encodeURIComponent(state.current)}`);
+    if (!h.configured) {
+      body.innerHTML = `<span class="dim">ยังไม่เปิด history (ตั้งค่า Supabase ที่ backend)</span>`;
+      return;
+    }
+    const rows = h.submissions || [];
+    if (!rows.length) {
+      body.innerHTML = `<span class="dim">ข้อนี้ยังไม่มีใครส่ง</span>`;
+      return;
+    }
+    body.classList.remove("dim");
+    body.innerHTML = historyTable(rows, false);
+    bindViewButtons(body);
+  } catch (e) {
+    body.innerHTML = `<span class="dim">ดูประวัติไม่ได้: ${esc(e.message)}</span>`;
   }
 }
 
@@ -349,26 +393,26 @@ $("file-clear").onclick = () => {
 $("file-load").onclick = async () => {
   if (!state.file) return;
   $("editor").value = await state.file.text();
-  $("submit-status").textContent = "file content loaded into editor";
+  $("submit-status").textContent = "โหลดเนื้อหาไฟล์ลง editor แล้ว";
 };
 
 $("template-btn").onclick = () => {
   const t = (TEMPLATES[state.current] || {})[state.lang];
   if (t) {
     $("editor").value = t;
-    $("submit-status").textContent = `starter template loaded (${state.current} / ${state.lang})`;
+    $("submit-status").textContent = `โหลด template แล้ว (${state.current} / ${state.lang})`;
   } else {
-    $("submit-status").textContent = "no template for this problem/language";
+    $("submit-status").textContent = "ข้อนี้ยังไม่มี template";
   }
 };
 
-/* ---------------- submit + results ---------------- */
+/* ---------------- submit + verdict ---------------- */
 $("submit-btn").onclick = async () => {
   if (!state.current) return;
   const btn = $("submit-btn");
   const code = $("editor").value;
   if (!state.file && !code.trim()) {
-    $("submit-status").textContent = "paste code or attach a file first";
+    $("submit-status").textContent = "วางโค้ดหรือแนบไฟล์ก่อนส่ง";
     return;
   }
   const fd = new FormData();
@@ -378,8 +422,8 @@ $("submit-btn").onclick = async () => {
   if (state.file) fd.append("file", state.file, state.file.name);
 
   btn.disabled = true;
-  $("submit-status").textContent = `judging ${state.current} (${state.lang})...`;
-  $("result-body").innerHTML = `<span class="dim">running ${esc(state.current)} — strict limits apply...</span>`;
+  $("submit-status").textContent = `กำลังตรวจ ${state.current} (${state.lang})...`;
+  $("result-body").innerHTML = `<span class="dim">กำลังรัน — ใช้ limit โหดทุกข้อ...</span>`;
   const t0 = performance.now();
   try {
     const r = await fetch(API + "/api/submit", { method: "POST", body: fd });
@@ -387,24 +431,26 @@ $("submit-btn").onclick = async () => {
     if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
     renderResults(data, (performance.now() - t0) / 1000);
     $("submit-status").textContent =
-      `done in ${((performance.now() - t0) / 1000).toFixed(2)}s — score ${data.score}/100`;
-    loadHistory();
+      `เสร็จใน ${((performance.now() - t0) / 1000).toFixed(2)}s — ${data.score}/100 คะแนน`;
+    await fetchStats();
+    renderTasksTable();
+    loadTaskHistory();
+    if (document.querySelector("#view-history.active")) loadHistory();
   } catch (e) {
-    $("result-body").innerHTML = `<span class="score-big bad">SUBMIT FAILED</span><pre class="dim">${esc(e.message)}</pre>`;
+    $("result-body").innerHTML = `<span class="score-big bad">ส่งไม่สำเร็จ</span><pre class="dim">${esc(e.message)}</pre>`;
     $("submit-status").textContent = "error: " + e.message;
   } finally {
     btn.disabled = false;
   }
 };
 
-function badge(text, cls) {
-  cls = cls || text;
-  return `<span class="badge b-${esc(cls)}">${esc(text)}</span>`;
+function badgeVerdict(v) {
+  return badge(v, v);
 }
 
 function renderResults(d, secs) {
   $("score-line").textContent =
-    `${d.passed}/${d.total} - score ${d.score}/100 - ${secs.toFixed(2)}s`;
+    `${d.passed}/${d.total} — ${d.score}/100 — ${secs.toFixed(2)}s`;
   let html = "";
   if (d.verdict === "CE") {
     html += `<div class="score-big bad">COMPILE ERROR</div>`;
@@ -424,7 +470,7 @@ function renderResults(d, secs) {
     (d.results || []).forEach((r, i) => {
       html += `<tr class="test-row" data-i="${i}">
         <td>${String(i + 1).padStart(2, "0")}</td><td>${esc(r.test)}</td>
-        <td>${badge(r.verdict)}</td><td>${r.wall_s}s</td><td>${r.cpu_s}s</td><td>${r.peak_mb}MB</td>
+        <td>${badgeVerdict(r.verdict)}</td><td>${r.wall_s}s</td><td>${r.cpu_s}s</td><td>${r.peak_mb}MB</td>
       </tr>`;
       html += `<tr class="detail-row hidden" data-i="${i}"><td colspan="6" class="detail-cell">${detailHtml(r)}</td></tr>`;
     });
@@ -441,13 +487,14 @@ function renderResults(d, secs) {
   });
 }
 
-function detailHtml(r) {  if (r.verdict === "AC") return `<span class="dim">passed — click row to collapse</span>`;
+function detailHtml(r) {
+  if (r.verdict === "AC") return `<span class="dim">ผ่าน — คลิกแถวเพื่อย่อ</span>`;
   if (r.verdict === "TLE")
-    return `<span class="dim">Time Limit Exceeded (wall ${esc(String(r.wall_s))}s). Hint: O(n^2) will not survive the hidden max test.</span>`;
+    return `<span class="dim">Time Limit Exceeded (wall ${esc(String(r.wall_s))}s). Hint: O(n^2) จะไม่รอด test ใหญ่สุด</span>`;
   if (r.verdict === "MLE")
     return `<pre>${esc(r.detail || "Memory Limit Exceeded")}</pre>`;
   if (r.verdict === "OLE")
-    return `<span class="dim">Output Limit Exceeded (${esc(r.detail || "")}). Print loop?</span>`;
+    return `<span class="dim">Output Limit Exceeded (${esc(r.detail || "")}) — print loop รึเปล่า?</span>`;
   if (r.verdict === "WA") {
     return `<p><strong>diff (·=space, →=tab):</strong></p><pre>${esc(r.diff || "")}</pre>
       <p><strong>input:</strong></p><pre>${esc(r.input || "")}</pre>
@@ -457,7 +504,30 @@ function detailHtml(r) {  if (r.verdict === "AC") return `<span class="dim">pass
   return `<pre>${esc(r.detail || r.verdict)}</pre>`;
 }
 
-/* ---------------- history (Supabase, optional) ---------------- */
+/* ---------------- history ---------------- */
+function historyTable(rows, showProblem) {
+  let html = `<table class="tests"><thead><tr>
+    <th>เวลา</th>${showProblem ? "<th>ข้อ</th>" : ""}<th>ภาษา</th><th>ผล</th><th>คะแนน</th><th></th>
+  </tr></thead><tbody>`;
+  rows.forEach((r) => {
+    const when = new Date(r.created_at).toLocaleString();
+    const cls = r.accepted ? "AC" : (r.verdict === "CE" ? "CE" : "WA");
+    const label = r.accepted ? "AC" : (r.verdict || "REJECTED");
+    html += `<tr>
+      <td>${esc(when)}</td>${showProblem ? `<td>${esc(r.problem)}</td>` : ""}<td>${esc(r.language)}</td>
+      <td>${badge(label, cls)}</td><td>${r.passed}/${r.total} (${r.score})</td>
+      <td><button class="ghost-btn" data-view="${esc(r.id)}">ดูผล</button></td>
+    </tr>`;
+  });
+  return html + `</tbody></table>`;
+}
+
+function bindViewButtons(root) {
+  root.querySelectorAll("button[data-view]").forEach((b) => {
+    b.onclick = () => viewSubmission(b.dataset.view);
+  });
+}
+
 async function loadHistory() {
   const body = $("hist-body");
   const filt = $("hist-filter").value;
@@ -467,45 +537,35 @@ async function loadHistory() {
       apiGet("/api/stats"),
     ]);
     if (!h.configured) {
-      body.innerHTML = `<span class="dim">history disabled — set SUPABASE_URL / SUPABASE_KEY on the backend, schema in supabase/schema.sql</span>`;
+      body.innerHTML = `<span class="dim">ยังไม่เปิด history — ตั้งค่า SUPABASE_URL / SUPABASE_KEY ที่ backend (schema ใน supabase/schema.sql)</span>`;
       $("hist-stats").textContent = "";
       return;
     }
     const stats = Object.entries(s.stats || {})
-      .map(([k, v]) => `${esc(k)}: ${v.subs} subs, ${v.accepted} AC, best ${v.best}`)
+      .map(([k, v]) => `${esc(k)}: ส่ง ${v.subs} ครั้ง, ผ่าน ${v.accepted}, ดีสุด ${v.best}`)
       .join(" &nbsp;|&nbsp; ");
-    $("hist-stats").innerHTML = stats || "no data yet";
+    $("hist-stats").innerHTML = stats || "ยังไม่มีข้อมูล";
     const rows = h.submissions || [];
     if (!rows.length) {
-      body.innerHTML = `<span class="dim">no submissions yet</span>`;
+      body.innerHTML = `<span class="dim">ยังไม่มีการส่ง</span>`;
       return;
     }
-    let html = `<table class="tests"><thead><tr>
-      <th>time</th><th>problem</th><th>lang</th><th>verdict</th><th>score</th><th></th>
-    </tr></thead><tbody>`;
-    rows.forEach((r) => {
-      const when = new Date(r.created_at).toLocaleString();
-      const cls = r.accepted ? "AC" : (r.verdict === "CE" ? "CE" : "WA");
-      const label = r.accepted ? "AC" : (r.verdict || "REJECTED");
-      html += `<tr>
-        <td>${esc(when)}</td><td>${esc(r.problem)}</td><td>${esc(r.language)}</td>
-        <td>${badge(label, cls)}</td><td>${r.passed}/${r.total} (${r.score})</td>
-        <td><button class="ghost-btn" data-view="${esc(r.id)}">view</button></td>
-      </tr>`;
-    });
     body.classList.remove("dim");
-    body.innerHTML = html + `</tbody></table>`;
-    body.querySelectorAll("button[data-view]").forEach((b) => {
-      b.onclick = () => viewSubmission(b.dataset.view);
-    });
+    body.innerHTML = historyTable(rows, true);
+    bindViewButtons(body);
   } catch (e) {
-    body.innerHTML = `<span class="dim">history unavailable: ${esc(e.message)}</span>`;
+    body.innerHTML = `<span class="dim">ดูประวัติไม่ได้: ${esc(e.message)}</span>`;
   }
 }
 
 async function viewSubmission(sid) {
   try {
     const r = await apiGet(`/api/history/${encodeURIComponent(sid)}`);
+    if (r.problem !== state.current) {
+      location.hash = "#/task/" + encodeURIComponent(r.problem);
+      await selectProblem(r.problem);
+    }
+    show("task");
     renderResults({
       verdict: r.verdict, accepted: r.accepted,
       passed: r.passed, total: r.total, score: r.score,
@@ -514,10 +574,57 @@ async function viewSubmission(sid) {
       limits: { time_s: "-", memory_mb: "-" }, checker: "-",
       results: r.results || [],
     }, 0);
-    document.querySelector(".results").scrollIntoView({ behavior: "smooth" });
+    document.querySelector("#view-task .card:last-child").scrollIntoView({ behavior: "smooth" });
   } catch (e) {
-    $("submit-status").textContent = "cannot load submission: " + e.message;
+    $("submit-status").textContent = "เปิด submission ไม่ได้: " + e.message;
   }
+}
+
+/* ---------------- init ---------------- */
+async function init() {
+  try {
+    const h = await apiGet("/api/health");
+    $("health").textContent = `online - ${h.problems.length} ข้อ`;
+    $("health").classList.add("ok");
+  } catch (e) {
+    $("health").textContent = "offline";
+    show("home");
+    document.querySelector("#view-home .hero .lede").textContent =
+      "เชื่อมต่อ server ไม่ได้: " + e.message + " — ตั้งค่า config.js ให้ชี้ไป backend";
+    return;
+  }
+  const data = await apiGet("/api/problems");
+  state.problems = data.problems;
+  await fetchStats();
+
+  const diffs = [...new Set(state.problems.map((p) => p.difficulty).filter(Boolean))].sort();
+  const tags = [...new Set(state.problems.flatMap((p) => p.tags || []))].sort();
+  const fd = $("f-diff"), ft = $("f-tag");
+  diffs.forEach((d) => {
+    const o = document.createElement("option");
+    o.value = d; o.textContent = d;
+    fd.appendChild(o);
+  });
+  tags.forEach((t) => {
+    const o = document.createElement("option");
+    o.value = t; o.textContent = t;
+    ft.appendChild(o);
+  });
+  $("q").oninput = (e) => { state.filter.q = e.target.value; renderTasksTable(); };
+  fd.onchange = (e) => { state.filter.diff = e.target.value; renderTasksTable(); };
+  ft.onchange = (e) => { state.filter.tag = e.target.value; renderTasksTable(); };
+
+  const hf = $("hist-filter");
+  state.problems.forEach((p) => {
+    const o = document.createElement("option");
+    o.value = p.id;
+    o.textContent = `${p.id} — ${p.title}`;
+    hf.appendChild(o);
+  });
+  hf.onchange = loadHistory;
+  $("hist-refresh").onclick = loadHistory;
+
+  router();
 }
 
 init();

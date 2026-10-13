@@ -8,6 +8,7 @@ Grader แบบ stdlib-only (ไม่ต้องลง lib) รองรั�
 
 Stack: FastAPI + Uvicorn (backend) + HTML/CSS/JS ไม่ต้อง build (frontend).
 รองรับ Python / C / C++ ส่งได้ 2 แบบ: วางโค้ดใน editor หรือแนบไฟล์ (คลิก/ลากไฟล์ลง dropzone)
+หน้าเว็บมี 4 วิว: Home (สถิติ) / Tasks (ตารางโจทย์ + ค้นหา/กรองระดับ/tag) / Task (โจทย์ + ส่ง + ผล) / History
 
 ```bash
 pip3 install --user -r requirements.txt
