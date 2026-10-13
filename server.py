@@ -12,17 +12,24 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import json
 import os
+import secrets
 import sys
 import tempfile
 import traceback
 from pathlib import Path
 from typing import Dict, List, Optional
+from urllib.parse import urlencode
+from urllib.request import Request as URLRequest
+from urllib.request import urlopen
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.sessions import SessionMiddleware
+from starlette.responses import RedirectResponse
 
 try:
     from supabase import create_client
@@ -65,6 +72,7 @@ if _cors_origins:
         allow_origins=_cors_origins,
         allow_methods=["GET", "POST"],
         allow_headers=["*"],
+        allow_credentials=True,  # login session cookie is cross-origin (vercel -> backend)
     )
 
 # ---- Supabase (optional): submission history + stats ----
@@ -95,6 +103,101 @@ async def _store_submission(row: dict) -> None:
         )
     except Exception as e:
         print(f"[web] supabase insert failed: {e}", file=sys.stderr)
+
+
+# ---- Google login (OAuth 2.0 code flow, session cookie) ----
+# Env: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET (from Google Auth Platform),
+#   GOOGLE_REDIRECT_URI (must match the Authorised redirect URI exactly),
+#   FRONTEND_URL (where to send the user after login),
+#   SESSION_SECRET (random string; sessions reset on restart if unset),
+#   SESSION_SAMESITE (none for cross-origin prod, lax for local http),
+#   SESSION_SECURE (true in prod, false for local http).
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "").strip()
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "").strip()
+GOOGLE_REDIRECT_URI = os.environ.get(
+    "GOOGLE_REDIRECT_URI", "https://grader.n.onjrnm.vip/api/auth/callback").strip()
+FRONTEND_URL = os.environ.get(
+    "FRONTEND_URL", "https://gradernew-static.vercel.app").rstrip("/")
+
+_session_secret = os.environ.get("SESSION_SECRET", "").strip()
+if not _session_secret:
+    _session_secret = secrets.token_hex(32)
+    print("[web] WARNING: SESSION_SECRET not set, sessions die on restart", file=sys.stderr)
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=_session_secret,
+    session_cookie="ng_session",
+    max_age=30 * 24 * 3600,
+    same_site=os.environ.get("SESSION_SAMESITE", "none"),
+    https_only=os.environ.get("SESSION_SECURE", "true").lower() != "false",
+)
+
+
+def _google_userinfo(code: str) -> dict:
+    """Exchange code for tokens, return verified Google profile (blocking)."""
+    token_body = urlencode({
+        "client_id": GOOGLE_CLIENT_ID, "client_secret": GOOGLE_CLIENT_SECRET,
+        "code": code, "grant_type": "authorization_code",
+        "redirect_uri": GOOGLE_REDIRECT_URI,
+    }).encode()
+    req = URLRequest("https://oauth2.googleapis.com/token", data=token_body,
+                     headers={"Content-Type": "application/x-www-form-urlencoded"})
+    with urlopen(req, timeout=15) as r:
+        tok = json.load(r)
+    access = tok.get("access_token")
+    if not access:
+        raise RuntimeError(f"token exchange failed: {str(tok)[:200]}")
+    req2 = URLRequest("https://www.googleapis.com/oauth2/v3/userinfo",
+                      headers={"Authorization": f"Bearer {access}"})
+    with urlopen(req2, timeout=15) as r2:
+        info = json.load(r2)
+    if not info.get("email"):
+        raise RuntimeError("google did not return an email")
+    return info
+
+
+@app.get("/api/auth/login")
+def auth_login(request: Request):
+    if not GOOGLE_CLIENT_ID:
+        raise HTTPException(status_code=500, detail="google oauth not configured")
+    state = secrets.token_urlsafe(16)
+    request.session["oauth_state"] = state
+    q = urlencode({
+        "client_id": GOOGLE_CLIENT_ID, "redirect_uri": GOOGLE_REDIRECT_URI,
+        "response_type": "code", "scope": "openid email profile",
+        "state": state, "prompt": "select_account",
+    })
+    return RedirectResponse("https://accounts.google.com/o/oauth2/v2/auth?" + q,
+                            status_code=307)
+
+
+@app.get("/api/auth/callback")
+async def auth_callback(request: Request, code: str = "", state: str = "", error: str = ""):
+    if error or not code or not state or state != request.session.get("oauth_state"):
+        return RedirectResponse(FRONTEND_URL + "/#/?login=failed", status_code=307)
+    request.session.pop("oauth_state", None)
+    try:
+        info = await asyncio.to_thread(_google_userinfo, code)
+    except Exception as e:
+        print(f"[web] oauth exchange failed: {e}", file=sys.stderr)
+        return RedirectResponse(FRONTEND_URL + "/#/?login=failed", status_code=307)
+    request.session["user"] = {
+        "email": info["email"],
+        "name": info.get("name") or info["email"],
+        "picture": info.get("picture", ""),
+    }
+    return RedirectResponse(FRONTEND_URL + "/#/", status_code=307)
+
+
+@app.get("/api/auth/me")
+def auth_me(request: Request) -> dict:
+    return {"user": request.session.get("user")}
+
+
+@app.post("/api/auth/logout")
+def auth_logout(request: Request) -> dict:
+    request.session.clear()
+    return {"ok": True}
 
 # Preload problems at startup (fail fast on broken tests, skip with warning).
 PROBLEMS: Dict[str, grader.Problem] = {}
@@ -218,6 +321,7 @@ def problem_pdf(pid: str):
 
 @app.post("/api/submit")
 async def submit(
+    request: Request,
     problem: str = Form(...),
     language: str = Form(...),
     code: str = Form(""),
@@ -233,6 +337,9 @@ async def submit(
         raise HTTPException(status_code=400, detail="please enter your name before submitting")
     if len(name) > 50:
         raise HTTPException(status_code=400, detail="name too long (max 50 characters)")
+    user = request.session.get("user") or {}
+    if not user.get("email"):
+        raise HTTPException(status_code=401, detail="login with Google first")
 
     source: Optional[str] = None
     filename: Optional[str] = None
@@ -283,7 +390,7 @@ async def submit(
     result["name"] = name
     await _store_submission({
         "problem": prob.pid, "language": language, "filename": filename,
-        "name": name,
+        "name": name, "user_email": user.get("email", ""),
         "verdict": result.get("verdict", ""), "accepted": result.get("accepted", False),
         "passed": result.get("passed", 0), "total": result.get("total", 0),
         "score": result.get("score", 0), "counts": result.get("counts", {}),
@@ -294,7 +401,8 @@ async def submit(
 
 
 @app.get("/api/history")
-def history(problem: Optional[str] = None, limit: int = 20) -> dict:
+def history(request: Request, problem: Optional[str] = None, limit: int = 20,
+            mine: bool = False) -> dict:
     if _sb is None:
         return {"configured": False, "submissions": []}
     limit = max(1, min(limit, 100))
@@ -304,7 +412,14 @@ def history(problem: Optional[str] = None, limit: int = 20) -> dict:
         ).order("created_at", desc=True).limit(limit)
         if problem:
             q = q.eq("problem", problem)
+        if mine:
+            u = request.session.get("user") or {}
+            if not u.get("email"):
+                raise HTTPException(status_code=401, detail="login required")
+            q = q.eq("user_email", u["email"])
         res = q.execute()
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"supabase query failed: {e}")
     return {"configured": True, "submissions": res.data or []}
@@ -321,7 +436,9 @@ def history_detail(sid: str) -> dict:
     rows = res.data or []
     if not rows:
         raise HTTPException(status_code=404, detail="submission not found")
-    return rows[0]
+    row = dict(rows[0])
+    row.pop("user_email", None)  # never expose login emails publicly
+    return row
 
 
 @app.get("/api/stats")
