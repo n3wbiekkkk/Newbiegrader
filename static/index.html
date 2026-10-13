@@ -13,6 +13,7 @@
     <a class="nav-link" data-route="home" href="#/">Home</a>
     <a class="nav-link" data-route="tasks" href="#/tasks">Tasks</a>
     <a class="nav-link" data-route="history" href="#/history">History</a>
+    <a class="nav-link" data-route="settings" href="#/settings">Settings</a>
   </nav>
   <div id="health" class="health" title="server status">...</div>
   <div id="auth" class="auth">
@@ -149,9 +150,16 @@
     </div>
   </section>
 
+  <!-- SETTINGS -->
+  <section id="view-settings" class="view">
+    <div class="page-head"><h2>Settings</h2></div>
+    <div class="card">
+      <div id="settings-body" class="dim">Loading...</div>
+    </div>
+  </section>
+
   <!-- HISTORY -->
-  <section id="view-history" class="view">
-    <div class="page-head">
+  <section id="view-history" class="view">    <div class="page-head">
       <h2>History</h2>
       <div class="history-tools">
         <select id="hist-filter" aria-label="filter history by problem">

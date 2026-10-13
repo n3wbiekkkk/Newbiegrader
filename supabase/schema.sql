@@ -30,3 +30,11 @@ create index if not exists submissions_problem_time
   on submissions (problem, created_at desc);
 
 alter table submissions enable row level security;
+
+-- user profiles (display name + defaults, keyed by login email)
+create table if not exists profiles (
+  user_email text primary key,
+  display_name text not null default '',
+  default_language text not null default ''
+);
+alter table profiles enable row level security;

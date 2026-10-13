@@ -45,6 +45,13 @@ body {
 .auth { display: flex; gap: 8px; align-items: center; }
 #user-chip { font-size: 13px; font-weight: 600; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mine-check { display: flex; gap: 5px; align-items: center; font-size: 13px; color: var(--dim); cursor: pointer; }
+.settings-row { margin: 14px 0; max-width: 420px; }
+.settings-row label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+.settings-row input, .settings-row select {
+  width: 100%; border: 1px solid var(--border); border-radius: 8px;
+  padding: 9px 12px; font-size: 14px; background: #fff; color: var(--text);
+}
+.settings-row input:focus, .settings-row select:focus { outline: none; border-color: var(--text); }
 
 main { max-width: 1080px; width: 100%; margin: 0 auto; padding: 48px 24px 64px; flex: 1; }
 .view { display: none; }

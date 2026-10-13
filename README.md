@@ -66,6 +66,7 @@ SESSION_SECURE=true
 ```
 (local: `SESSION_SAMESITE=lax SESSION_SECURE=false`)
 4. หน้าเว็บจะมีปุ่ม Sign in with Google — login แล้วส่งได้เลย ไม่ต้องกรอกชื่อ (ใช้ชื่อโปรไฟล์อัตโนมัติ) ประวัติดูของตัวเองได้ด้วยติ๊ก "ของฉัน"
+5. หน้า Settings (ต้อง login): เปลี่ยน display name (ชื่อที่โชว์ใน history) + เลือกภาษา default — เก็บในตาราง `profiles` (ดู `supabase/schema.sql`)
 
 ## Supabase (ประวัติส่ง + สถิติ, optional)
 

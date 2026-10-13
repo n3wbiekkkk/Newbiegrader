@@ -199,6 +199,65 @@ def auth_logout(request: Request) -> dict:
     request.session.clear()
     return {"ok": True}
 
+
+def _profile_display_name(email: str, fallback: str) -> str:
+    """Display name from profiles table, else Google name (blocking)."""
+    if _sb is not None and email:
+        try:
+            res = _sb.table("profiles").select("display_name").eq(
+                "user_email", email).limit(1).execute()
+            rows = res.data or []
+            if rows and (rows[0].get("display_name") or "").strip():
+                return rows[0]["display_name"].strip()[:50]
+        except Exception as e:
+            print(f"[web] profile lookup failed: {e}", file=sys.stderr)
+    return (fallback or "")[:50]
+
+
+@app.get("/api/profile")
+def get_profile(request: Request) -> dict:
+    user = request.session.get("user") or {}
+    if not user.get("email"):
+        raise HTTPException(status_code=401, detail="login required")
+    base = {"email": user["email"], "name": user.get("name", ""),
+            "display_name": "", "default_language": ""}
+    if _sb is None:
+        return {"configured": False, "profile": base}
+    try:
+        res = _sb.table("profiles").select("*").eq(
+            "user_email", user["email"]).limit(1).execute()
+        rows = res.data or []
+        if rows:
+            base["display_name"] = rows[0].get("display_name", "") or ""
+            base["default_language"] = rows[0].get("default_language", "") or ""
+        return {"configured": True, "profile": base}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"supabase query failed: {e}")
+
+
+@app.put("/api/profile")
+async def update_profile(request: Request) -> dict:
+    user = request.session.get("user") or {}
+    if not user.get("email"):
+        raise HTTPException(status_code=401, detail="login required")
+    if _sb is None:
+        raise HTTPException(status_code=404, detail="profile not configured")
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid JSON")
+    display_name = str(body.get("display_name", "")).strip()[:50]
+    default_language = str(body.get("default_language", "")).strip()
+    if default_language and default_language not in LANGS:
+        raise HTTPException(status_code=400, detail="bad default_language")
+    row = {"user_email": user["email"], "display_name": display_name,
+           "default_language": default_language}
+    try:
+        _sb.table("profiles").upsert(row, on_conflict="user_email").execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"supabase write failed: {e}")
+    return {"ok": True, "profile": {"email": user["email"], **row}}
+
 # Preload problems at startup (fail fast on broken tests, skip with warning).
 PROBLEMS: Dict[str, grader.Problem] = {}
 if grader.PROBLEMS_DIR.is_dir():
@@ -338,7 +397,9 @@ async def submit(
     user = request.session.get("user") or {}
     if not user.get("email"):
         raise HTTPException(status_code=401, detail="login with Google first")
-    name = (user.get("name") or user.get("email", ""))[:50]  # identity from login
+    name = await asyncio.to_thread(
+        _profile_display_name, user.get("email", ""),
+        user.get("name") or user.get("email", ""))
 
     source: Optional[str] = None
     filename: Optional[str] = None
