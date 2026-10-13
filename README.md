@@ -98,7 +98,13 @@ python3 grader.py run aplusb examples/aplusb_correct.cpp   # C++ ก็ได้
 
 โจทย์มาจากไฟล์ PDF: ส่ง PDF มา จะสร้าง `problems/<id>/` ให้ ประกอบด้วย
 `statement.pdf` (ต้นฉบับ) + `statement.md` + `config.json` + `tests/` (~10 testcases)
-หน้าเว็บมีปุ่ม open PDF statement + ระบบ filter เลือกข้อ
+หน้าเว็บมีปุ่ม open PDF statement + ระบบ filter (ค้นหา/ระดับ/tag)
+
+| id | ชื่อ | ระดับ | tests | กับดัก |
+|----|------|--------|-------|--------|
+| `mana_crystal` | ย่อภาพผลึกมานา | medium | 10 | ทศนิยมไม่ลงตัว (checker tolerance), I/O 1M ตัวเลข |
+| `posn_server_passcode` | รหัสผ่านเซิร์ฟเวอร์ สอวน. | medium | 10 | N=1, prime ใหญ่ ~10^12 (trial โง่ๆ TLE) |
+| `warpz` | วาร์ปอวกาศ | easy | 10 | a[i] ใหญ่แต่ไปไม่ถึง, N=1 |
 
 ## Verdicts
 `AC` ผ่าน / `WA` + diff (·=space) / `TLE` เกินเวลา / `MLE` หน่วยความจำ /
