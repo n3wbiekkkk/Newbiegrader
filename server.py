@@ -30,6 +30,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.responses import RedirectResponse
+from itsdangerous import URLSafeTimedSerializer
 
 try:
     from supabase import create_client
@@ -134,6 +135,7 @@ _session_secret = os.environ.get("SESSION_SECRET", "").strip()
 if not _session_secret:
     _session_secret = secrets.token_hex(32)
     print("[web] WARNING: SESSION_SECRET not set, sessions die on restart", file=sys.stderr)
+_login_signer = URLSafeTimedSerializer(_session_secret, salt="login-once")
 app.add_middleware(
     SessionMiddleware,
     secret_key=_session_secret,
@@ -196,6 +198,30 @@ async def auth_callback(request: Request, code: str = "", state: str = "", error
         "email": info["email"],
         "name": info.get("name") or info["email"],
         "picture": info.get("picture", ""),
+    }
+    # Hand the session to the frontend origin via one-time token, so the
+    # session cookie is set first-party (works even when browsers block
+    # third-party cookies). /api/auth/finish is proxied by the frontend host.
+    token = _login_signer.dumps({"user": request.session["user"]})
+    request.session.clear()
+    return RedirectResponse(
+        FRONTEND_URL + "/api/auth/finish?" + urlencode({"token": token}),
+        status_code=307)
+
+
+@app.get("/api/auth/finish")
+def auth_finish(request: Request, token: str = ""):
+    try:
+        data = _login_signer.loads(token, max_age=300)
+        user = data.get("user") or {}
+        if not user.get("email"):
+            raise ValueError("no email")
+    except Exception:
+        return RedirectResponse(FRONTEND_URL + "/#/?login=failed", status_code=307)
+    request.session["user"] = {
+        "email": user["email"],
+        "name": user.get("name") or user["email"],
+        "picture": user.get("picture", ""),
     }
     return RedirectResponse(FRONTEND_URL + "/#/", status_code=307)
 
