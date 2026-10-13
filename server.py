@@ -119,6 +119,17 @@ GOOGLE_REDIRECT_URI = os.environ.get(
 FRONTEND_URL = os.environ.get(
     "FRONTEND_URL", "https://gradernew-static.vercel.app").rstrip("/")
 
+ADMIN_EMAILS = {e.strip().lower() for e in os.environ.get("ADMIN_EMAILS", "").split(",")
+                if e.strip()}
+
+
+def _is_admin(email: str) -> bool:
+    return bool(email) and email.lower() in ADMIN_EMAILS
+
+
+REPORT_KINDS = ("statement", "tests", "other")
+REPORT_STATUS = ("open", "closed")
+
 _session_secret = os.environ.get("SESSION_SECRET", "").strip()
 if not _session_secret:
     _session_secret = secrets.token_hex(32)
@@ -191,7 +202,9 @@ async def auth_callback(request: Request, code: str = "", state: str = "", error
 
 @app.get("/api/auth/me")
 def auth_me(request: Request) -> dict:
-    return {"user": request.session.get("user")}
+    user = request.session.get("user") or None
+    email = (user or {}).get("email", "")
+    return {"user": user, "is_admin": _is_admin(email)}
 
 
 @app.post("/api/auth/logout")
@@ -499,6 +512,117 @@ def history_detail(sid: str) -> dict:
     row = dict(rows[0])
     row.pop("user_email", None)  # never expose login emails publicly
     return row
+
+
+@app.post("/api/report")
+async def create_report(request: Request) -> dict:
+    user = request.session.get("user") or {}
+    if not user.get("email"):
+        raise HTTPException(status_code=401, detail="login required")
+    if _sb is None:
+        raise HTTPException(status_code=404, detail="report not configured")
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid JSON")
+    problem = str(body.get("problem", "")).strip()
+    if problem not in PROBLEMS:
+        raise HTTPException(status_code=400, detail="unknown problem")
+    kind = str(body.get("kind", "")).strip()
+    if kind not in REPORT_KINDS:
+        raise HTTPException(status_code=400, detail="bad kind")
+    message = str(body.get("message", "")).strip()
+    if not (1 <= len(message) <= 1000):
+        raise HTTPException(status_code=400, detail="message must be 1-1000 characters")
+    name = await asyncio.to_thread(
+        _profile_display_name, user.get("email", ""),
+        user.get("name") or user.get("email", ""))
+    try:
+        res = _sb.table("reports").insert({
+            "problem": problem, "kind": kind, "message": message,
+            "user_email": user["email"], "name": name, "status": "open",
+        }).execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"supabase write failed: {e}")
+    rows = res.data or []
+    return {"ok": True, "id": rows[0]["id"] if rows else None}
+
+
+@app.get("/api/reports")
+def list_reports(request: Request, mine: bool = False, all: bool = False,
+                 problem: Optional[str] = None, limit: int = 50) -> dict:
+    user = request.session.get("user") or {}
+    if not user.get("email"):
+        raise HTTPException(status_code=401, detail="login required")
+    if _sb is None:
+        return {"configured": False, "reports": []}
+    limit = max(1, min(limit, 100))
+    want_all = bool(all) and _is_admin(user["email"])
+    if all and not want_all:
+        raise HTTPException(status_code=403, detail="admin only")
+    try:
+        cols = ("id,created_at,problem,kind,message,status,name" +
+                (",user_email" if want_all else ""))
+        q = _sb.table("reports").select(cols).order(
+            "created_at", desc=True).limit(limit)
+        if problem:
+            q = q.eq("problem", problem)
+        if not want_all:
+            q = q.eq("user_email", user["email"])
+        res = q.execute()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"supabase query failed: {e}")
+    return {"configured": True, "reports": res.data or []}
+
+
+@app.put("/api/reports/{rid}")
+async def set_report_status(request: Request, rid: str) -> dict:
+    user = request.session.get("user") or {}
+    if not _is_admin(user.get("email", "")):
+        raise HTTPException(status_code=403, detail="admin only")
+    if _sb is None:
+        raise HTTPException(status_code=404, detail="report not configured")
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid JSON")
+    status = str(body.get("status", "")).strip()
+    if status not in REPORT_STATUS:
+        raise HTTPException(status_code=400, detail="bad status")
+    try:
+        _sb.table("reports").update({"status": status}).eq("id", rid).execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"supabase write failed: {e}")
+    return {"ok": True}
+
+
+@app.get("/api/leaderboard")
+def leaderboard(limit: int = 50) -> dict:
+    if _sb is None:
+        return {"configured": False, "top": []}
+    limit = max(1, min(limit, 100))
+    try:
+        res = _sb.table("submissions").select(
+            "problem,user_email,name,accepted,score,created_at").order(
+            "created_at", desc=True).limit(2000).execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"supabase query failed: {e}")
+    users: dict = {}
+    for r in res.data or []:
+        u = users.setdefault(r["user_email"], {"name": r.get("name") or "?",
+                                               "best": {}, "acc": set()})
+        u["name"] = r.get("name") or u["name"]  # latest name wins (rows are desc)
+        p = r["problem"]
+        u["best"][p] = max(u["best"].get(p, 0), r.get("score") or 0)
+        if r.get("accepted"):
+            u["acc"].add(p)
+    top = sorted(
+        ({"name": u["name"], "solved": len(u["acc"]),
+          "points": sum(u["best"].values())} for u in users.values()),
+        key=lambda t: (-t["points"], -t["solved"], t["name"]))
+    return {"configured": True, "top": top[:limit]}
 
 
 @app.get("/api/stats")

@@ -12,7 +12,28 @@
   --magenta: #7e22ce;
   --red: #dc2626;
   --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  --on-acc: #fff;
+  --field: #fff;
+  --topbar: rgba(255,255,255,.85);
 }
+
+[data-theme="dark"] {
+  --bg: #0a0a0a;
+  --panel: #0a0a0a;
+  --panel2: #161616;
+  --border: #2a2a2a;
+  --text: #ededed;
+  --dim: #a1a1a1;
+  --acc: #ededed;
+  --on-acc: #0a0a0a;
+  --link: #7aa2ff;
+  --field: #111111;
+  --topbar: rgba(10,10,10,.85);
+  color-scheme: dark;
+}
+[data-theme="dark"] .diff-easy,
+[data-theme="dark"] .diff-medium,
+[data-theme="dark"] .diff-hard { background: transparent; }
 
 * { box-sizing: border-box; }
 body {
@@ -26,7 +47,7 @@ body {
 /* top nav */
 .topbar {
   display: flex; align-items: center; gap: 28px;
-  padding: 14px 28px; background: rgba(255,255,255,.85);
+  padding: 14px 28px; background: var(--topbar);
   backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--border);
   position: sticky; top: 0; z-index: 10;
@@ -44,12 +65,26 @@ body {
 .health.ok { color: var(--green); }
 .auth { display: flex; gap: 8px; align-items: center; }
 #user-chip { font-size: 13px; font-weight: 600; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mine-check { display: flex; gap: 5px; align-items: center; font-size: 13px; color: var(--dim); cursor: pointer; }
+.report-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.report-row select {
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+  font-size: 13px; background: var(--field); color: var(--text);
+}
+.report-row input[type="text"] {
+  flex: 1; min-width: 180px; border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 12px; font-size: 13px; background: var(--field); color: var(--text);
+}
+.report-row input[type="text"]:focus { outline: none; border-color: var(--text); }
+.report-item { padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.report-item:last-child { border-bottom: none; }
+.tag-click { cursor: pointer; font: inherit; }
+.tag-click:hover { border-color: var(--text); color: var(--text); }
+#archive-tags { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
 .settings-row { margin: 14px 0; max-width: 420px; }
 .settings-row label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
 .settings-row input, .settings-row select {
   width: 100%; border: 1px solid var(--border); border-radius: 8px;
-  padding: 9px 12px; font-size: 14px; background: #fff; color: var(--text);
+  padding: 9px 12px; font-size: 14px; background: var(--field); color: var(--text);
 }
 .settings-row input:focus, .settings-row select:focus { outline: none; border-color: var(--text); }
 
@@ -64,7 +99,7 @@ main { max-width: 1080px; width: 100%; margin: 0 auto; padding: 48px 24px 64px; 
 .hero .lede { color: var(--dim); font-size: 16px; margin: 0 0 28px; }
 .hero-btns { display: flex; gap: 10px; margin-bottom: 40px; flex-wrap: wrap; }
 .btn-primary {
-  background: var(--acc); color: #fff; text-decoration: none; font-weight: 600;
+  background: var(--acc); color: var(--on-acc); text-decoration: none; font-weight: 600;
   padding: 10px 22px; border-radius: 8px; font-size: 14px; border: 1px solid var(--acc);
 }
 .btn-primary:hover { opacity: .85; }
@@ -97,12 +132,12 @@ main { max-width: 1080px; width: 100%; margin: 0 auto; padding: 48px 24px 64px; 
 .filterbar { display: flex; gap: 8px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
 .filterbar input[type="search"] {
   flex: 1; min-width: 140px; border: 1px solid var(--border);
-  border-radius: 8px; padding: 8px 12px; font-size: 14px; background: #fff; color: var(--text);
+  border-radius: 8px; padding: 8px 12px; font-size: 14px; background: var(--field); color: var(--text);
 }
 .filterbar input[type="search"]:focus { outline: none; border-color: var(--text); }
 .filterbar select, .history-tools select {
   border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
-  font-size: 13px; background: #fff; color: var(--text);
+  font-size: 13px; background: var(--field); color: var(--text);
 }
 
 /* tables */
@@ -150,7 +185,7 @@ table.tasks-table tbody tr:hover td { background: var(--panel2); }
 .pane-h:first-of-type { margin-top: 4px; }
 .score-box {
   text-align: right; border: 1px solid var(--border); border-radius: 10px;
-  padding: 6px 16px; background: #fff; min-width: 130px;
+  padding: 6px 16px; background: var(--field); min-width: 130px;
 }
 .score-box span { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; }
 .score-box strong { font-size: 22px; }
@@ -182,11 +217,11 @@ table.tasks-table tbody tr:hover td { background: var(--panel2); }
   background: transparent; color: var(--dim); border: none; border-radius: 6px;
   padding: 5px 14px; cursor: pointer; font-size: 13px;
 }
-.lang-btn.active { background: #fff; color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+.lang-btn.active { background: var(--field); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,.08); }
 .dropzone {
   border: 1px dashed var(--border); border-radius: 10px;
   text-align: center; padding: 20px; margin: 14px 0 10px;
-  cursor: pointer; font-size: 13px; color: var(--dim); background: #fff;
+  cursor: pointer; font-size: 13px; color: var(--dim); background: var(--field);
 }
 .dropzone:hover, .dropzone.over { border-color: var(--text); color: var(--text); background: var(--panel2); }
 .dropzone p { margin: 4px 0; }
@@ -206,7 +241,7 @@ table.tasks-table tbody tr:hover td { background: var(--panel2); }
   font-family: var(--mono); font-size: 12.5px; line-height: 1.6;
   padding: 14px; tab-size: 4;
 }
-#editor:focus { outline: none; border-color: var(--text); background: #fff; }
+#editor:focus { outline: none; border-color: var(--text); background: var(--field); }
 .submit-row { display: flex; gap: 10px; margin-top: 12px; align-items: center; }
 .ghost-btn {
   background: transparent; color: var(--dim);
@@ -214,7 +249,7 @@ table.tasks-table tbody tr:hover td { background: var(--panel2); }
 }
 .ghost-btn:hover { color: var(--text); }
 .submit-btn {
-  margin-left: auto; background: var(--acc); color: #fff;
+  margin-left: auto; background: var(--acc); color: var(--on-acc);
   border: 1px solid var(--acc); border-radius: 8px; padding: 9px 28px;
   font-weight: 600; cursor: pointer; font-size: 14px;
 }
