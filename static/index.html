@@ -58,6 +58,20 @@
     </div>
     <div id="result-body" class="dim">No submission yet. Pick a problem, paste code or attach a file, then hit JUDGE IT.</div>
   </section>
+
+  <section class="card history">
+    <div class="card-head">
+      <h2>History</h2>
+      <div class="history-tools">
+        <select id="hist-filter" aria-label="filter history by problem">
+          <option value="">all problems</option>
+        </select>
+        <button id="hist-refresh" type="button" class="ghost-btn">refresh</button>
+      </div>
+    </div>
+    <div id="hist-stats" class="meta"></div>
+    <div id="hist-body" class="dim">Loading history...</div>
+  </section>
 </main>
 
 <footer class="foot dim">
