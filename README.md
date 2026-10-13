@@ -1,4 +1,4 @@
-# Brutal CP Grader (โหดจริง ไม่ติงนัง)
+# Newbiegrader (โหดจริง ไม่ติงนัง)
 
 Grader แบบ stdlib-only (ไม่ต้องลง lib) รองรับ `.py .cpp .c .java .js .go .rs`
 ตรวจแบบโหด: Time Limit / Memory Limit (RLIMIT บน macOS/Linux), diff แสดง whitespace,
