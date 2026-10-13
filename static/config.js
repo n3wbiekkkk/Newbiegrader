@@ -4,4 +4,4 @@
  *   window.GRADER_API_BASE = "https://brutal-grader-api.onrender.com";
  * and set GRADER_CORS_ORIGINS on the backend to your Vercel URL.
  */
-window.GRADER_API_BASE = "";
+window.GRADER_API_BASE = "https://grader.n.onjrnm.vip";
