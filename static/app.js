@@ -658,26 +658,30 @@ function bindViewButtons(root) {
 async function loadHistory() {
   const body = $("hist-body");
   const filt = $("hist-filter").value;
-  const mine = $("hist-mine").checked;
-  if (mine && !state.user) {
-    body.innerHTML = `<span class="dim">ติ๊ก "ของฉัน" ต้อง login ก่อน</span>`;
+  if (!state.user) {
+    $("hist-stats").textContent = "";
+    body.innerHTML = `<span class="dim">หน้านี้โชว์เฉพาะของตัวเอง — login ด้วย Google ก่อน (ของคนอื่นดูได้ในแท็บ Submissions ของแต่ละข้อ)</span>`;
     return;
   }
   try {
-    const [h, s] = await Promise.all([
-      apiGet(`/api/history?limit=20${filt ? `&problem=${encodeURIComponent(filt)}` : ""}${mine ? "&mine=1" : ""}`),
-      apiGet("/api/stats"),
-    ]);
+    const h = await apiGet(`/api/history?limit=100${filt ? `&problem=${encodeURIComponent(filt)}` : ""}&mine=1`);
     if (!h.configured) {
       body.innerHTML = `<span class="dim">ยังไม่เปิด history — ตั้งค่า SUPABASE_URL / SUPABASE_KEY ที่ backend (schema ใน supabase/schema.sql)</span>`;
       $("hist-stats").textContent = "";
       return;
     }
-    const stats = Object.entries(s.stats || {})
+    const rows = h.submissions || [];
+    const agg = {};
+    rows.forEach((r) => {
+      const p = agg[r.problem] || (agg[r.problem] = { subs: 0, accepted: 0, best: 0 });
+      p.subs++;
+      if (r.accepted) p.accepted++;
+      p.best = Math.max(p.best, r.score || 0);
+    });
+    const stats = Object.entries(agg)
       .map(([k, v]) => `${esc(k)}: ส่ง ${v.subs} ครั้ง, ผ่าน ${v.accepted}, ดีสุด ${v.best}`)
       .join(" &nbsp;|&nbsp; ");
-    $("hist-stats").innerHTML = stats || "ยังไม่มีข้อมูล";
-    const rows = h.submissions || [];
+    $("hist-stats").innerHTML = stats || "ยังไม่มีการส่ง";
     if (!rows.length) {
       body.innerHTML = `<span class="dim">ยังไม่มีการส่ง</span>`;
       return;
@@ -758,7 +762,6 @@ async function init() {
   });
   hf.onchange = loadHistory;
   $("hist-refresh").onclick = loadHistory;
-  $("hist-mine").onchange = loadHistory;
   await refreshMe();
   if ((location.hash || "").includes("login=failed")) {
     $("health").textContent = "login failed";
