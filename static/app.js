@@ -22,11 +22,20 @@ const state = {
 };
 
 /* ---------------- theme ---------------- */
+function icon(n, cls) {
+  return `<svg class="ic${cls ? " " + cls : ""}" aria-hidden="true"><use href="#i-${n}"/></svg>`;
+}
+
+function scoreCls(s) {
+  s = Number(s) || 0;
+  return s >= 100 ? "s100" : s > 0 ? "smid" : "s0";
+}
+
 function applyTheme(t) {
   document.documentElement.dataset.theme = t;
   try { localStorage.setItem("ng_theme", t); } catch (e) { /* ignore */ }
   const b = $("theme-btn");
-  if (b) b.textContent = t === "dark" ? "light" : "dark";
+  if (b) b.innerHTML = icon(t === "dark" ? "sun" : "moon");
 }
 try { applyTheme(localStorage.getItem("ng_theme") || "light"); } catch (e) { applyTheme("light"); }
 $("theme-btn").onclick = () =>
@@ -326,7 +335,7 @@ function renderTasksTable() {
   }
   list.forEach((p, idx) => {
     const my = (state.myBest && state.myBest[p.id] != null)
-      ? `${state.myBest[p.id]}/100` : "—";
+      ? `<span class="${scoreCls(state.myBest[p.id])}">${state.myBest[p.id]}/100</span>` : "—";
     const tags = (p.tags || []).map((t) => `<span class="tag-chip">${esc(t)}</span>`).join("");
     const tr = document.createElement("tr");
     tr.innerHTML = `<td>${idx + 1}</td><td><strong>${esc(p.id)}</strong><br><span class="dim">${esc(p.title)}</span></td>
@@ -418,7 +427,8 @@ async function renderLeaderboard() {
       <th>#</th><th>ชื่อ</th><th>แก้ได้</th><th>คะแนนรวม</th>
     </tr></thead><tbody>`;
     top.forEach((t, i) => {
-      html += `<tr><td>${i + 1}</td><td>${esc(t.name)}</td><td>${t.solved} ข้อ</td><td><strong>${t.points}</strong></td></tr>`;
+      const medal = i < 3 ? `<span class="rank rank-${i + 1}">${i + 1}</span>` : `${i + 1}`;
+      html += `<tr><td>${medal}</td><td>${esc(t.name)}</td><td>${t.solved} ข้อ</td><td><strong class="${scoreCls(t.points)}">${t.points}</strong></td></tr>`;
     });
     body.classList.remove("dim");
     body.innerHTML = html + `</tbody></table>`;
@@ -467,7 +477,9 @@ async function refreshYourScore() {
     const h = await apiGet(`/api/history?limit=100&problem=${encodeURIComponent(state.current)}&mine=1`);
     const rows = (h.configured && h.submissions) || [];
     const best = rows.reduce((m, r) => Math.max(m, r.score || 0), 0);
-    $("your-score-num").textContent = rows.length ? `${best}/100` : "0";
+    const ysn = $("your-score-num");
+    ysn.textContent = rows.length ? `${best}/100` : "0";
+    ysn.className = scoreCls(best);
   } catch (e) {
     $("your-score-num").textContent = "?";
   }
@@ -517,7 +529,8 @@ function renderTopScores(rows) {
     <th>#</th><th>ชื่อ</th><th>ภาษา</th><th>ดีสุด</th>
   </tr></thead><tbody>`;
   top.forEach((t, i) => {
-    html += `<tr><td>${i + 1}</td><td>${esc(t.name)}</td><td>${esc(t.language)}</td><td><strong>${t.score}/100</strong></td></tr>`;
+    const medal = i < 3 ? `<span class="rank rank-${i + 1}">${i + 1}</span>` : `${i + 1}`;
+    html += `<tr><td>${medal}</td><td>${esc(t.name)}</td><td>${esc(t.language)}</td><td><strong class="${scoreCls(t.score)}">${t.score}/100</strong></td></tr>`;
   });
   body.classList.remove("dim");
   body.innerHTML = html + `</tbody></table>`;
@@ -810,8 +823,8 @@ function historyTable(rows, showProblem) {
     const label = r.accepted ? "AC" : (r.verdict || "REJECTED");
     html += `<tr>
       <td>${esc(when)}</td>${showProblem ? `<td>${esc(r.problem)}</td>` : ""}<td>${esc(r.name || "—")}</td><td>${esc(r.language)}</td>
-      <td>${badge(label, cls)}</td><td>${r.passed}/${r.total} (${r.score})</td>
-      <td><button class="ghost-btn" data-view="${esc(r.id)}">ดูผล</button></td>
+      <td>${badge(label, cls)}</td><td>${r.passed}/${r.total} (<span class="${scoreCls(r.score)}">${r.score}</span>)</td>
+      <td><button class="icon-btn" data-view="${esc(r.id)}" title="ดูผล">${icon("eye")}</button></td>
     </tr>`;
   });
   return html + `</tbody></table>`;
@@ -932,7 +945,7 @@ async function renderSettings() {
         </select>
       </div>
       <div class="submit-row">
-        <button id="settings-save" type="button" class="submit-btn">บันทึก</button>
+        <button id="settings-save" type="button" class="submit-btn"><svg class="ic"><use href="#i-check"/></svg><span>บันทึก</span></button>
       </div>
       <div id="settings-status" class="status dim"></div>`;
     $("set-lang").value = p.default_language || state.lang;
