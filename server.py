@@ -51,7 +51,7 @@ MAX_PARALLEL_SUBMITS = 4      # concurrent submissions cap
 OVERALL_TIMEOUT = 90.0        # seconds per submission (thread keeps cleaning up after)
 DETAIL_HEAD = 4000            # max chars of detail/diff sent to frontend
 
-app = FastAPI(title="Brutal Grader API", version="1.0.0")
+app = FastAPI(title="Newbiegrader API", version="1.0.0")
 submit_sem = asyncio.Semaphore(MAX_PARALLEL_SUBMITS)
 
 # Split deployment (frontend on Vercel etc.): allow the static origin, e.g.
