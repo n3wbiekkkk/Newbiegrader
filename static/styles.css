@@ -42,6 +42,9 @@ body {
 .nav-link.active { color: var(--text); font-weight: 600; }
 .health { margin-left: auto; font-size: 11px; color: var(--dim); font-family: var(--mono); letter-spacing: .5px; }
 .health.ok { color: var(--green); }
+.auth { display: flex; gap: 8px; align-items: center; }
+#user-chip { font-size: 13px; font-weight: 600; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mine-check { display: flex; gap: 5px; align-items: center; font-size: 13px; color: var(--dim); cursor: pointer; }
 
 main { max-width: 1080px; width: 100%; margin: 0 auto; padding: 48px 24px 64px; flex: 1; }
 .view { display: none; }

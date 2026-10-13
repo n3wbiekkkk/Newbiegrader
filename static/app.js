@@ -13,6 +13,7 @@ const state = {
   current: null,
   lang: "python",
   file: null,
+  user: null,
   filter: { q: "", diff: "", tag: "" },
 };
 
@@ -214,7 +215,7 @@ int main() {
 
 /* ---------------- api ---------------- */
 async function apiGet(path) {
-  const r = await fetch(API + path);
+  const r = await fetch(API + path, { credentials: "include" });
   if (!r.ok) {
     const body = await r.json().catch(() => ({}));
     throw new Error(body.detail || `GET ${path}: ${r.status}`);
@@ -354,6 +355,37 @@ async function loadTaskHistory() {
   }
 }
 
+/* ---------------- auth ---------------- */
+async function refreshMe() {
+  try {
+    const me = await apiGet("/api/auth/me");
+    state.user = (me && me.user) || null;
+  } catch (e) {
+    state.user = null;
+  }
+  $("login-btn").classList.toggle("hidden", !!state.user);
+  $("logout-btn").classList.toggle("hidden", !state.user);
+  const chip = $("user-chip");
+  chip.classList.toggle("hidden", !state.user);
+  if (state.user) {
+    chip.textContent = state.user.name || state.user.email;
+    chip.title = state.user.email || "";
+    if (!$("submit-name").value) $("submit-name").value = state.user.name || "";
+  }
+}
+
+$("login-btn").onclick = () => {
+  location.href = API + "/api/auth/login";
+};
+
+$("logout-btn").onclick = async () => {
+  try {
+    await fetch(API + "/api/auth/logout", { method: "POST", credentials: "include" });
+  } catch (e) { /* ignore */ }
+  await refreshMe();
+  loadHistory();
+};
+
 /* ---------------- language + file ---------------- */
 document.querySelectorAll(".lang-btn").forEach((b) => {
   b.onclick = () => {
@@ -418,6 +450,10 @@ $("submit-btn").onclick = async () => {
     return;
   }
   try { localStorage.setItem("ng_name", name); } catch (e) { /* ignore */ }
+  if (!state.user) {
+    $("submit-status").textContent = "login ด้วย Google ก่อนส่ง";
+    return;
+  }
   if (!state.file && !code.trim()) {
     $("submit-status").textContent = "วางโค้ดหรือแนบไฟล์ก่อนส่ง";
     return;
@@ -434,7 +470,7 @@ $("submit-btn").onclick = async () => {
   $("result-body").innerHTML = `<span class="dim">กำลังรัน — ใช้ limit โหดทุกข้อ...</span>`;
   const t0 = performance.now();
   try {
-    const r = await fetch(API + "/api/submit", { method: "POST", body: fd });
+    const r = await fetch(API + "/api/submit", { method: "POST", body: fd, credentials: "include" });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
     renderResults(data, (performance.now() - t0) / 1000);
@@ -545,9 +581,14 @@ function bindViewButtons(root) {
 async function loadHistory() {
   const body = $("hist-body");
   const filt = $("hist-filter").value;
+  const mine = $("hist-mine").checked;
+  if (mine && !state.user) {
+    body.innerHTML = `<span class="dim">ติ๊ก "ของฉัน" ต้อง login ก่อน</span>`;
+    return;
+  }
   try {
     const [h, s] = await Promise.all([
-      apiGet(`/api/history?limit=20${filt ? `&problem=${encodeURIComponent(filt)}` : ""}`),
+      apiGet(`/api/history?limit=20${filt ? `&problem=${encodeURIComponent(filt)}` : ""}${mine ? "&mine=1" : ""}`),
       apiGet("/api/stats"),
     ]);
     if (!h.configured) {
@@ -639,7 +680,13 @@ async function init() {
   });
   hf.onchange = loadHistory;
   $("hist-refresh").onclick = loadHistory;
+  $("hist-mine").onchange = loadHistory;
   try { $("submit-name").value = localStorage.getItem("ng_name") || ""; } catch (e) { /* ignore */ }
+  await refreshMe();
+  if ((location.hash || "").includes("login=failed")) {
+    $("health").textContent = "login failed";
+    location.hash = "#/";
+  }
 
   router();
 }

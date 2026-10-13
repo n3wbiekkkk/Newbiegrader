@@ -45,6 +45,28 @@ commit + push — Vercel redeploy อัตโนมัติ
 
 รัน local ทั้งก้อนแบบเดิมได้อยู่ (`python3 server.py` — same origin, ไม่ต้องมี CORS)
 
+## Google Login (บังคับก่อนส่ง)
+
+1. Google Auth Platform → Create OAuth client (Web application)
+   - Authorised redirect URI: `https://<backend>/api/auth/callback` (ตรงตัวเป๊ะ)
+   - JavaScript origins: ปล่อยว่างได้
+2. รัน migration คอลัมน์ email:
+```sql
+alter table submissions add column if not exists user_email text not null default '';
+```
+3. ตั้ง env ที่ backend + restart:
+```
+GOOGLE_CLIENT_ID=....apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=GOCSPX-...
+GOOGLE_REDIRECT_URI=https://<backend>/api/auth/callback
+FRONTEND_URL=https://<vercel-app>
+SESSION_SECRET=<สุ่ม 64 hex>
+SESSION_SAMESITE=none
+SESSION_SECURE=true
+```
+(local: `SESSION_SAMESITE=lax SESSION_SECURE=false`)
+4. หน้าเว็บจะมีปุ่ม Sign in with Google — login แล้วชื่อจะเติมให้เอง ส่งต้อง login ทุกครั้ง (API ตอบ 401 ถ้าไม่ login) ประวัติดูของตัวเองได้ด้วยติ๊ก "ของฉัน"
+
 ## Supabase (ประวัติส่ง + สถิติ, optional)
 
 ไม่ตั้ง = เว็บทำงานปกติแค่ไม่มี history ตั้งแล้วทุก submission จะถูกบันทึกพร้อมดูย้อนหลังได้

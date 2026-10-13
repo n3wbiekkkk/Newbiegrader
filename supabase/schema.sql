@@ -10,6 +10,7 @@ create table if not exists submissions (
   language text not null,
   filename text,
   name text not null default '',
+  user_email text not null default '',
   verdict text not null,                 -- AC / REJECTED / CE
   accepted boolean not null default false,
   passed int not null default 0,
@@ -21,8 +22,9 @@ create table if not exists submissions (
   detail text not null default ''        -- compile error / misc
 );
 
--- migration for tables created before the name column existed:
+-- migration for tables created before the name/user_email columns existed:
 alter table submissions add column if not exists name text not null default '';
+alter table submissions add column if not exists user_email text not null default '';
 
 create index if not exists submissions_problem_time
   on submissions (problem, created_at desc);

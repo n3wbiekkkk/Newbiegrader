@@ -15,6 +15,11 @@
     <a class="nav-link" data-route="history" href="#/history">History</a>
   </nav>
   <div id="health" class="health" title="server status">...</div>
+  <div id="auth" class="auth">
+    <button id="login-btn" type="button" class="ghost-btn">Sign in with Google</button>
+    <span id="user-chip" class="hidden"></span>
+    <button id="logout-btn" type="button" class="ghost-btn hidden">logout</button>
+  </div>
 </header>
 
 <main>
@@ -135,6 +140,7 @@
         <select id="hist-filter" aria-label="filter history by problem">
           <option value="">ทุกข้อ</option>
         </select>
+        <label class="mine-check"><input type="checkbox" id="hist-mine"> ของฉัน</label>
         <button id="hist-refresh" type="button" class="ghost-btn">refresh</button>
       </div>
     </div>
