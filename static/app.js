@@ -563,14 +563,18 @@ async function refreshMe() {
   const chip = $("user-chip");
   chip.classList.toggle("hidden", !state.user);
   if (state.user) {
-    chip.textContent = state.user.name || state.user.email;
-    chip.title = state.user.email || "";
+    let display = state.user.name || state.user.email;
     try {
       const data = await apiGet("/api/profile");
-      if (data.configured && data.profile.default_language) {
-        setLang(data.profile.default_language);
+      if (data.profile) {
+        if (data.profile.display_name) display = data.profile.display_name;
+        if (data.configured && data.profile.default_language) {
+          setLang(data.profile.default_language);
+        }
       }
-    } catch (e) { /* profile unavailable: keep current language */ }
+    } catch (e) { /* profile unavailable: keep Google name */ }
+    chip.textContent = display;
+    chip.title = state.user.email || "";
   }
 }
 
