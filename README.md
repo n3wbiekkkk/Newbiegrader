@@ -48,7 +48,9 @@ commit + push — Vercel redeploy อัตโนมัติ
 ## Google Login (บังคับก่อนส่ง)
 
 1. Google Auth Platform → Create OAuth client (Web application)
-   - Authorised redirect URI: `https://<backend>/api/auth/callback` (ตรงตัวเป๊ะ)
+   - Authorised redirect URIs (ใส่ทั้งสองบรรทัด):
+     `https://gradernew-static.vercel.app/api/auth/callback`
+     `https://grader.n.onjrnm.vip/api/auth/callback`
    - JavaScript origins: ปล่อยว่างได้
 2. รัน migration คอลัมน์ email:
 ```sql
@@ -58,7 +60,7 @@ alter table submissions add column if not exists user_email text not null defaul
 ```
 GOOGLE_CLIENT_ID=....apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=GOCSPX-...
-GOOGLE_REDIRECT_URI=https://<backend>/api/auth/callback
+GOOGLE_REDIRECT_URI=https://gradernew-static.vercel.app/api/auth/callback
 FRONTEND_URL=https://<vercel-app>
 SESSION_SECRET=<สุ่ม 64 hex>
 SESSION_SAMESITE=none
