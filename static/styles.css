@@ -182,6 +182,13 @@ table.tasks-table tbody tr:hover td { background: var(--panel2); }
 }
 #editor:focus { outline: none; border-color: var(--text); background: #fff; }
 .submit-row { display: flex; gap: 10px; margin-top: 12px; align-items: center; }
+.name-row { margin-top: 10px; }
+.name-row input {
+  width: 100%; border: 1px solid var(--border);
+  border-radius: 8px; padding: 9px 12px; font-size: 14px;
+  background: #fff; color: var(--text);
+}
+.name-row input:focus { outline: none; border-color: var(--text); }
 .ghost-btn {
   background: transparent; color: var(--dim);
   border: none; padding: 8px 4px; cursor: pointer; font-size: 13px;
