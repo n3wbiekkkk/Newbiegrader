@@ -230,6 +230,10 @@ async function init() {
     tabs.appendChild(b);
   });
   if (state.problems.length) selectProblem(state.problems[0].id);
+  else {
+    $("prob-title").textContent = "No problems yet";
+    $("prob-body").textContent = "All problems were removed. Send a PDF to create new ones.";
+  }
   const hf = $("hist-filter");
   state.problems.forEach((p) => {
     const o = document.createElement("option");
@@ -255,6 +259,13 @@ async function selectProblem(pid) {
     $("prob-meta").textContent =
       `TL ${p.time_limit}s | MEM ${p.memory_limit}MB | checker ${p.checker} | ${p.tests} tests`;
     $("prob-body").innerHTML = renderMd(p.statement || "(no statement)");
+    const pl = $("pdf-link");
+    if (p.has_pdf) {
+      pl.classList.remove("hidden");
+      $("pdf-anchor").href = `${API}/api/problems/${encodeURIComponent(pid)}/pdf`;
+    } else {
+      pl.classList.add("hidden");
+    }
   } catch (e) {
     $("prob-body").textContent = "Failed to load problem: " + e.message;
   }

@@ -74,6 +74,7 @@ print(sum(map(int, sys.stdin.read().split())))' http://127.0.0.1:8000/api/submit
 ```
 grader.py
 problems/<id>/config.json      # time_limit, memory_limit, checker (token|exact|float)
+problems/<id>/statement.pdf      # โจทย์ต้นฉบับ (ถ้ามี)
 problems/<id>/statement.md
 problems/<id>/tests/*.in|*.out
 examples/                      # โค้ดถูก/ผิด/TLE ไว้ลอง
@@ -92,12 +93,11 @@ python3 grader.py run palindrome examples/palindrome_correct.py --strict --stop-
 python3 grader.py run aplusb examples/aplusb_correct.cpp   # C++ ก็ได้ (auto compile -O2)
 ```
 
-## โจทย์ที่มี (ง่าย 3 ข้อ แต่ test โหด)
-| id | ชื่อ | กับดัก |
-|----|------|--------|
-| `aplusb` | A+B (`-1e18..1e18`) | `int` แตก, whitespace, 7 tests |
-| `fizzbuzz` | FizzBuzz ถึง N=100000 | `Fizz` ตัวพิมพ์, trailing space (checker=exact), TLE trap, 5 tests |
-| `palindrome` | Palindrome ยาวถึง 1e6 | `Aa`→NO, ว่าง→YES, space นับด้วย, 8 tests |
+## โจทย์ (PDF workflow)
+
+โจทย์มาจากไฟล์ PDF: ส่ง PDF มา จะสร้าง `problems/<id>/` ให้ ประกอบด้วย
+`statement.pdf` (ต้นฉบับ) + `statement.md` + `config.json` + `tests/` (~10 testcases)
+หน้าเว็บมีปุ่ม open PDF statement + ระบบ filter เลือกข้อ
 
 ## Verdicts
 `AC` ผ่าน / `WA` + diff (·=space) / `TLE` เกินเวลา / `MLE` หน่วยความจำ /
