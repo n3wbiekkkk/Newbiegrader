@@ -11,11 +11,26 @@ const state = {
   problems: [],
   stats: {},
   current: null,
-  lang: "python",
+  lang: "cpp",
+  taskTab: "statement",
   file: null,
   user: null,
   filter: { q: "", diff: "", tag: "" },
 };
+
+/* ---------------- task tabs ---------------- */
+function setTaskTab(tab) {
+  state.taskTab = tab;
+  document.querySelectorAll(".tab-btn").forEach((b) =>
+    b.classList.toggle("active", b.dataset.tab === tab));
+  document.querySelectorAll(".tab-pane").forEach((p) =>
+    p.classList.toggle("active", p.id === "pane-" + tab));
+  if (tab === "subs") loadTaskSubs();
+  if (tab === "mine") loadTaskMine();
+}
+document.querySelectorAll(".tab-btn").forEach((b) => {
+  b.onclick = () => setTaskTab(b.dataset.tab);
+});
 
 function esc(s) {
   return String(s)
@@ -308,10 +323,12 @@ function renderTasksTable() {
 /* ---------------- task detail ---------------- */
 async function selectProblem(pid) {
   state.current = pid;
+  setTaskTab("statement");
   $("task-title").textContent = "Loading...";
   $("task-body").textContent = "Loading problem...";
   $("result-body").innerHTML = `<span class="dim">ส่งโค้ดแล้วผลจะขึ้นตรงนี้</span>`;
   $("score-line").textContent = "";
+  $("your-score-num").textContent = "—";
   try {
     const p = await apiGet(`/api/problems/${encodeURIComponent(pid)}`);
     $("task-title").textContent = `${p.id} — ${p.title}`;
@@ -327,31 +344,70 @@ async function selectProblem(pid) {
     } else {
       pl.classList.add("hidden");
     }
-    loadTaskHistory();
+    refreshYourScore();
   } catch (e) {
     $("task-body").textContent = "โหลดโจทย์ไม่สำเร็จ: " + e.message;
   }
 }
 
-async function loadTaskHistory() {
-  const body = $("task-hist-body");
-  if (!state.current) return;
+async function refreshYourScore() {
+  if (!state.current || !state.user) {
+    $("your-score-num").textContent = state.user ? "0" : "—";
+    return;
+  }
   try {
-    const h = await apiGet(`/api/history?limit=10&problem=${encodeURIComponent(state.current)}`);
+    const h = await apiGet(`/api/history?limit=100&problem=${encodeURIComponent(state.current)}&mine=1`);
+    const rows = (h.configured && h.submissions) || [];
+    const best = rows.reduce((m, r) => Math.max(m, r.score || 0), 0);
+    $("your-score-num").textContent = rows.length ? `${best}/100` : "0";
+  } catch (e) {
+    $("your-score-num").textContent = "?";
+  }
+}
+
+async function loadTaskSubs() {
+  const body = $("task-all-body");
+  if (!state.current) return;
+  body.innerHTML = `<span class="dim">กำลังโหลด...</span>`;
+  try {
+    const h = await apiGet(`/api/history?limit=50&problem=${encodeURIComponent(state.current)}`);
     if (!h.configured) {
-      body.innerHTML = `<span class="dim">ยังไม่เปิด history (ตั้งค่า Supabase ที่ backend)</span>`;
+      body.innerHTML = `<span class="dim">ยังไม่เปิด submissions (ตั้งค่า Supabase ที่ backend)</span>`;
       return;
     }
     const rows = h.submissions || [];
     if (!rows.length) {
-      body.innerHTML = `<span class="dim">ข้อนี้ยังไม่มีใครส่ง</span>`;
+      body.innerHTML = `<span class="dim">ข้อนี้ยังไม่มีใครส่ง — เป็นคนแรกเลย</span>`;
       return;
     }
     body.classList.remove("dim");
     body.innerHTML = historyTable(rows, false);
     bindViewButtons(body);
   } catch (e) {
-    body.innerHTML = `<span class="dim">ดูประวัติไม่ได้: ${esc(e.message)}</span>`;
+    body.innerHTML = `<span class="dim">ดูไม่ได้: ${esc(e.message)}</span>`;
+  }
+}
+
+async function loadTaskMine() {
+  const body = $("task-mine-body");
+  if (!state.current) return;
+  if (!state.user) {
+    body.innerHTML = `<span class="dim">login ด้วย Google ก่อนดูของตัวเอง</span>`;
+    return;
+  }
+  body.innerHTML = `<span class="dim">กำลังโหลด...</span>`;
+  try {
+    const h = await apiGet(`/api/history?limit=100&problem=${encodeURIComponent(state.current)}&mine=1`);
+    const rows = (h.configured && h.submissions) || [];
+    if (!rows.length) {
+      body.innerHTML = `<span class="dim">ยังไม่เคยส่งข้อนี้ — ไปแท็บ Submit เลย</span>`;
+      return;
+    }
+    body.classList.remove("dim");
+    body.innerHTML = historyTable(rows, false);
+    bindViewButtons(body);
+  } catch (e) {
+    body.innerHTML = `<span class="dim">ดูไม่ได้: ${esc(e.message)}</span>`;
   }
 }
 
@@ -370,7 +426,6 @@ async function refreshMe() {
   if (state.user) {
     chip.textContent = state.user.name || state.user.email;
     chip.title = state.user.email || "";
-    if (!$("submit-name").value) $("submit-name").value = state.user.name || "";
   }
 }
 
@@ -443,13 +498,6 @@ $("submit-btn").onclick = async () => {
   if (!state.current) return;
   const btn = $("submit-btn");
   const code = $("editor").value;
-  const name = $("submit-name").value.trim();
-  if (!name) {
-    $("submit-status").textContent = "ใส่ชื่อก่อนส่ง";
-    $("submit-name").focus();
-    return;
-  }
-  try { localStorage.setItem("ng_name", name); } catch (e) { /* ignore */ }
   if (!state.user) {
     $("submit-status").textContent = "login ด้วย Google ก่อนส่ง";
     return;
@@ -462,7 +510,7 @@ $("submit-btn").onclick = async () => {
   fd.append("problem", state.current);
   fd.append("language", state.lang);
   fd.append("code", code);
-  fd.append("name", name);
+  fd.append("name", state.user.name || "");
   if (state.file) fd.append("file", state.file, state.file.name);
 
   btn.disabled = true;
@@ -478,7 +526,9 @@ $("submit-btn").onclick = async () => {
       `เสร็จใน ${((performance.now() - t0) / 1000).toFixed(2)}s — ${data.score}/100 คะแนน`;
     await fetchStats();
     renderTasksTable();
-    loadTaskHistory();
+    refreshYourScore();
+    if (state.taskTab === "subs") loadTaskSubs();
+    if (state.taskTab === "mine") loadTaskMine();
     if (document.querySelector("#view-history.active")) loadHistory();
   } catch (e) {
     $("result-body").innerHTML = `<span class="score-big bad">ส่งไม่สำเร็จ</span><pre class="dim">${esc(e.message)}</pre>`;
@@ -621,6 +671,7 @@ async function viewSubmission(sid) {
       await selectProblem(r.problem);
     }
     show("task");
+    setTaskTab("submit");
     renderResults({
       verdict: r.verdict, accepted: r.accepted,
       passed: r.passed, total: r.total, score: r.score,
@@ -631,7 +682,7 @@ async function viewSubmission(sid) {
       code: r.code || "", filename: r.filename || "", language: r.language || "",
       author: r.name || "",
     }, 0);
-    document.querySelector("#view-task .card:last-child").scrollIntoView({ behavior: "smooth" });
+    document.querySelector("#pane-submit").scrollIntoView({ behavior: "smooth" });
   } catch (e) {
     $("submit-status").textContent = "เปิด submission ไม่ได้: " + e.message;
   }
@@ -681,7 +732,6 @@ async function init() {
   hf.onchange = loadHistory;
   $("hist-refresh").onclick = loadHistory;
   $("hist-mine").onchange = loadHistory;
-  try { $("submit-name").value = localStorage.getItem("ng_name") || ""; } catch (e) { /* ignore */ }
   await refreshMe();
   if ((location.hash || "").includes("login=failed")) {
     $("health").textContent = "login failed";

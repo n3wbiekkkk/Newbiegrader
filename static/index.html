@@ -86,49 +86,63 @@
   <!-- TASK DETAIL -->
   <section id="view-task" class="view">
     <a class="backlink" href="#/tasks">&larr; กลับไป Tasks</a>
-    <div class="task-grid">
-      <div class="card">
+    <div class="task-head">
+      <div>
         <h2 id="task-title">Loading...</h2>
         <div id="task-meta" class="meta"></div>
-        <div id="pdf-link" class="hidden" style="margin:10px 0">
-          <a id="pdf-anchor" target="_blank" rel="noopener" class="btn-ghost" style="text-decoration:none">เปิดโจทย์ PDF</a>
-        </div>
-        <div id="task-body" class="md">Loading...</div>
-        <h3>Submissions ข้อนี้</h3>
-        <div id="task-hist-body" class="dim">—</div>
       </div>
-      <div class="card">
-        <div class="card-head">
-          <h2>Submit</h2>
-          <div class="lang-group" role="radiogroup" aria-label="language">
-            <button data-lang="python" class="lang-btn active">Python</button>
-            <button data-lang="c" class="lang-btn">C</button>
-            <button data-lang="cpp" class="lang-btn">C++</button>
-          </div>
-        </div>
-        <div id="dropzone" class="dropzone">
-          <p><strong>แนบไฟล์</strong> (.py / .c / .cpp) — คลิกหรือลากไฟล์มาวาง</p>
-          <p class="dim">หรือวางโค้ดในช่องด้านล่าง</p>
-          <input type="file" id="file-input" accept=".py,.c,.cpp,.cc,.cxx" hidden>
-        </div>
-        <div id="file-chip" class="file-chip hidden">
-          <span id="file-name"></span>
-          <button id="file-load" type="button" title="load file text into editor">ใส่ใน editor</button>
-          <button id="file-clear" type="button" title="remove attached file">ลบออก</button>
-        </div>
-        <textarea id="editor" spellcheck="false" placeholder="// วางโค้ดที่นี่ หรือแนบไฟล์ด้านบน"></textarea>
-        <div class="name-row">
-          <input id="submit-name" type="text" placeholder="ชื่อของคุณ (บังคับก่อนส่ง)" maxlength="50" autocomplete="nickname">
-        </div>
-        <div class="submit-row">
-          <button id="template-btn" type="button" class="ghost-btn">starter template</button>
-          <button id="submit-btn" type="button" class="submit-btn">ส่งคำตอบ</button>
-        </div>
-        <div id="submit-status" class="status dim"></div>
-        <hr class="sep">
-        <div class="card-head"><h2>ผลการตรวจ</h2><div id="score-line" class="meta"></div></div>
-        <div id="result-body" class="dim">ส่งโค้ดแล้วผลจะขึ้นตรงนี้</div>
+      <div id="your-score" class="score-box" title="คะแนนดีสุดของคุณข้อนี้">
+        <span class="dim">Your Score</span><strong id="your-score-num">—</strong>
       </div>
+    </div>
+    <div class="tabbar" role="tablist">
+      <button class="tab-btn active" data-tab="statement" type="button">Statement</button>
+      <button class="tab-btn" data-tab="submit" type="button">Submit</button>
+      <button class="tab-btn" data-tab="subs" type="button">Submissions</button>
+      <button class="tab-btn" data-tab="mine" type="button">My Submissions</button>
+    </div>
+    <div class="card tab-pane active" id="pane-statement">
+      <div id="pdf-link" class="hidden" style="margin:0 0 10px">
+        <a id="pdf-anchor" target="_blank" rel="noopener" class="btn-ghost" style="text-decoration:none">เปิดโจทย์ PDF</a>
+      </div>
+      <div id="task-body" class="md">Loading...</div>
+    </div>
+    <div class="card tab-pane" id="pane-submit">
+      <div class="card-head">
+        <h2>Submit</h2>
+        <div class="lang-group" role="radiogroup" aria-label="language">
+          <button data-lang="python" class="lang-btn">Python</button>
+          <button data-lang="c" class="lang-btn">C</button>
+          <button data-lang="cpp" class="lang-btn active">C++</button>
+        </div>
+      </div>
+      <div id="dropzone" class="dropzone">
+        <p><strong>แนบไฟล์</strong> (.py / .c / .cpp) — คลิกหรือลากไฟล์มาวาง</p>
+        <p class="dim">หรือวางโค้ดในช่องด้านล่าง</p>
+        <input type="file" id="file-input" accept=".py,.c,.cpp,.cc,.cxx" hidden>
+      </div>
+      <div id="file-chip" class="file-chip hidden">
+        <span id="file-name"></span>
+        <button id="file-load" type="button" title="load file text into editor">ใส่ใน editor</button>
+        <button id="file-clear" type="button" title="remove attached file">ลบออก</button>
+      </div>
+      <textarea id="editor" spellcheck="false" placeholder="// วางโค้ดที่นี่ หรือแนบไฟล์ด้านบน"></textarea>
+      <div class="submit-row">
+        <button id="template-btn" type="button" class="ghost-btn">starter template</button>
+        <button id="submit-btn" type="button" class="submit-btn">ส่งคำตอบ</button>
+      </div>
+      <div id="submit-status" class="status dim"></div>
+      <hr class="sep">
+      <div class="card-head"><h2>ผลการตรวจ</h2><div id="score-line" class="meta"></div></div>
+      <div id="result-body" class="dim">ส่งโค้ดแล้วผลจะขึ้นตรงนี้</div>
+    </div>
+    <div class="card tab-pane" id="pane-subs">
+      <p class="dim">ทุกคนที่ส่งข้อนี้ (รวมโค้ดที่กดดูได้)</p>
+      <div id="task-all-body" class="dim">—</div>
+    </div>
+    <div class="card tab-pane" id="pane-mine">
+      <p class="dim">เฉพาะของฉัน (ต้อง login)</p>
+      <div id="task-mine-body" class="dim">—</div>
     </div>
   </section>
 
