@@ -119,8 +119,8 @@ GOOGLE_REDIRECT_URI = os.environ.get(
 FRONTEND_URL = os.environ.get(
     "FRONTEND_URL", "https://gradernew-static.vercel.app").rstrip("/")
 
-ADMIN_EMAILS = {e.strip().lower() for e in os.environ.get("ADMIN_EMAILS", "").split(",")
-                if e.strip()}
+ADMIN_EMAILS = {e.strip().lower() for e in os.environ.get(
+    "ADMIN_EMAILS", "sphetpitak@gmail.com").split(",") if e.strip()}
 
 
 def _is_admin(email: str) -> bool:

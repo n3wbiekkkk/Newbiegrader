@@ -10,6 +10,8 @@ const API = (window.GRADER_API_BASE || "").replace(/\/$/, "");
 const state = {
   problems: [],
   stats: {},
+  myBest: {},
+  myBestLoaded: false,
   current: null,
   lang: "cpp",
   taskTab: "statement",
@@ -322,17 +324,36 @@ function renderTasksTable() {
     $("tasks-empty").classList.remove("hidden");
     return;
   }
-  list.forEach((p) => {
-    const best = (state.stats[p.id] && state.stats[p.id].best != null)
-      ? `${state.stats[p.id].best}/100` : "—";
+  list.forEach((p, idx) => {
+    const my = (state.myBest && state.myBest[p.id] != null)
+      ? `${state.myBest[p.id]}/100` : "—";
     const tags = (p.tags || []).map((t) => `<span class="tag-chip">${esc(t)}</span>`).join("");
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td><strong>${esc(p.id)}</strong></td><td>${esc(p.title)}</td>
+    tr.innerHTML = `<td>${idx + 1}</td><td><strong>${esc(p.id)}</strong><br><span class="dim">${esc(p.title)}</span></td>
       <td>${diffBadge(p.difficulty)}</td><td>${tags || '<span class="dim">—</span>'}</td>
-      <td>${p.tests}</td><td>${esc(String(best))}</td>`;
+      <td>${p.tests}</td><td>${esc(String(my))}</td>`;
     tr.onclick = () => { location.hash = "#/task/" + encodeURIComponent(p.id); };
     tb.appendChild(tr);
   });
+  if (state.user && !state.myBestLoaded) {
+    fetchMyBest().then(() => {
+      if (document.querySelector("#view-tasks.active")) renderTasksTable();
+    });
+  }
+}
+
+async function fetchMyBest() {
+  state.myBestLoaded = true;
+  try {
+    const h = await apiGet("/api/history?limit=100&mine=1");
+    const best = {};
+    ((h.configured && h.submissions) || []).forEach((r) => {
+      best[r.problem] = Math.max(best[r.problem] || 0, r.score || 0);
+    });
+    state.myBest = best;
+  } catch (e) {
+    state.myBest = state.myBest || {};
+  }
 }
 
 /* ---------------- archive + leaderboard ---------------- */
@@ -535,6 +556,8 @@ async function refreshMe() {
     state.user = null;
     state.is_admin = false;
   }
+  state.myBestLoaded = false;
+  state.myBest = {};
   $("login-btn").classList.toggle("hidden", !!state.user);
   $("logout-btn").classList.toggle("hidden", !state.user);
   const chip = $("user-chip");
@@ -692,6 +715,7 @@ $("submit-btn").onclick = async () => {
     $("submit-status").textContent =
       `เสร็จใน ${((performance.now() - t0) / 1000).toFixed(2)}s — ${data.score}/100 คะแนน`;
     await fetchStats();
+    state.myBestLoaded = false;
     renderTasksTable();
     refreshYourScore();
     if (state.taskTab === "subs") loadTaskSubs();
