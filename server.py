@@ -116,7 +116,8 @@ async def _store_submission(row: dict) -> None:
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "").strip()
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "").strip()
 GOOGLE_REDIRECT_URI = os.environ.get(
-    "GOOGLE_REDIRECT_URI", "https://grader.n.onjrnm.vip/api/auth/callback").strip()
+    "GOOGLE_REDIRECT_URI",
+    "https://gradernew-static.vercel.app/api/auth/callback").strip()
 FRONTEND_URL = os.environ.get(
     "FRONTEND_URL", "https://gradernew-static.vercel.app").rstrip("/")
 
