@@ -340,7 +340,7 @@ function renderTasksTable() {
     const tr = document.createElement("tr");
     tr.innerHTML = `<td>${idx + 1}</td><td><strong>${esc(p.id)}</strong><br><span class="dim">${esc(p.title)}</span></td>
       <td>${diffBadge(p.difficulty)}</td><td>${tags || '<span class="dim">—</span>'}</td>
-      <td>${p.tests}</td><td>${esc(String(my))}</td>`;
+      <td>${p.tests}</td><td>${my}</td>`;
     tr.onclick = () => { location.hash = "#/task/" + encodeURIComponent(p.id); };
     tb.appendChild(tr);
   });
