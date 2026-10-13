@@ -271,6 +271,7 @@ function router() {
   }
   if (h === "#/tasks") { show("tasks"); renderTasksTable(); return; }
   if (h === "#/history") { show("history"); loadHistory(); return; }
+  if (h === "#/settings") { show("settings"); renderSettings(); return; }
   show("home");
   renderHome();
 }
@@ -453,6 +454,12 @@ async function refreshMe() {
   if (state.user) {
     chip.textContent = state.user.name || state.user.email;
     chip.title = state.user.email || "";
+    try {
+      const data = await apiGet("/api/profile");
+      if (data.configured && data.profile.default_language) {
+        setLang(data.profile.default_language);
+      }
+    } catch (e) { /* profile unavailable: keep current language */ }
   }
 }
 
@@ -470,12 +477,7 @@ $("logout-btn").onclick = async () => {
 
 /* ---------------- language + file ---------------- */
 document.querySelectorAll(".lang-btn").forEach((b) => {
-  b.onclick = () => {
-    state.lang = b.dataset.lang;
-    document.querySelectorAll(".lang-btn").forEach((x) =>
-      x.classList.toggle("active", x === b)
-    );
-  };
+  b.onclick = () => setLang(b.dataset.lang);
 });
 
 const dz = $("dropzone");
@@ -716,6 +718,74 @@ async function viewSubmission(sid) {
     document.querySelector("#pane-submit").scrollIntoView({ behavior: "smooth" });
   } catch (e) {
     $("submit-status").textContent = "เปิด submission ไม่ได้: " + e.message;
+  }
+}
+
+/* ---------------- settings ---------------- */
+function setLang(lang) {
+  if (!["python", "c", "cpp"].includes(lang)) return;
+  state.lang = lang;
+  document.querySelectorAll(".lang-btn").forEach((x) =>
+    x.classList.toggle("active", x.dataset.lang === lang));
+}
+
+async function renderSettings() {
+  const body = $("settings-body");
+  if (!state.user) {
+    body.innerHTML = `<span class="dim">login ด้วย Google ก่อนตั้งค่า</span>`;
+    return;
+  }
+  body.innerHTML = `<span class="dim">กำลังโหลด...</span>`;
+  try {
+    const data = await apiGet("/api/profile");
+    const p = data.profile || {};
+    if (!data.configured) {
+      body.innerHTML = `<p><strong>บัญชี:</strong> ${esc(p.name || "")} (${esc(p.email || "")})</p>
+        <p class="dim">ยังไม่เปิด profile (ตั้งค่า Supabase ที่ backend) — ชื่อโชว์จะใช้ชื่อ Google</p>`;
+      return;
+    }
+    body.classList.remove("dim");
+    body.innerHTML = `
+      <p><strong>บัญชี Google:</strong> ${esc(p.name || "")} (${esc(p.email || "")})</p>
+      <div class="settings-row">
+        <label for="set-display">Display name <span class="dim">(ชื่อที่โชว์ใน history ว่าง = ใช้ชื่อ Google)</span></label>
+        <input id="set-display" type="text" maxlength="50" value="${esc(p.display_name || "")}" placeholder="${esc(p.name || "")}">
+      </div>
+      <div class="settings-row">
+        <label for="set-lang">ภาษา default ตอนส่ง</label>
+        <select id="set-lang">
+          <option value="python">Python</option>
+          <option value="c">C</option>
+          <option value="cpp">C++</option>
+        </select>
+      </div>
+      <div class="submit-row">
+        <button id="settings-save" type="button" class="submit-btn">บันทึก</button>
+      </div>
+      <div id="settings-status" class="status dim"></div>`;
+    $("set-lang").value = p.default_language || state.lang;
+    $("settings-save").onclick = async () => {
+      const payload = {
+        display_name: $("set-display").value.trim(),
+        default_language: $("set-lang").value,
+      };
+      $("settings-status").textContent = "กำลังบันทึก...";
+      try {
+        const r = await fetch(API + "/api/profile", {
+          method: "PUT", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
+        $("settings-status").textContent = "บันทึกแล้ว";
+        setLang(d.profile.default_language || state.lang);
+      } catch (e) {
+        $("settings-status").textContent = "บันทึกไม่สำเร็จ: " + e.message;
+      }
+    };
+  } catch (e) {
+    body.innerHTML = `<span class="dim">โหลดไม่ได้: ${esc(e.message)}</span>`;
   }
 }
 
