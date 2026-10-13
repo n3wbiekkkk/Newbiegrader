@@ -17,6 +17,7 @@ import concurrent.futures
 import difflib
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -240,11 +241,36 @@ def check_float(expected: str, actual: str, tol: float) -> bool:
                 return False
     return True
 
+DECIMAL2_RE = re.compile(r"^-?\d+\.\d{2}$")
+
+
+def check_decimal2(expected: str, actual: str, tol: float = 1e-6) -> bool:
+    """Line-locked 2-decimal checker: same line/token counts, every token must
+    look like setprecision(2) output, values within tolerance. Leading/trailing
+    spaces per line (and multi-space gaps) are forgiven."""
+    e = expected.rstrip("\r\n").split("\n")
+    a = actual.rstrip("\r\n").split("\n")
+    if len(e) != len(a):
+        return False
+    for x, y in zip(e, a):
+        et, at = x.split(), y.split()
+        if len(et) != len(at):
+            return False
+        for u, v in zip(et, at):
+            if not DECIMAL2_RE.match(u) or not DECIMAL2_RE.match(v):
+                return False
+            if abs(float(u) - float(v)) > tol:
+                return False
+    return True
+
+
 def run_checker(checker: str, expected: str, actual: str, tol: float) -> bool:
     if checker == "exact":
         return check_exact(expected, actual)
     if checker == "float":
         return check_float(expected, actual, tol)
+    if checker == "decimal2":
+        return check_decimal2(expected, actual, tol)
     return check_token(expected, actual)
 
 def visible(s: str) -> str:
