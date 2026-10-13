@@ -466,6 +466,9 @@ function renderResults(d, secs) {
   } else {
     const ok = d.accepted;
     html += `<div class="score-big ${ok ? "ok" : "bad"}">${ok ? "ACCEPTED" : "REJECTED"}</div>`;
+    if (d.author || d.language) {
+      html += `<div class="meta">by ${esc(d.author || "—")} · ${esc(d.language || "")}${d.filename ? ` · ${esc(d.filename)}` : ""}</div>`;
+    }
     const counts = Object.entries(d.counts || {})
       .map(([k, n]) => `${esc(k)}:${n}`).join("  ");
     html += `<div class="meta">${esc(counts)} &nbsp;|&nbsp; TL ${esc(String(d.limits.time_s))}s MEM ${esc(String(d.limits.memory_mb))}MB checker ${esc(d.checker)}</div>`;
@@ -483,6 +486,9 @@ function renderResults(d, secs) {
       html += `<tr class="detail-row hidden" data-i="${i}"><td colspan="6" class="detail-cell">${detailHtml(r)}</td></tr>`;
     });
     html += `</tbody></table>`;
+  }
+  if (d.code) {
+    html += `<details class="code-view"><summary>ดูโค้ดที่ส่ง (${esc(String(d.code).split("\n").length)} บรรทัด)</summary><pre>${esc(d.code)}</pre></details>`;
   }
   const body = $("result-body");
   body.classList.remove("dim");
@@ -581,6 +587,8 @@ async function viewSubmission(sid) {
       compile_error: r.detail || "",
       limits: { time_s: "-", memory_mb: "-" }, checker: "-",
       results: r.results || [],
+      code: r.code || "", filename: r.filename || "", language: r.language || "",
+      author: r.name || "",
     }, 0);
     document.querySelector("#view-task .card:last-child").scrollIntoView({ behavior: "smooth" });
   } catch (e) {
