@@ -1,7 +1,8 @@
 /* Runtime config for split deployment.
- * Same-origin (local / all-in-one docker): leave as "".
- * Frontend on Vercel + backend elsewhere: set your backend URL, e.g.
- *   window.GRADER_API_BASE = "https://brutal-grader-api.onrender.com";
- * and set GRADER_CORS_ORIGINS on the backend to your Vercel URL.
+ * Leave as "" (same origin). The Vercel frontend proxies /api/* to the
+ * backend (see vercel.json), so the browser never talks cross-origin —
+ * this keeps login working even when third-party cookies are blocked.
+ * Only set a backend URL if you serve the frontend from a host WITHOUT
+ * the /api proxy (then also set GRADER_CORS_ORIGINS on the backend).
  */
-window.GRADER_API_BASE = "https://grader.n.onjrnm.vip";
+window.GRADER_API_BASE = "";
