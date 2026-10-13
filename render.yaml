@@ -1,0 +1,12 @@
+# Render Blueprint: one-click backend deploy (judge API + compiler toolchain).
+# Dashboard -> New -> Blueprint -> select repo. Then set GRADER_CORS_ORIGINS
+# to your Vercel frontend URL (e.g. https://gradernew.vercel.app).
+services:
+  - type: web
+    name: brutal-grader-api
+    runtime: docker
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: GRADER_CORS_ORIGINS
+        sync: false

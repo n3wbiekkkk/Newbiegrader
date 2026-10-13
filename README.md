@@ -15,7 +15,36 @@ python3 server.py                  # http://127.0.0.1:8000
 python3 server.py --port 8080
 ```
 
-API:
+## Deploy (Vercel + backend แยกกัน)
+
+อย่า deploy ทั้ง repo ด้วย preset FastAPI บน Vercel — serverless ไม่มี compiler (C/C++ คอมไพล์ไม่ได้),
+filesystem เขียนไม่ได้นอกจาก `/tmp`, โดนตัด timeout กลางคัน แผนที่ถูก:
+
+**1. Backend (judge) ขึ้น host ที่มี Docker** — Render / Fly.io / Railway / VPS
+```bash
+# Render: New -> Blueprint -> เลือก repo นี้ (ใช้ render.yaml)
+# แล้วตั้ง env: GRADER_CORS_ORIGINS=https://<ชื่อโปรเจกต์>.vercel.app
+```
+หรือ Docker เอง:
+```bash
+docker build -t brutal-grader .
+docker run -e GRADER_CORS_ORIGINS=https://<ชื่อโปรเจกต์>.vercel.app -p 8000:8000 brutal-grader
+```
+
+**2. Frontend ขึ้น Vercel** — ในหน้า Import ตั้ง:
+- Framework Preset: **Other** (ไม่ใช่ FastAPI)
+- Root Directory: **`static`**
+- Build/Output: ไม่ต้องตั้ง (static ล้วน)
+
+แล้วแก้ `static/config.js` ชี้ไป backend:
+```js
+window.GRADER_API_BASE = "https://brutal-grader-api.onrender.com";
+```
+commit + push — Vercel redeploy อัตโนมัติ
+
+รัน local ทั้งก้อนแบบเดิมได้อยู่ (`python3 server.py` — same origin, ไม่ต้องมี CORS)
+
+## API
 - `GET /api/health` — สถานะ + รายชื่อโจทย์
 - `GET /api/languages` — ภาษาที่รองรับ (python/c/cpp)
 - `GET /api/problems` — รายการโจทย์

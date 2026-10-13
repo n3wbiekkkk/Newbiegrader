@@ -197,8 +197,12 @@ int main() {
 };
 
 /* ---------------- problems ---------------- */
+/* Split-deploy support: static host + separate backend.
+ * Set window.GRADER_API_BASE in config.js ("" = same origin). */
+const API = (window.GRADER_API_BASE || "").replace(/\/$/, "");
+
 async function apiGet(path) {
-  const r = await fetch(path);
+  const r = await fetch(API + path);
   if (!r.ok) throw new Error(`GET ${path}: ${r.status}`);
   return r.json();
 }
@@ -318,7 +322,7 @@ $("submit-btn").onclick = async () => {
   $("result-body").innerHTML = `<span class="dim">running ${esc(state.current)} — strict limits apply...</span>`;
   const t0 = performance.now();
   try {
-    const r = await fetch("/api/submit", { method: "POST", body: fd });
+    const r = await fetch(API + "/api/submit", { method: "POST", body: fd });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
     renderResults(data, (performance.now() - t0) / 1000);
