@@ -333,13 +333,12 @@ async def submit(
         raise HTTPException(status_code=400,
                             detail=f"unsupported language: {language} (choose python/c/cpp)")
     name = (name or "").strip()
-    if not name:
-        raise HTTPException(status_code=400, detail="please enter your name before submitting")
     if len(name) > 50:
         raise HTTPException(status_code=400, detail="name too long (max 50 characters)")
     user = request.session.get("user") or {}
     if not user.get("email"):
         raise HTTPException(status_code=401, detail="login with Google first")
+    name = (user.get("name") or user.get("email", ""))[:50]  # identity from login
 
     source: Optional[str] = None
     filename: Optional[str] = None

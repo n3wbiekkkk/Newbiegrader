@@ -137,9 +137,23 @@ table.tasks-table tbody tr:hover td { background: var(--panel2); }
 /* task detail */
 .backlink { display: inline-block; margin-bottom: 16px; color: var(--dim); text-decoration: none; font-size: 13px; }
 .backlink:hover { color: var(--text); }
-.task-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: start; }
-.task-grid h2 { margin: 0 0 4px; font-size: 22px; letter-spacing: -0.5px; }
-.task-grid h3 { margin: 28px 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); font-weight: 600; }
+.task-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 14px; flex-wrap: wrap; }
+.task-head h2 { margin: 0 0 4px; font-size: 24px; letter-spacing: -0.5px; }
+.score-box {
+  text-align: right; border: 1px solid var(--border); border-radius: 10px;
+  padding: 6px 16px; background: #fff; min-width: 130px;
+}
+.score-box span { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; }
+.score-box strong { font-size: 22px; }
+.tabbar { display: flex; gap: 2px; border-bottom: 2px solid var(--border); margin-bottom: 16px; }
+.tab-btn {
+  background: none; border: none; padding: 10px 18px; cursor: pointer;
+  font-size: 14px; color: var(--dim); border-bottom: 2px solid transparent; margin-bottom: -2px;
+}
+.tab-btn:hover { color: var(--text); }
+.tab-btn.active { color: var(--text); font-weight: 700; border-bottom-color: var(--text); }
+.tab-pane { display: none; }
+.tab-pane.active { display: block; }
 .md { font-size: 14px; overflow-wrap: anywhere; }
 .md h1 { font-size: 20px; margin: 1.2em 0 .5em; }
 .md h2 { font-size: 16px; margin: 1.2em 0 .5em; }
@@ -185,13 +199,6 @@ table.tasks-table tbody tr:hover td { background: var(--panel2); }
 }
 #editor:focus { outline: none; border-color: var(--text); background: #fff; }
 .submit-row { display: flex; gap: 10px; margin-top: 12px; align-items: center; }
-.name-row { margin-top: 10px; }
-.name-row input {
-  width: 100%; border: 1px solid var(--border);
-  border-radius: 8px; padding: 9px 12px; font-size: 14px;
-  background: #fff; color: var(--text);
-}
-.name-row input:focus { outline: none; border-color: var(--text); }
 .ghost-btn {
   background: transparent; color: var(--dim);
   border: none; padding: 8px 4px; cursor: pointer; font-size: 13px;
@@ -239,7 +246,6 @@ tr.test-row:hover td { background: var(--panel2); }
 .foot p { margin: 0; }
 
 @media (max-width: 900px) {
-  .task-grid { grid-template-columns: 1fr; gap: 24px; }
   .features { grid-template-columns: 1fr; }
   .feature + .feature { padding-left: 0; border-left: none; border-top: 1px solid var(--border); padding-top: 16px; }
   .hero h1 { font-size: 30px; }

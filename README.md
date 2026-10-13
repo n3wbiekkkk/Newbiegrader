@@ -65,7 +65,7 @@ SESSION_SAMESITE=none
 SESSION_SECURE=true
 ```
 (local: `SESSION_SAMESITE=lax SESSION_SECURE=false`)
-4. หน้าเว็บจะมีปุ่ม Sign in with Google — login แล้วชื่อจะเติมให้เอง ส่งต้อง login ทุกครั้ง (API ตอบ 401 ถ้าไม่ login) ประวัติดูของตัวเองได้ด้วยติ๊ก "ของฉัน"
+4. หน้าเว็บจะมีปุ่ม Sign in with Google — login แล้วส่งได้เลย ไม่ต้องกรอกชื่อ (ใช้ชื่อโปรไฟล์อัตโนมัติ) ประวัติดูของตัวเองได้ด้วยติ๊ก "ของฉัน"
 
 ## Supabase (ประวัติส่ง + สถิติ, optional)
 
