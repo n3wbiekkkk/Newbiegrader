@@ -24,7 +24,7 @@ import sys
 import tempfile
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 ROOT = Path(__file__).parent
@@ -77,6 +77,8 @@ class Problem:
     tolerance: float
     description: str
     tests: list[TestCase]
+    difficulty: str = ""        # easy | medium | hard (ไว้ filter)
+    tags: list[str] = field(default_factory=list)
 
 def load_problem(pid: str) -> Problem:
     pdir = PROBLEMS_DIR / pid
@@ -89,6 +91,9 @@ def load_problem(pid: str) -> Problem:
     memory_limit = int(cfg.get("memory_limit", 256))
     checker = cfg.get("checker", "token")
     tolerance = float(cfg.get("tolerance", 1e-6))
+    difficulty = str(cfg.get("difficulty", ""))
+    _tags = cfg.get("tags", [])
+    tags = [str(t) for t in _tags] if isinstance(_tags, list) else []
     desc_path = pdir / "statement.md"
     description = desc_path.read_text(encoding="utf-8") if desc_path.exists() else ""
 
@@ -109,7 +114,8 @@ def load_problem(pid: str) -> Problem:
     if not tests:
         raise SystemExit(f"Problem '{pid}' has no tests in problems/{pid}/tests/")
     tests.sort(key=lambda t: t.name)
-    return Problem(pid, title, time_limit, memory_limit, checker, tolerance, description, tests)
+    return Problem(pid, title, time_limit, memory_limit, checker, tolerance, description, tests,
+                   difficulty, tags)
 
 def list_problems() -> None:
     if not PROBLEMS_DIR.is_dir():

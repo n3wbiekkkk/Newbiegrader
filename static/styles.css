@@ -42,8 +42,22 @@ body {
 .layout {
   display: grid; gap: 16px; padding: 16px 20px;
   grid-template-columns: 1fr 1fr;
-  grid-template-areas: "statement submit" "results results" "history history";
+  grid-template-areas: "filter filter" "statement submit" "results results" "history history";
   max-width: 1400px; width: 100%; margin: 0 auto; flex: 1;
+}
+.filterbar {
+  grid-area: filter; display: flex; gap: 10px; align-items: center;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 10px; padding: 10px 14px;
+}
+.filterbar input[type="search"] {
+  flex: 1; min-width: 120px; background: #010409; color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px; padding: 7px 12px; font-size: 13px;
+}
+.filterbar input[type="search"]:focus { outline: none; border-color: var(--acc2); }
+.filterbar select {
+  background: var(--panel2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px; font-size: 13px;
 }
 .card {
   background: var(--panel); border: 1px solid var(--border);
@@ -157,5 +171,5 @@ tr.test-row:hover td { background: var(--panel2); }
 .foot { text-align: center; padding: 14px; font-size: 12px; border-top: 1px solid var(--border); }
 
 @media (max-width: 900px) {
-  .layout { grid-template-columns: 1fr; grid-template-areas: "statement" "submit" "results"; }
+  .layout { grid-template-columns: 1fr; grid-template-areas: "filter" "statement" "submit" "results" "history"; }
 }

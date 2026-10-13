@@ -108,8 +108,9 @@ python3 grader.py run aplusb examples/aplusb_correct.cpp   # C++ ก็ได้
 ## เพิ่มโจทย์เอง
 ```bash
 mkdir -p problems/myprob/tests
-# config.json: {"title":"...","time_limit":1.0,"memory_limit":256,"checker":"token"}
-# ใส่ 01.in / 01.out, 02.in / 02.out ... แล้ว run ได้เลย
+# config.json: {"title":"...","time_limit":1.0,"memory_limit":256,"checker":"token",
+#               "difficulty":"easy|medium|hard","tags":["math","impl"]}
+# ใส่ 01.in / 01.out, 02.in / 02.out ... (+ statement.pdf ได้) แล้ว run ได้เลย
 ```
 
 ## หมายเหตุความโหด

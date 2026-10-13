@@ -6,7 +6,39 @@ const state = {
   current: null,
   lang: "python",
   file: null,
+  filter: { q: "", diff: "", tag: "" },
 };
+
+function filteredProblems() {
+  const q = state.filter.q.trim().toLowerCase();
+  return state.problems.filter((p) => {
+    if (state.filter.diff && (p.difficulty || "") !== state.filter.diff) return false;
+    if (state.filter.tag && !(p.tags || []).includes(state.filter.tag)) return false;
+    if (q && !(`${p.id} ${p.title}`.toLowerCase().includes(q))) return false;
+    return true;
+  });
+}
+
+function renderTabs() {
+  const tabs = $("problem-tabs");
+  tabs.innerHTML = "";
+  const list = filteredProblems();
+  list.forEach((p) => {
+    const b = document.createElement("button");
+    b.className = "tab" + (p.id === state.current ? " active" : "");
+    b.textContent = p.difficulty ? `${p.id} [${p.difficulty}]` : p.id;
+    b.title = `${p.title}${(p.tags || []).length ? " — " + p.tags.join(", ") : ""}`;
+    b.onclick = () => selectProblem(p.id);
+    tabs.appendChild(b);
+  });
+  $("filter-count").textContent = `${list.length}/${state.problems.length} problems`;
+  if (!list.length) {
+    $("prob-title").textContent = "No match";
+    $("prob-body").textContent = "No problems match the current filter.";
+  } else if (!list.some((p) => p.id === state.current)) {
+    selectProblem(list[0].id);
+  }
+}
 
 const $ = (id) => document.getElementById(id);
 
@@ -219,18 +251,25 @@ async function init() {
   }
   const data = await apiGet("/api/problems");
   state.problems = data.problems;
-  const tabs = $("problem-tabs");
-  tabs.innerHTML = "";
-  state.problems.forEach((p, i) => {
-    const b = document.createElement("button");
-    b.className = "tab" + (i === 0 ? " active" : "");
-    b.textContent = p.id;
-    b.title = p.title;
-    b.onclick = () => selectProblem(p.id);
-    tabs.appendChild(b);
+  // filter dropdowns (dynamic from data)
+  const diffs = [...new Set(state.problems.map((p) => p.difficulty).filter(Boolean))].sort();
+  const tags = [...new Set(state.problems.flatMap((p) => p.tags || []))].sort();
+  const fd = $("f-diff"), ft = $("f-tag");
+  diffs.forEach((d) => {
+    const o = document.createElement("option");
+    o.value = d; o.textContent = d;
+    fd.appendChild(o);
   });
-  if (state.problems.length) selectProblem(state.problems[0].id);
-  else {
+  tags.forEach((t) => {
+    const o = document.createElement("option");
+    o.value = t; o.textContent = t;
+    ft.appendChild(o);
+  });
+  $("q").oninput = (e) => { state.filter.q = e.target.value; renderTabs(); };
+  fd.onchange = (e) => { state.filter.diff = e.target.value; renderTabs(); };
+  ft.onchange = (e) => { state.filter.tag = e.target.value; renderTabs(); };
+  renderTabs();
+  if (!state.problems.length) {
     $("prob-title").textContent = "No problems yet";
     $("prob-body").textContent = "All problems were removed. Send a PDF to create new ones.";
   }
@@ -248,16 +287,16 @@ async function init() {
 
 async function selectProblem(pid) {
   state.current = pid;
-  document.querySelectorAll(".tab").forEach((t) =>
-    t.classList.toggle("active", t.textContent === pid)
-  );
+  renderTabs();
   $("prob-title").textContent = "Loading...";
   $("prob-body").textContent = "Loading problem...";
   try {
     const p = await apiGet(`/api/problems/${encodeURIComponent(pid)}`);
     $("prob-title").textContent = `${p.id} - ${p.title}`;
+    const extra = [p.difficulty, ...((p.tags || []))].filter(Boolean).join(" · ");
     $("prob-meta").textContent =
-      `TL ${p.time_limit}s | MEM ${p.memory_limit}MB | checker ${p.checker} | ${p.tests} tests`;
+      `TL ${p.time_limit}s | MEM ${p.memory_limit}MB | checker ${p.checker} | ${p.tests} tests` +
+      (extra ? ` | ${extra}` : "");
     $("prob-body").innerHTML = renderMd(p.statement || "(no statement)");
     const pl = $("pdf-link");
     if (p.has_pdf) {

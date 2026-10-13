@@ -191,6 +191,7 @@ def list_problems() -> dict:
     return {"problems": [
         {"id": p.pid, "title": p.title, "time_limit": p.time_limit,
          "memory_limit": p.memory_limit, "checker": p.checker,
+         "difficulty": p.difficulty, "tags": p.tags,
          "tests": len(p.tests)}
         for p in PROBLEMS.values()
     ]}
@@ -201,6 +202,7 @@ def problem_detail(pid: str) -> dict:
     p = _problem_or_404(pid)
     return {"id": p.pid, "title": p.title, "time_limit": p.time_limit,
             "memory_limit": p.memory_limit, "checker": p.checker,
+            "difficulty": p.difficulty, "tags": p.tags,
             "tests": len(p.tests), "statement": p.description,
             "has_pdf": (grader.PROBLEMS_DIR / p.pid / "statement.pdf").is_file()}
 
