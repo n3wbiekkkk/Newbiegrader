@@ -38,3 +38,18 @@ create table if not exists profiles (
   default_language text not null default ''
 );
 alter table profiles enable row level security;
+
+-- problem reports (broken statement/tests)
+create table if not exists reports (
+  id uuid primary key default gen_random_uuid(),
+  created_at timestamptz not null default now(),
+  problem text not null,
+  kind text not null default 'other',
+  message text not null default '',
+  user_email text not null default '',
+  name text not null default '',
+  status text not null default 'open'
+);
+create index if not exists reports_problem_time
+  on reports (problem, created_at desc);
+alter table reports enable row level security;

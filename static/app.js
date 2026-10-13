@@ -15,8 +15,20 @@ const state = {
   taskTab: "statement",
   file: null,
   user: null,
+  is_admin: false,
   filter: { q: "", diff: "", tag: "" },
 };
+
+/* ---------------- theme ---------------- */
+function applyTheme(t) {
+  document.documentElement.dataset.theme = t;
+  try { localStorage.setItem("ng_theme", t); } catch (e) { /* ignore */ }
+  const b = $("theme-btn");
+  if (b) b.textContent = t === "dark" ? "light" : "dark";
+}
+try { applyTheme(localStorage.getItem("ng_theme") || "light"); } catch (e) { applyTheme("light"); }
+$("theme-btn").onclick = () =>
+  applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
 
 /* ---------------- task tabs ---------------- */
 function setTaskTab(tab) {
@@ -270,6 +282,8 @@ function router() {
     return;
   }
   if (h === "#/tasks") { show("tasks"); renderTasksTable(); return; }
+  if (h === "#/archive") { show("archive"); renderArchive(); return; }
+  if (h === "#/leaderboard") { show("leaderboard"); renderLeaderboard(); return; }
   if (h === "#/history") { show("history"); loadHistory(); return; }
   if (h === "#/settings") { show("settings"); renderSettings(); return; }
   show("home");
@@ -321,6 +335,77 @@ function renderTasksTable() {
   });
 }
 
+/* ---------------- archive + leaderboard ---------------- */
+function renderArchive() {
+  const tagCount = {};
+  state.problems.forEach((p) => (p.tags || []).forEach((t) => {
+    tagCount[t] = (tagCount[t] || 0) + 1;
+  }));
+  const box = $("archive-tags");
+  const tags = Object.keys(tagCount).sort();
+  box.classList.remove("dim");
+  box.innerHTML = tags.length
+    ? tags.map((t) => `<button class="tag-chip tag-click" data-tag="${esc(t)}">${esc(t)} × ${tagCount[t]}</button>`).join("")
+    : `<span class="dim">ยังไม่มี tag</span>`;
+  box.querySelectorAll("[data-tag]").forEach((b) => {
+    b.onclick = () => {
+      state.filter.tag = b.dataset.tag;
+      $("f-tag").value = b.dataset.tag;
+      location.hash = "#/tasks";
+    };
+  });
+  const groups = {};
+  state.problems.forEach((p) => {
+    const d = p.difficulty || "unrated";
+    (groups[d] = groups[d] || []).push(p);
+  });
+  const order = ["easy", "medium", "hard"];
+  const keys = Object.keys(groups).sort((a, b) => {
+    const ia = order.indexOf(a), ib = order.indexOf(b);
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+  });
+  let html = "";
+  keys.forEach((d) => {
+    html += `<h3 class="pane-h">${esc(d)} (${groups[d].length})</h3>`;
+    html += `<table class="tests"><tbody>`;
+    groups[d].forEach((p) => {
+      html += `<tr class="test-row" data-pid="${esc(p.id)}"><td><strong>${esc(p.id)}</strong></td><td>${esc(p.title)}</td><td>${p.tests} tests</td></tr>`;
+    });
+    html += `</tbody></table>`;
+  });
+  const g = $("archive-groups");
+  g.innerHTML = html || `<span class="dim">ยังไม่มีโจทย์</span>`;
+  g.querySelectorAll("[data-pid]").forEach((tr) => {
+    tr.onclick = () => { location.hash = "#/task/" + encodeURIComponent(tr.dataset.pid); };
+  });
+}
+
+async function renderLeaderboard() {
+  const body = $("leader-body");
+  try {
+    const d = await apiGet("/api/leaderboard?limit=50");
+    if (!d.configured) {
+      body.innerHTML = `<span class="dim">ยังไม่เปิด leaderboard (ตั้งค่า Supabase ที่ backend)</span>`;
+      return;
+    }
+    const top = d.top || [];
+    if (!top.length) {
+      body.innerHTML = `<span class="dim">ยังไม่มีคะแนน</span>`;
+      return;
+    }
+    let html = `<table class="tests"><thead><tr>
+      <th>#</th><th>ชื่อ</th><th>แก้ได้</th><th>คะแนนรวม</th>
+    </tr></thead><tbody>`;
+    top.forEach((t, i) => {
+      html += `<tr><td>${i + 1}</td><td>${esc(t.name)}</td><td>${t.solved} ข้อ</td><td><strong>${t.points}</strong></td></tr>`;
+    });
+    body.classList.remove("dim");
+    body.innerHTML = html + `</tbody></table>`;
+  } catch (e) {
+    body.innerHTML = `<span class="dim">โหลดไม่ได้: ${esc(e.message)}</span>`;
+  }
+}
+
 /* ---------------- task detail ---------------- */
 async function selectProblem(pid) {
   state.current = pid;
@@ -346,6 +431,7 @@ async function selectProblem(pid) {
       pl.classList.add("hidden");
     }
     refreshYourScore();
+    loadMyReports();
   } catch (e) {
     $("task-body").textContent = "โหลดโจทย์ไม่สำเร็จ: " + e.message;
   }
@@ -444,8 +530,10 @@ async function refreshMe() {
   try {
     const me = await apiGet("/api/auth/me");
     state.user = (me && me.user) || null;
+    state.is_admin = !!(me && me.is_admin);
   } catch (e) {
     state.user = null;
+    state.is_admin = false;
   }
   $("login-btn").classList.toggle("hidden", !!state.user);
   $("logout-btn").classList.toggle("hidden", !state.user);
@@ -474,6 +562,56 @@ $("logout-btn").onclick = async () => {
   await refreshMe();
   loadHistory();
 };
+
+/* ---------------- report ---------------- */
+async function loadMyReports() {
+  const box = $("report-mine");
+  if (!box || !state.current) return;
+  if (!state.user) {
+    box.innerHTML = `<span class="dim">login แล้วจะเห็นรีพอร์ตที่เคยส่งข้อนี้</span>`;
+    return;
+  }
+  try {
+    const d = await apiGet(`/api/reports?mine=1&problem=${encodeURIComponent(state.current)}&limit=10`);
+    const rows = (d.configured && d.reports) || [];
+    box.innerHTML = rows.length
+      ? rows.map((r) => `<div class="report-item">[${esc(r.kind)}] ${esc(r.message)} — <span class="dim">${esc(r.status)} · ${esc(new Date(r.created_at).toLocaleString())}</span></div>`).join("")
+      : `<span class="dim">ยังไม่เคยรีพอร์ตข้อนี้</span>`;
+  } catch (e) {
+    box.innerHTML = `<span class="dim">โหลดไม่ได้</span>`;
+  }
+}
+
+async function loadAdminReports() {
+  const box = $("admin-reports");
+  if (!box) return;
+  try {
+    const d = await apiGet("/api/reports?all=1&limit=50");
+    const rows = (d.configured && d.reports) || [];
+    if (!rows.length) {
+      box.innerHTML = `<span class="dim">ไม่มีรีพอร์ตค้าง</span>`;
+      return;
+    }
+    box.classList.remove("dim");
+    box.innerHTML = rows.map((r) =>
+      `<div class="report-item"><strong>${esc(r.problem)}</strong> [${esc(r.kind)}] ${esc(r.message)}` +
+      `<br><span class="dim">${esc(r.name || "")} · ${esc(new Date(r.created_at).toLocaleString())} · ${esc(r.status)}</span>` +
+      (r.status === "open" ? ` <button class="ghost-btn" data-close="${esc(r.id)}">close</button>` : "") +
+      `</div>`).join("");
+    box.querySelectorAll("[data-close]").forEach((b) => {
+      b.onclick = async () => {
+        await fetch(API + `/api/reports/${encodeURIComponent(b.dataset.close)}`, {
+          method: "PUT", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "closed" }),
+        });
+        loadAdminReports();
+      };
+    });
+  } catch (e) {
+    box.innerHTML = `<span class="dim">โหลดไม่ได้: ${esc(e.message)}</span>`;
+  }
+}
 
 /* ---------------- language + file ---------------- */
 document.querySelectorAll(".lang-btn").forEach((b) => {
@@ -722,8 +860,7 @@ async function viewSubmission(sid) {
 }
 
 /* ---------------- settings ---------------- */
-function setLang(lang) {
-  if (!["python", "c", "cpp"].includes(lang)) return;
+function setLang(lang) {  if (!["python", "c", "cpp"].includes(lang)) return;
   state.lang = lang;
   document.querySelectorAll(".lang-btn").forEach((x) =>
     x.classList.toggle("active", x.dataset.lang === lang));
@@ -731,6 +868,13 @@ function setLang(lang) {
 
 async function renderSettings() {
   const body = $("settings-body");
+  const ac = $("admin-card");
+  if (state.is_admin) {
+    ac.classList.remove("hidden");
+    loadAdminReports();
+  } else {
+    ac.classList.add("hidden");
+  }
   if (!state.user) {
     body.innerHTML = `<span class="dim">login ด้วย Google ก่อนตั้งค่า</span>`;
     return;
@@ -832,6 +976,34 @@ async function init() {
   });
   hf.onchange = loadHistory;
   $("hist-refresh").onclick = loadHistory;
+  $("report-send").onclick = async () => {
+    if (!state.user) {
+      $("report-status").textContent = "login ก่อนส่งรีพอร์ต";
+      return;
+    }
+    if (!state.current) return;
+    const msg = $("report-msg").value.trim();
+    if (!msg) {
+      $("report-status").textContent = "พิมพ์ข้อความก่อน";
+      return;
+    }
+    $("report-status").textContent = "กำลังส่ง...";
+    try {
+      const r = await fetch(API + "/api/report", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          problem: state.current, kind: $("report-kind").value, message: msg }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
+      $("report-status").textContent = "ส่งรีพอร์ตแล้ว ขอบคุณ";
+      $("report-msg").value = "";
+      loadMyReports();
+    } catch (e) {
+      $("report-status").textContent = "ส่งไม่สำเร็จ: " + e.message;
+    }
+  };
   await refreshMe();
   if ((location.hash || "").includes("login=failed")) {
     $("health").textContent = "login failed";

@@ -12,10 +12,13 @@
   <nav class="nav" aria-label="main">
     <a class="nav-link" data-route="home" href="#/">Home</a>
     <a class="nav-link" data-route="tasks" href="#/tasks">Tasks</a>
+    <a class="nav-link" data-route="archive" href="#/archive">Archive</a>
+    <a class="nav-link" data-route="leaderboard" href="#/leaderboard">Leaderboard</a>
     <a class="nav-link" data-route="history" href="#/history">History</a>
     <a class="nav-link" data-route="settings" href="#/settings">Settings</a>
   </nav>
   <div id="health" class="health" title="server status">...</div>
+  <button id="theme-btn" type="button" class="ghost-btn" title="toggle dark mode">dark</button>
   <div id="auth" class="auth">
     <button id="login-btn" type="button" class="ghost-btn">Sign in with Google</button>
     <span id="user-chip" class="hidden"></span>
@@ -84,6 +87,24 @@
     </div>
   </section>
 
+  <!-- ARCHIVE -->
+  <section id="view-archive" class="view">
+    <div class="page-head"><h2>Archive</h2><p class="dim">ค้นโจทย์ตาม tag และระดับ</p></div>
+    <div class="card">
+      <h3 class="pane-h">Tags</h3>
+      <div id="archive-tags" class="dim">—</div>
+      <div id="archive-groups"></div>
+    </div>
+  </section>
+
+  <!-- LEADERBOARD -->
+  <section id="view-leaderboard" class="view">
+    <div class="page-head"><h2>Leaderboard</h2><p class="dim">คะแนนรวมดีสุดรายข้อของแต่ละคน</p></div>
+    <div class="card table-card">
+      <div id="leader-body" class="dim" style="padding:16px">Loading...</div>
+    </div>
+  </section>
+
   <!-- TASK DETAIL -->
   <section id="view-task" class="view">
     <a class="backlink" href="#/tasks">&larr; กลับไป Tasks</a>
@@ -107,6 +128,21 @@
         <a id="pdf-anchor" target="_blank" rel="noopener" class="btn-ghost" style="text-decoration:none">เปิดโจทย์ PDF</a>
       </div>
       <div id="task-body" class="md">Loading...</div>
+      <hr class="sep">
+      <h3 class="pane-h">Report ปัญหาข้อนี้</h3>
+      <div id="report-box">
+        <div class="report-row">
+          <select id="report-kind" aria-label="report kind">
+            <option value="statement">โจทย์ผิด/ไม่ชัด</option>
+            <option value="tests">test ผิด</option>
+            <option value="other">อื่น ๆ</option>
+          </select>
+          <input id="report-msg" type="text" maxlength="1000" placeholder="อธิบายสั้น ๆ (ต้อง login)">
+          <button id="report-send" type="button" class="ghost-btn">ส่งรีพอร์ต</button>
+        </div>
+        <div id="report-status" class="status dim"></div>
+        <div id="report-mine" class="dim"></div>
+      </div>
     </div>
     <div class="card tab-pane" id="pane-submit">
       <div class="card-head">
@@ -155,6 +191,10 @@
     <div class="page-head"><h2>Settings</h2></div>
     <div class="card">
       <div id="settings-body" class="dim">Loading...</div>
+    </div>
+    <div class="card hidden" id="admin-card" style="margin-top:16px">
+      <h3 class="pane-h">Reports ทั้งหมด (admin)</h3>
+      <div id="admin-reports" class="dim">—</div>
     </div>
   </section>
 

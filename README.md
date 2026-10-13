@@ -68,6 +68,29 @@ SESSION_SECURE=true
 4. หน้าเว็บจะมีปุ่ม Sign in with Google — login แล้วส่งได้เลย ไม่ต้องกรอกชื่อ (ใช้ชื่อโปรไฟล์อัตโนมัติ) ประวัติดูของตัวเองได้ด้วยติ๊ก "ของฉัน"
 5. หน้า Settings (ต้อง login): เปลี่ยน display name (ชื่อที่โชว์ใน history) + เลือกภาษา default — เก็บในตาราง `profiles` (ดู `supabase/schema.sql`)
 
+## Report / Leaderboard / Dark mode
+
+- หน้า task มีแท็บ Submissions (ของทุกคน) + ปุ่ม Report แจ้งโจทย์พัง (statement/test/อื่น ๆ)
+- หน้า Archive: browse ตาม tag + กลุ่มตามระดับ | หน้า Leaderboard: คะแนนรวมรายคน
+- ปุ่ม dark/light มุมขวาบน (จำค่าที่เลือกไว้)
+- Migration ตาราง `reports`:
+```sql
+create table if not exists reports (
+  id uuid primary key default gen_random_uuid(),
+  created_at timestamptz not null default now(),
+  problem text not null,
+  kind text not null default 'other',
+  message text not null default '',
+  user_email text not null default '',
+  name text not null default '',
+  status text not null default 'open'
+);
+create index if not exists reports_problem_time
+  on reports (problem, created_at desc);
+alter table reports enable row level security;
+```
+- env เพิ่มที่ backend: `ADMIN_EMAILS=a@x.com,b@y.com` (ดู + ปิดรีพอร์ตได้ในหน้า Settings)
+
 ## Supabase (ประวัติส่ง + สถิติ, optional)
 
 ไม่ตั้ง = เว็บทำงานปกติแค่ไม่มี history ตั้งแล้วทุก submission จะถูกบันทึกพร้อมดูย้อนหลังได้
