@@ -23,6 +23,13 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+try:
+    from supabase import create_client
+    _has_supabase_lib = True
+except ImportError:  # optional dep: history disabled without it
+    create_client = None
+    _has_supabase_lib = False
+
 ROOT = Path(__file__).parent
 sys.path.insert(0, str(ROOT))
 
@@ -58,6 +65,35 @@ if _cors_origins:
         allow_methods=["GET", "POST"],
         allow_headers=["*"],
     )
+
+# ---- Supabase (optional): submission history + stats ----
+# Server-side only. SUPABASE_KEY must be the service_role key (never the
+# anon key, never exposed to the frontend). Unset = history disabled.
+_sb = None
+_sb_url = os.environ.get("SUPABASE_URL", "").strip()
+_sb_key = os.environ.get("SUPABASE_KEY", "").strip()
+if _sb_url and _sb_key:
+    if not _has_supabase_lib:
+        print("[web] supabase lib not installed, history disabled", file=sys.stderr)
+    else:
+        try:
+            _sb = create_client(_sb_url, _sb_key)
+        except Exception as e:
+            print(f"[web] supabase disabled: {e}", file=sys.stderr)
+            _sb = None
+
+
+async def _store_submission(row: dict) -> None:
+    """Persist one submission; never fails the judging response."""
+    if _sb is None:
+        return
+    try:
+        await asyncio.wait_for(
+            asyncio.to_thread(lambda: _sb.table("submissions").insert(row).execute()),
+            timeout=10,
+        )
+    except Exception as e:
+        print(f"[web] supabase insert failed: {e}", file=sys.stderr)
 
 # Preload problems at startup (fail fast on broken tests, skip with warning).
 PROBLEMS: Dict[str, grader.Problem] = {}
@@ -224,7 +260,69 @@ async def submit(
     if "error" in result:
         raise HTTPException(status_code=500, detail=result["error"])
     result["filename"] = filename
+    await _store_submission({
+        "problem": prob.pid, "language": language, "filename": filename,
+        "verdict": result.get("verdict", ""), "accepted": result.get("accepted", False),
+        "passed": result.get("passed", 0), "total": result.get("total", 0),
+        "score": result.get("score", 0), "counts": result.get("counts", {}),
+        "results": result.get("results", []), "code": source[:200000],
+        "detail": (result.get("compile_error", "") or "")[:4000],
+    })
     return result
+
+
+@app.get("/api/history")
+def history(problem: Optional[str] = None, limit: int = 20) -> dict:
+    if _sb is None:
+        return {"configured": False, "submissions": []}
+    limit = max(1, min(limit, 100))
+    try:
+        q = _sb.table("submissions").select(
+            "id,created_at,problem,language,filename,verdict,accepted,passed,total,score,counts"
+        ).order("created_at", desc=True).limit(limit)
+        if problem:
+            q = q.eq("problem", problem)
+        res = q.execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"supabase query failed: {e}")
+    return {"configured": True, "submissions": res.data or []}
+
+
+@app.get("/api/history/{sid}")
+def history_detail(sid: str) -> dict:
+    if _sb is None:
+        raise HTTPException(status_code=404, detail="history not configured")
+    try:
+        res = _sb.table("submissions").select("*").eq("id", sid).limit(1).execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"supabase query failed: {e}")
+    rows = res.data or []
+    if not rows:
+        raise HTTPException(status_code=404, detail="submission not found")
+    return rows[0]
+
+
+@app.get("/api/stats")
+def stats() -> dict:
+    if _sb is None:
+        return {"configured": False, "stats": {}}
+    try:
+        res = _sb.table("submissions").select(
+            "problem,accepted,score").order("created_at", desc=True).limit(500).execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"supabase query failed: {e}")
+    agg: dict = {}
+    for r in res.data or []:
+        p = agg.setdefault(r["problem"], {"subs": 0, "accepted": 0, "best": 0, "total_score": 0})
+        p["subs"] += 1
+        p["accepted"] += 1 if r["accepted"] else 0
+        p["best"] = max(p["best"], r["score"] or 0)
+        p["total_score"] += r["score"] or 0
+    return {"configured": True, "stats": {
+        k: {"subs": v["subs"], "accepted": v["accepted"], "best": v["best"],
+            "avg": round(v["total_score"] / v["subs"], 1)}
+        for k, v in agg.items()
+    }}
 
 
 app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")

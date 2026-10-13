@@ -44,7 +44,21 @@ commit + push — Vercel redeploy อัตโนมัติ
 
 รัน local ทั้งก้อนแบบเดิมได้อยู่ (`python3 server.py` — same origin, ไม่ต้องมี CORS)
 
-## API
+## Supabase (ประวัติส่ง + สถิติ, optional)
+
+ไม่ตั้ง = เว็บทำงานปกติแค่ไม่มี history ตั้งแล้วทุก submission จะถูกบันทึกพร้อมดูย้อนหลังได้
+
+1. สร้างโปรเจกต์ที่ supabase.com → SQL Editor → รันไฟล์ `supabase/schema.sql`
+2. เอา Project URL + **service_role key** (Settings → API — อันนี้อยู่ฝั่ง server เท่านั้น ห้ามโผล่ frontend)
+3. ตั้ง env ที่ backend:
+```bash
+# local
+export SUPABASE_URL=https://xyzcompany.supabase.co
+export SUPABASE_KEY=eyJ...   # service_role
+python3 server.py
+# Render/host: เพิ่ม 2 env นี้ใน dashboard แล้ว redeploy
+```
+4. หน้าเว็บจะมี section History (filter ตามข้อได้) + สถิติ best/avg ต่อข้อ — API: `GET /api/history`, `GET /api/history/{id}`, `GET /api/stats`
 - `GET /api/health` — สถานะ + รายชื่อโจทย์
 - `GET /api/languages` — ภาษาที่รองรับ (python/c/cpp)
 - `GET /api/problems` — รายการโจทย์

@@ -230,6 +230,16 @@ async function init() {
     tabs.appendChild(b);
   });
   if (state.problems.length) selectProblem(state.problems[0].id);
+  const hf = $("hist-filter");
+  state.problems.forEach((p) => {
+    const o = document.createElement("option");
+    o.value = p.id;
+    o.textContent = `${p.id} - ${p.title}`;
+    hf.appendChild(o);
+  });
+  hf.onchange = loadHistory;
+  $("hist-refresh").onclick = loadHistory;
+  loadHistory();
 }
 
 async function selectProblem(pid) {
@@ -328,6 +338,7 @@ $("submit-btn").onclick = async () => {
     renderResults(data, (performance.now() - t0) / 1000);
     $("submit-status").textContent =
       `done in ${((performance.now() - t0) / 1000).toFixed(2)}s — score ${data.score}/100`;
+    loadHistory();
   } catch (e) {
     $("result-body").innerHTML = `<span class="score-big bad">SUBMIT FAILED</span><pre class="dim">${esc(e.message)}</pre>`;
     $("submit-status").textContent = "error: " + e.message;
@@ -336,8 +347,9 @@ $("submit-btn").onclick = async () => {
   }
 };
 
-function badge(v) {
-  return `<span class="badge b-${esc(v)}">${esc(v)}</span>`;
+function badge(text, cls) {
+  cls = cls || text;
+  return `<span class="badge b-${esc(cls)}">${esc(text)}</span>`;
 }
 
 function renderResults(d, secs) {
@@ -379,8 +391,7 @@ function renderResults(d, secs) {
   });
 }
 
-function detailHtml(r) {
-  if (r.verdict === "AC") return `<span class="dim">passed — click row to collapse</span>`;
+function detailHtml(r) {  if (r.verdict === "AC") return `<span class="dim">passed — click row to collapse</span>`;
   if (r.verdict === "TLE")
     return `<span class="dim">Time Limit Exceeded (wall ${esc(String(r.wall_s))}s). Hint: O(n^2) will not survive the hidden max test.</span>`;
   if (r.verdict === "MLE")
@@ -394,6 +405,69 @@ function detailHtml(r) {
       <p><strong>actual:</strong></p><pre>${esc(r.actual || "")}</pre>`;
   }
   return `<pre>${esc(r.detail || r.verdict)}</pre>`;
+}
+
+/* ---------------- history (Supabase, optional) ---------------- */
+async function loadHistory() {
+  const body = $("hist-body");
+  const filt = $("hist-filter").value;
+  try {
+    const [h, s] = await Promise.all([
+      apiGet(`/api/history?limit=20${filt ? `&problem=${encodeURIComponent(filt)}` : ""}`),
+      apiGet("/api/stats"),
+    ]);
+    if (!h.configured) {
+      body.innerHTML = `<span class="dim">history disabled — set SUPABASE_URL / SUPABASE_KEY on the backend, schema in supabase/schema.sql</span>`;
+      $("hist-stats").textContent = "";
+      return;
+    }
+    const stats = Object.entries(s.stats || {})
+      .map(([k, v]) => `${esc(k)}: ${v.subs} subs, ${v.accepted} AC, best ${v.best}`)
+      .join(" &nbsp;|&nbsp; ");
+    $("hist-stats").innerHTML = stats || "no data yet";
+    const rows = h.submissions || [];
+    if (!rows.length) {
+      body.innerHTML = `<span class="dim">no submissions yet</span>`;
+      return;
+    }
+    let html = `<table class="tests"><thead><tr>
+      <th>time</th><th>problem</th><th>lang</th><th>verdict</th><th>score</th><th></th>
+    </tr></thead><tbody>`;
+    rows.forEach((r) => {
+      const when = new Date(r.created_at).toLocaleString();
+      const cls = r.accepted ? "AC" : (r.verdict === "CE" ? "CE" : "WA");
+      const label = r.accepted ? "AC" : (r.verdict || "REJECTED");
+      html += `<tr>
+        <td>${esc(when)}</td><td>${esc(r.problem)}</td><td>${esc(r.language)}</td>
+        <td>${badge(label, cls)}</td><td>${r.passed}/${r.total} (${r.score})</td>
+        <td><button class="ghost-btn" data-view="${esc(r.id)}">view</button></td>
+      </tr>`;
+    });
+    body.classList.remove("dim");
+    body.innerHTML = html + `</tbody></table>`;
+    body.querySelectorAll("button[data-view]").forEach((b) => {
+      b.onclick = () => viewSubmission(b.dataset.view);
+    });
+  } catch (e) {
+    body.innerHTML = `<span class="dim">history unavailable: ${esc(e.message)}</span>`;
+  }
+}
+
+async function viewSubmission(sid) {
+  try {
+    const r = await apiGet(`/api/history/${encodeURIComponent(sid)}`);
+    renderResults({
+      verdict: r.verdict, accepted: r.accepted,
+      passed: r.passed, total: r.total, score: r.score,
+      counts: r.counts || {}, build_warnings: "",
+      compile_error: r.detail || "",
+      limits: { time_s: "-", memory_mb: "-" }, checker: "-",
+      results: r.results || [],
+    }, 0);
+    document.querySelector(".results").scrollIntoView({ behavior: "smooth" });
+  } catch (e) {
+    $("submit-status").textContent = "cannot load submission: " + e.message;
+  }
 }
 
 init();
