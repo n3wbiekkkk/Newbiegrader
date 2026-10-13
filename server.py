@@ -618,6 +618,18 @@ def leaderboard(limit: int = 50) -> dict:
         u["best"][p] = max(u["best"].get(p, 0), r.get("score") or 0)
         if r.get("accepted"):
             u["acc"].add(p)
+    if _sb is not None and users:
+        # display names from Settings override historical submission names
+        try:
+            pres = _sb.table("profiles").select(
+                "user_email,display_name").in_(
+                "user_email", list(users.keys())).execute()
+            for p in pres.data or []:
+                dn = (p.get("display_name") or "").strip()
+                if dn and p["user_email"] in users:
+                    users[p["user_email"]]["name"] = dn
+        except Exception as e:
+            print(f"[web] leaderboard profile lookup failed: {e}", file=sys.stderr)
     top = sorted(
         ({"name": u["name"], "solved": len(u["acc"]),
           "points": sum(u["best"].values())} for u in users.values()),
