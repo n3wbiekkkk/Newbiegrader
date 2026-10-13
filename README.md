@@ -127,11 +127,11 @@ python3 grader.py run aplusb examples/aplusb_correct.cpp   # C++ ก็ได้
 `statement.pdf` (ต้นฉบับ) + `statement.md` + `config.json` + `tests/` (~10 testcases)
 หน้าเว็บมีปุ่ม open PDF statement + ระบบ filter (ค้นหา/ระดับ/tag)
 
-| id | ชื่อ | ระดับ | tests | กับดัก |
-|----|------|--------|-------|--------|
-| `mana_crystal` | ย่อภาพผลึกมานา | medium | 10 | ล็อกทศนิยม 2 ตำแหน่ง (exact), I/O 1M ตัวเลข |
-| `posn_server_passcode` | รหัสผ่านเซิร์ฟเวอร์ สอวน. | medium | 10 | N=1, prime ใหญ่ ~10^12 (trial โง่ๆ TLE) |
-| `warpz` | วาร์ปอวกาศ | easy | 10 | a[i] ใหญ่แต่ไปไม่ถึง, N=1 |
+| id | ชื่อ | ระดับ | tests |
+|----|------|--------|-------|
+| `mana_crystal` | ย่อภาพผลึกมานา | medium | 10 |
+| `posn_server_passcode` | รหัสผ่านเซิร์ฟเวอร์ สอวน. | medium | 10 |
+| `warpz` | วาร์ปอวกาศ | easy | 10 |
 
 ## Verdicts
 `AC` ผ่าน / `WA` + diff (·=space) / `TLE` เกินเวลา / `MLE` หน่วยความจำ /
