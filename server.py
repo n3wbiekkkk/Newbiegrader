@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import os
 import sys
 import tempfile
 import traceback
@@ -19,6 +20,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 ROOT = Path(__file__).parent
@@ -43,6 +45,19 @@ DETAIL_HEAD = 4000            # max chars of detail/diff sent to frontend
 
 app = FastAPI(title="Brutal Grader API", version="1.0.0")
 submit_sem = asyncio.Semaphore(MAX_PARALLEL_SUBMITS)
+
+# Split deployment (frontend on Vercel etc.): allow the static origin, e.g.
+#   GRADER_CORS_ORIGINS=https://gradernew.vercel.app
+# Empty (default) = same-origin only, no CORS headers.
+_cors_origins = [o.strip() for o in
+                 os.environ.get("GRADER_CORS_ORIGINS", "").split(",") if o.strip()]
+if _cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_origins,
+        allow_methods=["GET", "POST"],
+        allow_headers=["*"],
+    )
 
 # Preload problems at startup (fail fast on broken tests, skip with warning).
 PROBLEMS: Dict[str, grader.Problem] = {}
