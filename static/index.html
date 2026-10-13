@@ -14,6 +14,16 @@
 </header>
 
 <main class="layout">
+  <div class="filterbar">
+    <input id="q" type="search" placeholder="search id / title..." aria-label="search problems">
+    <select id="f-diff" aria-label="filter by difficulty">
+      <option value="">all levels</option>
+    </select>
+    <select id="f-tag" aria-label="filter by tag">
+      <option value="">all tags</option>
+    </select>
+    <span id="filter-count" class="meta"></span>
+  </div>
   <section class="card statement">
     <div class="card-head">
       <h2 id="prob-title">Loading...</h2>
