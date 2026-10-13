@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Brutal Grader — Competitive Programming Judge</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">BRUTAL<span class="brand-acc">GRADER</span></div>
+  <nav id="problem-tabs" class="tabs" aria-label="problems"></nav>
+  <div id="health" class="health" title="server status">...</div>
+</header>
+
+<main class="layout">
+  <section class="card statement">
+    <div class="card-head">
+      <h2 id="prob-title">Loading...</h2>
+      <div id="prob-meta" class="meta"></div>
+    </div>
+    <div id="prob-body" class="md">Loading problem...</div>
+  </section>
+
+  <section class="card submit">
+    <div class="card-head">
+      <h2>Submit solution</h2>
+      <div class="lang-group" id="lang-group" role="radiogroup" aria-label="language">
+        <button data-lang="python" class="lang-btn active">Python</button>
+        <button data-lang="c" class="lang-btn">C</button>
+        <button data-lang="cpp" class="lang-btn">C++</button>
+      </div>
+    </div>
+
+    <div id="dropzone" class="dropzone">
+      <p><strong>Attach file</strong> (.py / .c / .cpp) — click to browse or drop file here</p>
+      <p class="dim">or paste your code in the editor below</p>
+      <input type="file" id="file-input" accept=".py,.c,.cpp,.cc,.cxx" hidden>
+    </div>
+    <div id="file-chip" class="file-chip hidden">
+      <span id="file-name"></span>
+      <button id="file-load" type="button" title="load file text into editor">load into editor</button>
+      <button id="file-clear" type="button" title="remove attached file">remove</button>
+    </div>
+
+    <textarea id="editor" spellcheck="false" placeholder="// paste your code here, or attach a file above"></textarea>
+    <div class="submit-row">
+      <button id="template-btn" type="button" class="ghost-btn">load starter template</button>
+      <button id="submit-btn" type="button" class="submit-btn">JUDGE IT</button>
+    </div>
+    <div id="submit-status" class="status dim"></div>
+  </section>
+
+  <section class="card results">
+    <div class="card-head">
+      <h2>Verdict</h2>
+      <div id="score-line" class="meta"></div>
+    </div>
+    <div id="result-body" class="dim">No submission yet. Pick a problem, paste code or attach a file, then hit JUDGE IT.</div>
+  </section>
+</main>
+
+<footer class="foot dim">
+  Brutal Grader — strict TL/MEM, zero-tolerance diff. Languages: Python 3, C (C11), C++ (C++17).
+</footer>
+
+<script src="/app.js"></script>
+</body>
+</html>
