@@ -20,7 +20,7 @@ def main() -> None:
                 grow = grid[i]
                 for j in range(bc * k, bc * k + k):
                     s += grow[j]
-            row.append(repr(s / kk))
+            row.append(f"{s / kk:.2f}")
         out_lines.append(" ".join(row))
     sys.stdout.write("\n".join(out_lines) + "\n")
 

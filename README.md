@@ -129,7 +129,7 @@ python3 grader.py run aplusb examples/aplusb_correct.cpp   # C++ ก็ได้
 
 | id | ชื่อ | ระดับ | tests | กับดัก |
 |----|------|--------|-------|--------|
-| `mana_crystal` | ย่อภาพผลึกมานา | medium | 10 | ทศนิยมไม่ลงตัว (checker tolerance), I/O 1M ตัวเลข |
+| `mana_crystal` | ย่อภาพผลึกมานา | medium | 10 | ล็อกทศนิยม 2 ตำแหน่ง (exact), I/O 1M ตัวเลข |
 | `posn_server_passcode` | รหัสผ่านเซิร์ฟเวอร์ สอวน. | medium | 10 | N=1, prime ใหญ่ ~10^12 (trial โง่ๆ TLE) |
 | `warpz` | วาร์ปอวกาศ | easy | 10 | a[i] ใหญ่แต่ไปไม่ถึง, N=1 |
 

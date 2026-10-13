@@ -1,1 +1,1 @@
-{"title": "ย่อภาพผลึกมานา (Mana Crystal)", "time_limit": 1.0, "memory_limit": 256, "checker": "float", "difficulty": "medium", "tags": ["array", "math"]}
+{"title": "ย่อภาพผลึกมานา (Mana Crystal)", "time_limit": 1.0, "memory_limit": 256, "checker": "exact", "difficulty": "medium", "tags": ["array", "math"]}

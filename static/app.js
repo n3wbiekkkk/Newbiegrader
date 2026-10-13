@@ -373,9 +373,11 @@ async function loadTaskSubs() {
     const h = await apiGet(`/api/history?limit=50&problem=${encodeURIComponent(state.current)}`);
     if (!h.configured) {
       body.innerHTML = `<span class="dim">ยังไม่เปิด submissions (ตั้งค่า Supabase ที่ backend)</span>`;
+      $("task-top-body").innerHTML = `<span class="dim">—</span>`;
       return;
     }
     const rows = h.submissions || [];
+    renderTopScores(rows);
     if (!rows.length) {
       body.innerHTML = `<span class="dim">ข้อนี้ยังไม่มีใครส่ง — เป็นคนแรกเลย</span>`;
       return;
@@ -386,6 +388,31 @@ async function loadTaskSubs() {
   } catch (e) {
     body.innerHTML = `<span class="dim">ดูไม่ได้: ${esc(e.message)}</span>`;
   }
+}
+
+function renderTopScores(rows) {
+  const body = $("task-top-body");
+  const best = new Map();
+  rows.forEach((r) => {
+    const key = (r.name || "—") + "\u0000" + r.language;
+    const cur = best.get(key);
+    if (!cur || (r.score || 0) > cur.score) {
+      best.set(key, { name: r.name || "—", language: r.language, score: r.score || 0 });
+    }
+  });
+  const top = [...best.values()].sort((a, b) => b.score - a.score).slice(0, 10);
+  if (!top.length) {
+    body.innerHTML = `<span class="dim">—</span>`;
+    return;
+  }
+  let html = `<table class="tests"><thead><tr>
+    <th>#</th><th>ชื่อ</th><th>ภาษา</th><th>ดีสุด</th>
+  </tr></thead><tbody>`;
+  top.forEach((t, i) => {
+    html += `<tr><td>${i + 1}</td><td>${esc(t.name)}</td><td>${esc(t.language)}</td><td><strong>${t.score}/100</strong></td></tr>`;
+  });
+  body.classList.remove("dim");
+  body.innerHTML = html + `</tbody></table>`;
 }
 
 async function loadTaskMine() {
