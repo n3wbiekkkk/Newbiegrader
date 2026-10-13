@@ -21,6 +21,7 @@ from typing import Dict, List, Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 try:
@@ -97,14 +98,15 @@ async def _store_submission(row: dict) -> None:
 
 # Preload problems at startup (fail fast on broken tests, skip with warning).
 PROBLEMS: Dict[str, grader.Problem] = {}
-for _pdir in sorted(grader.PROBLEMS_DIR.iterdir()):
-    if not _pdir.is_dir():
-        continue
-    try:
-        _p = grader.load_problem(_pdir.name)
-        PROBLEMS[_p.pid] = _p
-    except SystemExit as e:
-        print(f"[web] skip problem {_pdir.name}: {e}", file=sys.stderr)
+if grader.PROBLEMS_DIR.is_dir():
+    for _pdir in sorted(grader.PROBLEMS_DIR.iterdir()):
+        if not _pdir.is_dir():
+            continue
+        try:
+            _p = grader.load_problem(_pdir.name)
+            PROBLEMS[_p.pid] = _p
+        except SystemExit as e:
+            print(f"[web] skip problem {_pdir.name}: {e}", file=sys.stderr)
 
 
 def _problem_or_404(pid: str) -> grader.Problem:
@@ -199,7 +201,17 @@ def problem_detail(pid: str) -> dict:
     p = _problem_or_404(pid)
     return {"id": p.pid, "title": p.title, "time_limit": p.time_limit,
             "memory_limit": p.memory_limit, "checker": p.checker,
-            "tests": len(p.tests), "statement": p.description}
+            "tests": len(p.tests), "statement": p.description,
+            "has_pdf": (grader.PROBLEMS_DIR / p.pid / "statement.pdf").is_file()}
+
+
+@app.get("/api/problems/{pid}/pdf")
+def problem_pdf(pid: str):
+    p = _problem_or_404(pid)
+    f = grader.PROBLEMS_DIR / p.pid / "statement.pdf"
+    if not f.is_file():
+        raise HTTPException(status_code=404, detail="no PDF statement for this problem")
+    return FileResponse(str(f), media_type="application/pdf", filename=f"{p.pid}.pdf")
 
 
 @app.post("/api/submit")
