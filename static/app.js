@@ -665,6 +665,45 @@ $("logout-btn").onclick = async () => {
   loadHistory();
 };
 
+/* ---------------- admin overview ---------------- */
+function uptimeText(s) {
+  s = Number(s) || 0;
+  const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+  return (d ? `${d}d ` : "") + (h ? `${h}h ` : "") + `${m}m`;
+}
+
+async function loadOverview() {
+  const stats = $("overview-stats"), probs = $("overview-problems"), recent = $("overview-recent");
+  try {
+    const d = await apiGet("/api/admin/overview");
+    const tiles = [
+      ["โจทย์", d.problems], ["ผู้ใช้", d.users], ["ส่งทั้งหมด", d.submissions],
+      ["ผ่าน", d.accepted], ["รีพอร์ตค้าง", d.reports_open], ["uptime", uptimeText(d.system.uptime_s)],
+    ];
+    stats.classList.remove("dim");
+    stats.innerHTML = tiles.map(([k, v]) =>
+      `<div class="stat"><div class="stat-num">${esc(String(v))}</div><div class="stat-label">${esc(k)}</div></div>`).join("");
+    const pp = d.per_problem || {};
+    probs.classList.remove("dim");
+    probs.innerHTML = `<table class="tests"><thead><tr>
+      <th>ข้อ</th><th>ส่ง</th><th>ผ่าน</th><th>ดีสุด</th>
+      </tr></thead><tbody>` + Object.keys(pp).sort().map((k) =>
+      `<tr><td>${esc(k)}</td><td>${pp[k].subs}</td><td>${pp[k].accepted}</td><td>${pp[k].best}</td></tr>`
+    ).join("") + `</tbody></table>`;
+    const rows = d.recent || [];
+    recent.classList.remove("dim");
+    recent.innerHTML = rows.length ? `<table class="tests"><thead><tr>
+      <th>เวลา</th><th>ข้อ</th><th>ชื่อ</th><th>ผล</th><th>คะแนน</th>
+      </tr></thead><tbody>` + rows.map((r) =>
+      `<tr><td>${esc(new Date(r.created_at).toLocaleString())}</td><td>${esc(r.problem)}</td>` +
+      `<td>${esc(r.name || "—")}</td><td>${badge(r.accepted ? "AC" : (r.verdict || "?"))}</td>` +
+      `<td><span class="${scoreCls(r.score)}">${r.score ?? ""}</span></td></tr>`
+    ).join("") + `</tbody></table>` : `<span class="dim">ยังไม่มีข้อมูล</span>`;
+  } catch (e) {
+    stats.innerHTML = `<span class="dim">โหลดไม่ได้: ${esc(e.message)}</span>`;
+  }
+}
+
 /* ---------------- report ---------------- */
 async function loadMyReports() {
   const box = $("report-mine");
@@ -1018,11 +1057,13 @@ function setLang(lang) {  if (!["python", "c", "cpp"].includes(lang)) return;
 async function renderSettings() {
   const body = $("settings-body");
   const ac = $("admin-card");
-  if (state.is_admin) {
-    ac.classList.remove("hidden");
+  const oc = $("overview-card");
+  const showAdmin = state.is_admin;
+  ac.classList.toggle("hidden", !showAdmin);
+  oc.classList.toggle("hidden", !showAdmin);
+  if (showAdmin) {
     loadAdminReports();
-  } else {
-    ac.classList.add("hidden");
+    loadOverview();
   }
   if (!state.user) {
     body.innerHTML = `<span class="dim">login ด้วย Google ก่อนตั้งค่า</span>`;
