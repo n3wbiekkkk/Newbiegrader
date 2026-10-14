@@ -69,6 +69,26 @@ app.add_middleware(GZipMiddleware, minimum_size=500)
 submit_sem = asyncio.Semaphore(MAX_PARALLEL_SUBMITS)
 _active_submits: set = set()  # user emails with a judging currently running
 
+# Tiny in-memory cache for slow aggregate endpoints (Supabase RTT dominates).
+# Invalidated on every stored submission.
+_cache: dict = {}
+CACHE_TTL = {"stats": 30, "leaderboard": 60}
+
+
+def _cached(key: str, ttl: int, build):
+    now = time.monotonic()
+    hit = _cache.get(key)
+    if hit and now - hit[0] < ttl:
+        return hit[1]
+    val = build()  # raises HTTPException on DB error: never cached
+    _cache[key] = (now, val)
+    return val
+
+
+def _bust_cache() -> None:
+    _cache.pop("stats", None)
+    _cache.pop("leaderboard", None)
+
 # Split deployment (frontend on Vercel etc.): allow the static origin, e.g.
 #   GRADER_CORS_ORIGINS=https://gradernew.vercel.app
 # Empty (default) = same-origin only, no CORS headers.
@@ -109,6 +129,7 @@ async def _store_submission(row: dict) -> None:
             asyncio.to_thread(lambda: _sb.table("submissions").insert(row).execute()),
             timeout=10,
         )
+        _bust_cache()  # aggregates changed: drop cached stats/leaderboard
     except Exception as e:
         print(f"[web] supabase insert failed: {e}", file=sys.stderr)
 
@@ -246,7 +267,20 @@ def auth_finish(request: Request, token: str = "", next: str = "#/"):
 def auth_me(request: Request) -> dict:
     user = request.session.get("user") or None
     email = (user or {}).get("email", "")
-    return {"user": user, "is_admin": _is_admin(email)}
+    # Bundle profile in the same round trip (saves a sequential request).
+    profile = {"display_name": "", "default_language": ""}
+    if user and _sb is not None:
+        try:
+            res = _sb.table("profiles").select(
+                "display_name,default_language").eq("user_email", email).limit(1).execute()
+            rows = res.data or []
+            if rows:
+                profile["display_name"] = rows[0].get("display_name", "") or ""
+                profile["default_language"] = rows[0].get("default_language", "") or ""
+        except Exception:
+            pass
+    return {"user": user, "is_admin": _is_admin(email), "profile": profile,
+            "profile_configured": _sb is not None}
 
 
 @app.post("/api/auth/logout")
@@ -811,6 +845,11 @@ def leaderboard(limit: int = 50) -> dict:
     if _sb is None:
         return {"configured": False, "top": []}
     limit = max(1, min(limit, 100))
+    return _cached(f"leaderboard:{limit}", CACHE_TTL["leaderboard"],
+                   lambda: _build_leaderboard(limit))
+
+
+def _build_leaderboard(limit: int) -> dict:
     try:
         res = _sb.table("submissions").select(
             "problem,user_email,name,accepted,score,created_at").order(
@@ -849,6 +888,10 @@ def leaderboard(limit: int = 50) -> dict:
 def stats() -> dict:
     if _sb is None:
         return {"configured": False, "stats": {}}
+    return _cached("stats", CACHE_TTL["stats"], _build_stats)
+
+
+def _build_stats() -> dict:
     try:
         res = _sb.table("submissions").select(
             "problem,accepted,score,user_email").order(

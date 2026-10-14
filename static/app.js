@@ -618,10 +618,12 @@ async function loadTaskMine() {
 
 /* ---------------- auth ---------------- */
 async function refreshMe() {
+  let embedded = null;
   try {
     const me = await apiGet("/api/auth/me");
     state.user = (me && me.user) || null;
     state.is_admin = !!(me && me.is_admin);
+    embedded = me && me.profile ? me : null;
   } catch (e) {
     state.user = null;
     state.is_admin = false;
@@ -635,15 +637,19 @@ async function refreshMe() {
   chip.classList.toggle("hidden", !state.user);
   if (state.user) {
     let display = state.user.name || state.user.email;
-    try {
-      const data = await apiGet("/api/profile");
-      if (data.profile) {
-        if (data.profile.display_name) display = data.profile.display_name;
-        if (data.configured && data.profile.default_language) {
-          setLang(data.profile.default_language);
-        }
-      }
-    } catch (e) { /* profile unavailable: keep Google name */ }
+    // profile rides along with /me (one round trip); fall back to the
+    // dedicated endpoint only for stale backends without it.
+    let prof = embedded && embedded.profile ? embedded.profile : null;
+    if (!prof) {
+      try {
+        const data = await apiGet("/api/profile");
+        prof = data.profile || null;
+      } catch (e) { /* ignore */ }
+    }
+    if (prof) {
+      if (prof.display_name) display = prof.display_name;
+      if (prof.default_language) setLang(prof.default_language);
+    }
     chip.textContent = display;
     chip.title = state.user.email || "";
   }
