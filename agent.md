@@ -45,9 +45,10 @@ agent.md             # ไฟล์นี้
 ## 4. Workflow: เพิ่มโจทย์จาก PDF
 
 1. ผู้ใช้วาง PDF ใน `problems/` → ย้ายเป็น `problems/<id>/statement.pdf` (id ตัวเล็ก, `git mv`)
-   - ถ้าโจทย์มาเป็น **ภาษาอังกฤษหรือ text (ไม่มี PDF ไทย)**: แปล/เขียน `statement.md` ไทยเอง แล้วทำ
-     `statement.pdf` เองด้วย `python3 tools/make_statement_pdf.py <id>` (TH Sarabun + shaping,
-     แยกฟอนต์ Latin อัตโนมัติกันเลขไทยปน — verify ด้วย pdftotext + เปิดภาพดูก่อน commit)
+   - ถ้าโจทย์มาเป็น **ภาษาอังกฤษหรือ text (ไม่มี PDF ไทย)**: แปล/เขียน `statement.md` ไทยเอง
+     (เก็บเรื่องราวครบ ห้ามย่อ) แล้วทำ `statement.pdf` ด้วย LaTeX เท่านั้น:
+     `python3 tools/make_statement_tex.py <id>` (tectonic + TH Sarabun, คณิตสวย, ตัวอย่างเป็นกล่องคู่ —
+     verify ด้วย pdftotext + เปิดภาพดูทุกข้อก่อน commit)
 2. อ่าน PDF (tool `read` อ่าน PDF ได้) แล้วสร้าง:
    - `config.json`: `{"title","time_limit":1.0,"memory_limit":256,"checker":"token|exact|float|decimal2","difficulty":"easy|medium|hard","tags":[...],"notice":"..."}` (tags ต้องอยู่ใน KNOWN_TAGS ใน `grader.py`; `notice` โชว์แบนเนอร์บนหน้า task)
    - `statement.md`: spec ภาษาไทย (input/output/constraints/subtasks/ตัวอย่าง) — **ห้ามใส่ section กับดัก** (นโยบาย: ไม่บอกใบ้)
