@@ -298,6 +298,7 @@ function router() {
   if (h === "#/leaderboard") { show("leaderboard"); renderLeaderboard(); return; }
   if (h === "#/history") { show("history"); loadHistory(); return; }
   if (h === "#/settings") { show("settings"); renderSettings(); return; }
+  if (h === "#/login") { show("login"); return; }
   show("home");
   renderHome();
 }
@@ -614,7 +615,8 @@ async function refreshMe() {
 }
 
 $("login-btn").onclick = () => {
-  location.href = API + "/api/auth/login";
+  try { sessionStorage.setItem("ng_next", location.hash || "#/"); } catch (e) { /* ignore */ }
+  location.hash = "#/login";
 };
 
 $("logout-btn").onclick = async () => {
@@ -675,6 +677,56 @@ async function loadAdminReports() {
   }
 }
 
+/* ---------------- password auth ---------------- */
+let authMode = "login";
+
+function setAuthMode(m) {
+  authMode = m;
+  document.querySelectorAll("[data-authtab]").forEach((b) =>
+    b.classList.toggle("active", b.dataset.authtab === m));
+  $("row-name").style.display = m === "register" ? "" : "none";
+  $("auth-pass").autocomplete = m === "register" ? "new-password" : "current-password";
+  $("auth-go").innerHTML = m === "register" ? "สมัครสมาชิก" : "เข้าสู่ระบบ";
+  $("auth-err").classList.add("hidden");
+}
+document.querySelectorAll("[data-authtab]").forEach((b) => {
+  b.onclick = () => setAuthMode(b.dataset.authtab);
+});
+
+async function doPasswordAuth() {
+  const email = $("auth-email").value.trim();
+  const password = $("auth-pass").value;
+  const err = $("auth-err");
+  err.classList.add("hidden");
+  if (!email || !password) {
+    err.textContent = "กรอกอีเมลกับรหัสผ่านก่อน";
+    err.classList.remove("hidden");
+    return;
+  }
+  const payload = { email, password };
+  if (authMode === "register") payload.name = $("auth-name").value.trim();
+  err.textContent = "กำลังดำเนินการ...";
+  err.classList.remove("hidden");
+  try {
+    const r = await fetch(API + (authMode === "register" ? "/api/auth/register" : "/api/auth/password"), {
+      method: "POST", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
+    await refreshMe();
+    let next = "#/";
+    try {
+      next = sessionStorage.getItem("ng_next") || "#/";
+      sessionStorage.removeItem("ng_next");
+    } catch (e) { /* ignore */ }
+    location.hash = next;
+  } catch (e) {
+    err.textContent = e.message;
+  }
+}
+
 /* ---------------- language + file ---------------- */
 document.querySelectorAll(".lang-btn").forEach((b) => {
   b.onclick = () => setLang(b.dataset.lang);
@@ -728,7 +780,9 @@ $("submit-btn").onclick = async () => {
   const btn = $("submit-btn");
   const code = $("editor").value;
   if (!state.user) {
-    $("submit-status").textContent = "login ด้วย Google ก่อนส่ง";
+    $("submit-status").textContent = "login ก่อนส่ง";
+    try { sessionStorage.setItem("ng_next", location.hash || "#/"); } catch (e) { /* ignore */ }
+    location.hash = "#/login";
     return;
   }
   if (!state.file && !code.trim()) {
@@ -1055,6 +1109,14 @@ async function init() {
   ft.onchange = (e) => { state.filter.tag = e.target.value; renderTasksTable(); };
   hf.onchange = loadHistory;
   $("hist-refresh").onclick = loadHistory;
+  $("auth-go").onclick = doPasswordAuth;
+  $("auth-pass").onkeydown = (e) => { if (e.key === "Enter") doPasswordAuth(); };
+  $("google-btn").onclick = () => {
+    let next = "#/";
+    try { next = sessionStorage.getItem("ng_next") || location.hash || "#/"; } catch (e) { /* ignore */ }
+    if (!next.startswith("#/")) next = "#/";
+    location.href = API + "/api/auth/login?" + new URLSearchParams({ next }).toString();
+  };
   $("report-send").onclick = async () => {
     if (!state.user) {
       $("report-status").textContent = "login ก่อนส่งรีพอร์ต";

@@ -45,7 +45,7 @@ commit + push — Vercel redeploy อัตโนมัติ
 
 รัน local ทั้งก้อนแบบเดิมได้อยู่ (`python3 server.py` — same origin, ไม่ต้องมี CORS)
 
-## Google Login (บังคับก่อนส่ง)
+## Google Login + รหัสผ่าน (บังคับ login ก่อนส่ง)
 
 1. Google Auth Platform → Create OAuth client (Web application)
    - Authorised redirect URIs (ใส่ทั้งสองบรรทัด):
@@ -67,8 +67,21 @@ SESSION_SAMESITE=none
 SESSION_SECURE=true
 ```
 (local: `SESSION_SAMESITE=lax SESSION_SECURE=false`)
-4. หน้าเว็บจะมีปุ่ม Sign in with Google — login แล้วส่งได้เลย ไม่ต้องกรอกชื่อ (ใช้ชื่อโปรไฟล์อัตโนมัติ) ประวัติดูของตัวเองได้ด้วยติ๊ก "ของฉัน"
+4. หน้าเว็บมีหน้า Login: สมัครด้วยอีเมล+รหัสผ่าน (scrypt, rate-limit กัน brute force) หรือ Sign in with Google ก็ได้ — login แล้วส่งได้เลย ไม่ต้องกรอกชื่อ (ใช้ชื่อโปรไฟล์อัตโนมัติ) ประวัติดูของตัวเองได้ด้วยติ๊ก "ของฉัน"
 5. หน้า Settings (ต้อง login): เปลี่ยน display name (ชื่อที่โชว์ใน history) + เลือกภาษา default — เก็บในตาราง `profiles` (ดู `supabase/schema.sql`)
+
+Migration ตาราง `users` (รันใน SQL Editor):
+```sql
+create table if not exists users (
+  email text primary key,
+  name text not null default '',
+  password_hash text not null default '',
+  created_at timestamptz not null default now()
+);
+alter table users enable row level security;
+create index if not exists submissions_user_time
+  on submissions (user_email, created_at desc);
+```
 
 ## Report / Leaderboard / Dark mode
 

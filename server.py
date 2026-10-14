@@ -12,11 +12,15 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import hashlib
+import hmac
 import json
 import os
+import re
 import secrets
 import sys
 import tempfile
+import time
 import traceback
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -63,6 +67,7 @@ DETAIL_HEAD = 4000            # max chars of detail/diff sent to frontend
 app = FastAPI(title="Newbiegrader API", version="1.0.0")
 app.add_middleware(GZipMiddleware, minimum_size=500)
 submit_sem = asyncio.Semaphore(MAX_PARALLEL_SUBMITS)
+_active_submits: set = set()  # user emails with a judging currently running
 
 # Split deployment (frontend on Vercel etc.): allow the static origin, e.g.
 #   GRADER_CORS_ORIGINS=https://gradernew.vercel.app
@@ -173,11 +178,14 @@ def _google_userinfo(code: str) -> dict:
 
 
 @app.get("/api/auth/login")
-def auth_login(request: Request):
+def auth_login(request: Request, next: str = "#/"):
     if not GOOGLE_CLIENT_ID:
         raise HTTPException(status_code=500, detail="google oauth not configured")
+    if not next.startswith("#/"):
+        next = "#/"
     state = secrets.token_urlsafe(16)
     request.session["oauth_state"] = state
+    request.session["oauth_next"] = next
     q = urlencode({
         "client_id": GOOGLE_CLIENT_ID, "redirect_uri": GOOGLE_REDIRECT_URI,
         "response_type": "code", "scope": "openid email profile",
@@ -202,18 +210,21 @@ async def auth_callback(request: Request, code: str = "", state: str = "", error
         "name": info.get("name") or info["email"],
         "picture": info.get("picture", ""),
     }
+    next_url = request.session.pop("oauth_next", "#/")
+    if not isinstance(next_url, str) or not next_url.startswith("#/"):
+        next_url = "#/"
     # Hand the session to the frontend origin via one-time token, so the
     # session cookie is set first-party (works even when browsers block
     # third-party cookies). /api/auth/finish is proxied by the frontend host.
     token = _login_signer.dumps({"user": request.session["user"]})
     request.session.clear()
     return RedirectResponse(
-        FRONTEND_URL + "/api/auth/finish?" + urlencode({"token": token}),
+        FRONTEND_URL + "/api/auth/finish?" + urlencode({"token": token, "next": next_url}),
         status_code=307)
 
 
 @app.get("/api/auth/finish")
-def auth_finish(request: Request, token: str = ""):
+def auth_finish(request: Request, token: str = "", next: str = "#/"):
     try:
         data = _login_signer.loads(token, max_age=300)
         user = data.get("user") or {}
@@ -221,12 +232,14 @@ def auth_finish(request: Request, token: str = ""):
             raise ValueError("no email")
     except Exception:
         return RedirectResponse(FRONTEND_URL + "/#/?login=failed", status_code=307)
+    if not next.startswith("#/"):
+        next = "#/"
     request.session["user"] = {
         "email": user["email"],
         "name": user.get("name") or user["email"],
         "picture": user.get("picture", ""),
     }
-    return RedirectResponse(FRONTEND_URL + "/#/", status_code=307)
+    return RedirectResponse(FRONTEND_URL + "/#/" + next.lstrip("#/"), status_code=307)
 
 
 @app.get("/api/auth/me")
@@ -240,6 +253,116 @@ def auth_me(request: Request) -> dict:
 def auth_logout(request: Request) -> dict:
     request.session.clear()
     return {"ok": True}
+
+
+# ---- password login (no Google needed) ----
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+PW_MIN, PW_MAX = 8, 128
+LOGIN_WINDOW_S = 300
+LOGIN_MAX_TRIES = 20
+_login_tries: Dict[str, list] = {}
+
+
+def _client_ip(request: Request) -> str:
+    fwd = request.headers.get("x-forwarded-for", "")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return (request.client.host if request.client else "?") or "?"
+
+
+def _check_rate_limit(request: Request) -> None:
+    now = time.monotonic()
+    key = _client_ip(request)
+    hits = [t for t in _login_tries.get(key, []) if now - t < LOGIN_WINDOW_S]
+    if len(hits) >= LOGIN_MAX_TRIES:
+        raise HTTPException(status_code=429, detail="too many attempts, try later")
+    hits.append(now)
+    _login_tries[key] = hits
+    if len(_login_tries) > 10000:
+        _login_tries.clear()
+
+
+PBKDF2_ITERS = 210_000
+
+
+def _hash_password(pw: str) -> str:
+    salt = os.urandom(16)
+    dk = hashlib.pbkdf2_hmac("sha256", pw.encode(), salt, PBKDF2_ITERS)
+    return f"pbkdf2${PBKDF2_ITERS}${salt.hex()}${dk.hex()}"
+
+
+def _verify_password(pw: str, stored: str) -> bool:
+    try:
+        _, iters, salt_hex, dk_hex = stored.split("$")
+        dk = hashlib.pbkdf2_hmac("sha256", pw.encode(),
+                                 bytes.fromhex(salt_hex), int(iters))
+        return hmac.compare_digest(dk.hex(), dk_hex)
+    except Exception:
+        return False
+
+
+def _require_users_table() -> None:
+    if _sb is None:
+        raise HTTPException(status_code=404, detail="accounts not configured")
+
+
+@app.post("/api/auth/register")
+async def auth_register(request: Request) -> dict:
+    _check_rate_limit(request)
+    _require_users_table()
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid JSON")
+    email = str(body.get("email", "")).strip().lower()
+    password = str(body.get("password", ""))
+    name = str(body.get("name", "")).strip()[:50] or email.split("@")[0]
+    if not EMAIL_RE.match(email):
+        raise HTTPException(status_code=400, detail="bad email")
+    if not (PW_MIN <= len(password) <= PW_MAX):
+        raise HTTPException(status_code=400, detail="password must be 8-128 characters")
+    try:
+        exists = _sb.table("users").select("email").eq("email", email).limit(1).execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"supabase query failed: {e}")
+    if exists.data:
+        raise HTTPException(status_code=409, detail="email already registered")
+    pw_hash = await asyncio.to_thread(_hash_password, password)
+    try:
+        _sb.table("users").insert(
+            {"email": email, "name": name, "password_hash": pw_hash}).execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"supabase write failed: {e}")
+    request.session["user"] = {"email": email, "name": name, "picture": "",
+                               "provider": "password"}
+    return {"ok": True, "user": request.session["user"]}
+
+
+@app.post("/api/auth/password")
+async def auth_password(request: Request) -> dict:
+    _check_rate_limit(request)
+    _require_users_table()
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid JSON")
+    email = str(body.get("email", "")).strip().lower()
+    password = str(body.get("password", ""))
+    try:
+        res = _sb.table("users").select("email,name,password_hash").eq(
+            "email", email).limit(1).execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"supabase query failed: {e}")
+    rows = res.data or []
+    user = rows[0] if rows else None
+    ok = await asyncio.to_thread(_verify_password, password,
+                                 (user or {}).get("password_hash", ""))
+    if not user or not ok:
+        raise HTTPException(status_code=401, detail="wrong email or password")
+    request.session["user"] = {"email": user["email"],
+                               "name": user.get("name") or user["email"],
+                               "picture": "", "provider": "password"}
+    return {"ok": True, "user": request.session["user"]}
 
 
 def _profile_display_name(email: str, fallback: str) -> str:
@@ -475,17 +598,24 @@ async def submit(
     assert source is not None
     ext = str(LANGS[language]["ext"])
 
-    async with submit_sem:
-        try:
-            result = await asyncio.wait_for(
-                asyncio.to_thread(run_submission, prob, ext, source),
-                timeout=OVERALL_TIMEOUT,
-            )
-        except asyncio.TimeoutError:
-            raise HTTPException(status_code=504, detail="judging timed out (server overloaded?)")
-        except Exception:
-            traceback.print_exc()
-            raise HTTPException(status_code=500, detail="internal judging error")
+    if user["email"] in _active_submits:
+        raise HTTPException(status_code=409,
+                            detail="you already have a submission judging, please wait")
+    _active_submits.add(user["email"])
+    try:
+        async with submit_sem:
+            try:
+                result = await asyncio.wait_for(
+                    asyncio.to_thread(run_submission, prob, ext, source),
+                    timeout=OVERALL_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                raise HTTPException(status_code=504, detail="judging timed out (server overloaded?)")
+            except Exception:
+                traceback.print_exc()
+                raise HTTPException(status_code=500, detail="internal judging error")
+    finally:
+        _active_submits.discard(user["email"])
     if "error" in result:
         raise HTTPException(status_code=500, detail=result["error"])
     result["filename"] = filename

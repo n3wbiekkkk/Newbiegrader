@@ -301,6 +301,8 @@ table.tasks-table tbody tr:hover td { background: var(--panel2); }
 .submit-btn:hover:not(:disabled) { opacity: .8; }
 .submit-btn:disabled { opacity: 0.5; cursor: wait; }
 .status { font-size: 12.5px; margin-top: 8px; font-family: var(--mono); color: var(--dim); }
+.status.bad { color: var(--red); }
+.auth-card { max-width: 460px; }
 .sep { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
 tr.test-row { cursor: pointer; }
 tr.test-row:hover td { background: var(--panel2); }
