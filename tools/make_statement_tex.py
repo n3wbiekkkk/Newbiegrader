@@ -10,13 +10,32 @@ Requires: tectonic (brew install tectonic). Fonts in tools/fonts/.
 
 Usage: python3 tools/make_statement_tex.py <problem_id>
 """
+import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+
+def normalize_pdf(data: bytes) -> bytes:
+    """Make tectonic output byte-deterministic: same .tex always yields
+    the same bytes. Neutralizes per-run randomness:
+    - font subset tags (e.g. /XKCDQZ+Sarabun -> /AAAAAA+Name)
+    - /CreationDate / /ModDate stamps
+    - trailer /ID pair
+    (Rendered pages are identical either way; this also keeps git diffs clean.)"""
+    data = re.sub(rb"/[A-Z]{6}\+([A-Za-z]+)",
+                  lambda m: b"/AAAAAA+" + m.group(1), data)
+    data = re.sub(rb"/(CreationDate|ModDate) \(D:[^)]*\)",
+                  rb"/\1 (D:20000101000000+00'00')", data)
+    data = re.sub(rb"/ID\s*\[\s*<[0-9A-Fa-f]*>\s*<[0-9A-Fa-f]*>\s*\]",
+                  b"/ID [<00000000000000000000000000000000>"
+                  b"<00000000000000000000000000000000>]", data)
+    return data
 
 ROOT = Path(__file__).parent.parent
 FONTDIR = (Path(__file__).parent / "fonts").resolve()
@@ -238,6 +257,9 @@ def main(pid: str) -> None:
     md = (pdir / "statement.md").read_text(encoding="utf-8")
     tex = build(pid, cfg["title"], float(cfg.get("time_limit", 1.0)),
                 int(cfg.get("memory_limit", 256)), md)
+    # Byte-deterministic builds: same .tex always yields identical bytes
+    # (fixes xdvipdfmx subset tags/checksums/IDs). normalize_pdf pins dates.
+    os.environ.setdefault("SOURCE_DATE_EPOCH", "0")
     with tempfile.TemporaryDirectory() as tmp:
         src = Path(tmp) / "statement.tex"
         src.write_text(tex, encoding="utf-8")
@@ -249,6 +271,7 @@ def main(pid: str) -> None:
             raise SystemExit(f"tectonic failed for {pid}")
         shutil.move(str(Path(tmp) / "statement.pdf"), str(pdir / "statement.pdf"))
     out = pdir / "statement.pdf"
+    out.write_bytes(normalize_pdf(out.read_bytes()))
     print(f"wrote {out} ({out.stat().st_size // 1024} KB)")
 
 
