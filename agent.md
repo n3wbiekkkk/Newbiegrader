@@ -44,7 +44,7 @@ agent.md             # ไฟล์นี้
 
 1. ผู้ใช้วาง PDF ใน `problems/` → ย้ายเป็น `problems/<id>/statement.pdf` (id ตัวเล็ก, `git mv`)
 2. อ่าน PDF (tool `read` อ่าน PDF ได้) แล้วสร้าง:
-   - `config.json`: `{"title","time_limit":1.0,"memory_limit":256,"checker":"token|exact|float|decimal2","difficulty":"easy|medium|hard","tags":[...]}`
+   - `config.json`: `{"title","time_limit":1.0,"memory_limit":256,"checker":"token|exact|float|decimal2","difficulty":"easy|medium|hard","tags":[...],"notice":"..."}` (tags ต้องอยู่ใน KNOWN_TAGS ใน `grader.py`; `notice` โชว์แบนเนอร์บนหน้า task)
    - `statement.md`: spec ภาษาไทย (input/output/constraints/subtasks/ตัวอย่าง) — **ห้ามใส่ section กับดัก** (นโยบาย: ไม่บอกใบ้)
    - `tests/01..10.in/.out`: ข้อ 01+ = ตัวอย่างใน PDF (ต้องตรงเป๊ะ), ที่เหลือ edge + random (seeded) + max constraint
    - `examples/<id>_ref.py`: reference solution ที่ถูกต้อง
