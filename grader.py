@@ -175,7 +175,7 @@ def prepare_command(src: Path, workdir: Path) -> tuple[list[str], str, str]:
         exe = workdir / "sol"
         r = subprocess.run([comp, "-O2", "-std=c++17", "-Wall", "-Wextra",
                             "-o", str(exe), str(src)],
-                           capture_output=True, text=True, timeout=30)
+                           capture_output=True, text=True, cwd=str(workdir), env=judge_env(), timeout=30)
         if r.returncode != 0:
             raise CompileError(r.stderr or r.stdout or "compile failed")
         return [str(exe)], f"{Path(comp).name} -O2 -Wall {src.name}", (r.stderr or "").strip()
@@ -186,7 +186,7 @@ def prepare_command(src: Path, workdir: Path) -> tuple[list[str], str, str]:
         exe = workdir / "sol"
         r = subprocess.run([comp, "-O2", "-std=c11", "-Wall", "-Wextra",
                             "-o", str(exe), str(src)],
-                           capture_output=True, text=True, timeout=30)
+                           capture_output=True, text=True, cwd=str(workdir), env=judge_env(), timeout=30)
         if r.returncode != 0:
             raise CompileError(r.stderr or r.stdout or "compile failed")
         return [str(exe)], f"{Path(comp).name} -O2 -Wall {src.name}", (r.stderr or "").strip()
@@ -194,7 +194,7 @@ def prepare_command(src: Path, workdir: Path) -> tuple[list[str], str, str]:
         if not shutil.which("javac") or not shutil.which("java"):
             raise SystemExit("javac/java not found")
         r = subprocess.run(["javac", "-Xlint:all", "-d", str(workdir), str(src)],
-                           capture_output=True, text=True, timeout=30)
+                           capture_output=True, text=True, cwd=str(workdir), env=judge_env(), timeout=30)
         if r.returncode != 0:
             raise CompileError(r.stderr or r.stdout or "compile failed")
         cls = src.stem
@@ -204,7 +204,7 @@ def prepare_command(src: Path, workdir: Path) -> tuple[list[str], str, str]:
             raise SystemExit("go not found")
         exe = workdir / "sol"
         r = subprocess.run(["go", "build", "-o", str(exe), str(src)],
-                           capture_output=True, text=True, timeout=60)
+                           capture_output=True, text=True, cwd=str(workdir), env=judge_env(), timeout=60)
         if r.returncode != 0:
             raise CompileError(r.stderr or r.stdout or "compile failed")
         return [str(exe)], f"go build {src.name}", (r.stderr or "").strip()
@@ -213,7 +213,7 @@ def prepare_command(src: Path, workdir: Path) -> tuple[list[str], str, str]:
             raise SystemExit("rustc not found")
         exe = workdir / "sol"
         r = subprocess.run(["rustc", "-O", "-o", str(exe), str(src)],
-                           capture_output=True, text=True, timeout=60)
+                           capture_output=True, text=True, cwd=str(workdir), env=judge_env(), timeout=60)
         if r.returncode != 0:
             raise CompileError(r.stderr or r.stdout or "compile failed")
         return [str(exe)], f"rustc -O {src.name}", (r.stderr or "").strip()
@@ -428,6 +428,15 @@ def build_limits(memory_mb: int, time_limit: float):
                 resource.setrlimit(resource.RLIMIT_CPU, (cpu, cpu))
             except (ValueError, OSError):
                 pass
+            for lim, val in (
+                ("RLIMIT_NPROC", 64),      # กัน fork bomb
+                ("RLIMIT_FSIZE", 64 * 1024 * 1024),  # กันเขียนไฟล์ถล่ม disk
+                ("RLIMIT_CORE", 0),        # ไม่เอา core dump
+            ):
+                try:
+                    resource.setrlimit(getattr(resource, lim), (val, val))
+                except (AttributeError, ValueError, OSError):
+                    pass
         except ImportError:
             pass
         try:
@@ -435,6 +444,30 @@ def build_limits(memory_mb: int, time_limit: float):
         except OSError:
             pass
     return _fn
+
+
+def judge_env() -> dict:
+    """Minimal env for untrusted code: compilers/runtimes work, secrets never leak."""
+    path = os.environ.get("PATH", "/usr/bin:/bin:/usr/local/bin")
+    return {"PATH": path, "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8",
+            "HOME": "/tmp", "TMPDIR": "/tmp"}
+
+
+def _run_cwd(cmd: list[str]) -> str | None:
+    """Best-effort isolated working dir: the submission's own temp dir."""
+    try:
+        if (len(cmd) >= 3 and Path(cmd[0]).name in ("java", "java.exe")
+                and cmd[1] == "-cp"):
+            return str(Path(cmd[2]))
+        if cmd and Path(cmd[0]).stem == "sol":  # our compiled binaries
+            return str(Path(cmd[0]).parent)
+        for arg in cmd[1:]:
+            p = Path(arg)
+            if p.suffix.lower() in (".py", ".pyw", ".js") and p.is_file():
+                return str(p.resolve().parent)
+    except Exception:
+        pass
+    return None
 
 def run_one(cmd: list[str], stdin_data: str, time_limit: float, memory_mb: int) -> dict:
     """Run 1 test ภายใต้ limit.
@@ -449,7 +482,7 @@ def run_one(cmd: list[str], stdin_data: str, time_limit: float, memory_mb: int) 
     try:
         p = subprocess.Popen(
             cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, preexec_fn=preexec,
+            text=True, preexec_fn=preexec, env=judge_env(), cwd=_run_cwd(cmd),
         )
     except OSError as e:
         return {"stdout": "", "stderr": str(e), "wall": time.perf_counter() - start,
