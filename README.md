@@ -171,6 +171,7 @@ python3 grader.py run aplusb examples/aplusb_correct.cpp   # C++ ก็ได้
 | `mana_crystal` | ย่อภาพผลึกมานา | medium | 10 |
 | `posn_server_passcode` | รหัสผ่านเซิร์ฟเวอร์ สอวน. | medium | 10 |
 | `warpz` | วาร์ปอวกาศ | easy | 10 |
+| `prime` | นับจำนวนเฉพาะ (TL 0.5s / MEM 32MB) | easy | 10 |
 
 ## Verdicts
 `AC` ผ่าน / `WA` + diff (·=space) / `TLE` เกินเวลา / `MLE` หน่วยความจำ /
