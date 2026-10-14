@@ -21,9 +21,9 @@ python3 server.py --port 8080
 อย่า deploy ทั้ง repo ด้วย preset FastAPI บน serverless — ไม่มี compiler (C/C++ คอมไพล์ไม่ได้),
 filesystem เขียนไม่ได้นอกจาก `/tmp`, โดนตัด timeout กลางคัน แผนที่ถูก:
 
-**1. Backend (judge) ขึ้น host ที่มี Docker** — ปัจจุบันใช้ justrunmy (push `HEAD:deploy` ไป git remote ของมัน)
+**1. Backend (judge) ขึ้น host ที่มี Docker** — ปัจจุบันใช้ Render (`newbiegrader-api`, auto-deploy จาก GitHub `main`)
 ```bash
-git push <justrunmy-git-url> HEAD:deploy
+git push origin main   # Render + Pages auto-deploy เอง
 ```
 สำรอง: Render (Blueprint + `render.yaml`) / Fly.io / VPS แล้วตั้ง env ตามต้องการ
 
@@ -41,7 +41,7 @@ config.js ปล่อย `""` ไว้ (same-origin ผ่าน proxy) — �
 1. Google Auth Platform → Create OAuth client (Web application)
    - Authorised redirect URIs (ใส่ทั้งสองบรรทัด):
      `https://gradernew.pages.dev/api/auth/callback`
-     `https://grader.n.onjrnm.vip/api/auth/callback`
+     `https://newbiegrader-api.onrender.com/api/auth/callback`
    - JavaScript origins: ปล่อยว่างได้
 2. รัน migration คอลัมน์ email:
 ```sql
