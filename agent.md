@@ -176,6 +176,12 @@ git push deploy HEAD:deploy
    - memory cap ต่อเทสต์ = ram/2: โจทย์ที่ประกาศ 512MB (panda) จะรันจริงที่ 256MB และรายงาน `limits.capped: true`
      (frontend โชว์ "(เครื่องตัดที่ X MB จาก Y MB)") — จำเป็น เพราะปล่อย 512MB ใน container 512MB = OOM killer ฆ่า server
    - endpoint ที่เป็น `def` (sync) รันใน threadpool: **ห้ามเรียก `_queue()`** ที่นั่น (ไม่มี running loop) ใช้ `_queue_depth()`
+19. **Cloudflare Pages proxy ทำให้ backend เห็น IP เดียวกันทุกคน** (วัดแล้ว: ยิงผ่าน proxy 19 ครั้ง + ยิงตรง 1 ครั้ง = คนละ bucket,
+   ครั้งที่ 20 ผ่าน proxy = 429) → ห้ามทำ rate limit ที่สำคัญ "ต่อ IP" อย่างเดียว ให้ล็อกต่อ **บัญชี/อีเมล** เป็นหลัก
+   (ดู `_check_rate_limit(request, email)` + `ACCOUNT_MAX_TRIES`) ส่วน per-IP เหลือเป็น flood guard
+   — และเพดานนี้แชร์กันทั้งเว็บ อย่าตั้งต่ำ (เดิม 20/5 นาที = ทั้งโรงเรียนล็อกอินไม่ได้)
+20. leaderboard ใช้ view `leaderboard_scores` ที่รวมทุกช่วงเวลา — **อย่าลืมคอลัมน์ `name`** ใน view (โค้ดลอง select
+   แบบมี/ไม่มี name แล้ว fallback เองได้ แต่จะได้ชื่อจาก 2000 แถวล่าสุดเท่านั้น) และ Settings display_name ทับชื่อใน submissions เสมอ
 
 ## 11. Definition of done (ทุกงาน)
 

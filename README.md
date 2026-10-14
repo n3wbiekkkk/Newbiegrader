@@ -58,7 +58,9 @@ SESSION_SAMESITE=lax
 SESSION_SECURE=true
 ```
 (local: `SESSION_SAMESITE=lax SESSION_SECURE=false`)
-4. หน้าเว็บมีหน้า Login: สมัครด้วยอีเมล+รหัสผ่าน (PBKDF2 210k iterations, rate-limit กัน brute force) หรือ Sign in with Google ก็ได้ — login แล้วส่งได้เลย ไม่ต้องกรอกชื่อ (ใช้ชื่อโปรไฟล์อัตโนมัติ) ประวัติดูของตัวเองได้ด้วยติ๊ก "ของฉัน"
+4. หน้าเว็บมีหน้า Login: สมัครด้วยอีเมล+รหัสผ่าน (PBKDF2 210k iterations) หรือ Sign in with Google ก็ได้ — login แล้วส่งได้เลย ไม่ต้องกรอกชื่อ (ใช้ชื่อโปรไฟล์อัตโนมัติ) ประวัติดูของตัวเองได้ด้วยติ๊ก "ของฉัน"
+   - **rate limit เป็นรายบัญชี ไม่ใช่ราย IP**: ทุกคนที่เข้าเว็บผ่าน Pages proxy จะถูกมองเป็น IP เดียวกัน (Cloudflare เขียนทับ IP ต้นทาง) ถ้าจำกัดต่อ IP ทั้งเว็บจะติด "too many attempts" พร้อมกันหลัง 20 ครั้ง — ตอนนี้ผิดรหัสได้ 8 ครั้ง/15 นาทีต่อบัญชี (ล็อกอินถูก = รีเซ็ต) และมีเพดาน 200 ครั้ง/5 นาทีต่อ IP ไว้กัน flood เท่านั้น
+   - ถ้าผู้ใช้ "หลุด login ทุกครั้งที่ deploy" ให้เช็คว่าตั้ง `SESSION_SECRET` ใน panel แล้ว (ไม่ตั้ง = สุ่มใหม่ทุก boot → session ตายทั้งหมด)
 5. หน้า Settings (ต้อง login): เปลี่ยน display name (ชื่อที่โชว์ใน history) + เลือกภาษา default — เก็บในตาราง `profiles` (ดู `supabase/schema.sql`)
 
 Migration ตาราง `users` (รันใน SQL Editor):

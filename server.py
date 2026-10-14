@@ -791,9 +791,18 @@ def auth_logout(request: Request) -> dict:
 # ---- password login (no Google needed) ----
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 PW_MIN, PW_MAX = 8, 128
-LOGIN_WINDOW_S = 300
-LOGIN_MAX_TRIES = 20
+# Two buckets, because the proxy chain hides the real client IP: everything that
+# comes through the frontend host arrives with the same source address (Cloudflare
+# rewrites it), so an IP-only limit would be SHARED BY EVERY USER on the site —
+# 20 logins and the whole class sees "too many attempts". Brute force is therefore
+# limited per account (the thing being protected), and the IP bucket stays loose
+# as a flood guard for direct callers.
+LOGIN_WINDOW_S = 300          # per-IP flood guard window
+LOGIN_MAX_TRIES = 200         # per IP per window
+ACCOUNT_WINDOW_S = 900        # per-account window
+ACCOUNT_MAX_TRIES = 8         # wrong credentials per account per window
 _login_tries: Dict[str, list] = {}
+_account_tries: Dict[str, list] = {}
 
 
 def _client_ip(request: Request) -> str:
@@ -811,16 +820,40 @@ def _client_ip(request: Request) -> str:
     return ((request.client.host if request.client else "?") or "?")[:64]
 
 
-def _check_rate_limit(request: Request) -> None:
+def _recent(store: Dict[str, list], key: str, window: int) -> list:
     now = time.monotonic()
-    key = _client_ip(request)
-    hits = [t for t in _login_tries.get(key, []) if now - t < LOGIN_WINDOW_S]
-    if len(hits) >= LOGIN_MAX_TRIES:
-        raise HTTPException(status_code=429, detail="too many attempts, try later")
-    hits.append(now)
-    _login_tries[key] = hits
+    hits = [t for t in store.get(key, []) if now - t < window]
+    store[key] = hits
+    return hits
+
+
+def _check_rate_limit(request: Request, email: str = "") -> None:
+    ip = _client_ip(request)
+    if len(_recent(_login_tries, ip, LOGIN_WINDOW_S)) >= LOGIN_MAX_TRIES:
+        raise HTTPException(status_code=429,
+                            detail="too many attempts from this network, try later",
+                            headers={"Retry-After": "60"})
+    _login_tries[ip].append(time.monotonic())
     if len(_login_tries) > 10000:
         _login_tries.clear()
+    email = (email or "").strip().lower()
+    if not email:
+        return
+    hits = _recent(_account_tries, email, ACCOUNT_WINDOW_S)
+    if len(hits) >= ACCOUNT_MAX_TRIES:
+        retry = max(1, int(ACCOUNT_WINDOW_S - (time.monotonic() - hits[0])) + 1)
+        raise HTTPException(
+            status_code=429,
+            detail="too many attempts for this account, please wait a few minutes",
+            headers={"Retry-After": str(retry)})
+    hits.append(time.monotonic())
+    if len(_account_tries) > 10000:
+        _account_tries.clear()
+
+
+def _clear_account_attempts(email: str) -> None:
+    """A correct password resets the account's counter (typos are not attacks)."""
+    _account_tries.pop((email or "").strip().lower(), None)
 
 
 PBKDF2_ITERS = 210_000
@@ -849,7 +882,6 @@ def _require_users_table() -> None:
 
 @app.post("/api/auth/register")
 async def auth_register(request: Request) -> dict:
-    _check_rate_limit(request)
     _require_users_table()
     try:
         body = await request.json()
@@ -858,6 +890,7 @@ async def auth_register(request: Request) -> dict:
     email = str(body.get("email", "")).strip().lower()
     password = str(body.get("password", ""))
     name = str(body.get("name", "")).strip()[:50] or email.split("@")[0]
+    _check_rate_limit(request, email)
     if not EMAIL_RE.match(email):
         raise HTTPException(status_code=400, detail="bad email")
     if not (PW_MIN <= len(password) <= PW_MAX):
@@ -881,7 +914,6 @@ async def auth_register(request: Request) -> dict:
 
 @app.post("/api/auth/password")
 async def auth_password(request: Request) -> dict:
-    _check_rate_limit(request)
     _require_users_table()
     try:
         body = await request.json()
@@ -889,6 +921,7 @@ async def auth_password(request: Request) -> dict:
         raise HTTPException(status_code=400, detail="invalid JSON")
     email = str(body.get("email", "")).strip().lower()
     password = str(body.get("password", ""))
+    _check_rate_limit(request, email)
     try:
         res = _sb.table("users").select("email,name,password_hash").eq(
             "email", email).limit(1).execute()
@@ -900,6 +933,7 @@ async def auth_password(request: Request) -> dict:
                                  (user or {}).get("password_hash", ""))
     if not user or not ok:
         raise HTTPException(status_code=401, detail="wrong email or password")
+    _clear_account_attempts(email)
     request.session["user"] = {"email": user["email"],
                                "name": user.get("name") or user["email"],
                                "picture": "", "provider": "password"}
@@ -1566,25 +1600,74 @@ def leaderboard(limit: int = 50) -> dict:
                    lambda: _build_leaderboard(limit))
 
 
-def _build_leaderboard(limit: int) -> dict:
-    """All-time best score per user per problem. Uses the `leaderboard_scores`
-    view (supabase/schema.sql) so no submission ever falls out of the window;
-    falls back to a bounded row scan if the view is missing."""
-    best: Dict[str, Dict[str, int]] = {}
-    acc: Dict[str, set] = {}
+def _leaderboard_names(emails: List[str], from_view: Dict[str, str]) -> Dict[str, str]:
+    """Resolve a display name per email.
+
+    Priority: Settings display_name > newest submission name (the view carries an
+    all-time one; a bounded scan fills gaps for views created before the `name`
+    column existed) > account email local part. Never "?" unless we truly have
+    nothing (no email), because a board full of "?" looks broken.
+    """
     names: Dict[str, str] = {}
-    try:
-        res = _sb.table("leaderboard_scores").select(
-            "user_email,problem,best,accepted").limit(20000).execute()
+    for email, name in (from_view or {}).items():
+        if email and (name or "").strip():
+            names[email] = name.strip()[:50]
+    try:  # newest non-empty submission name per user (bounded, newest first)
+        res = _sb.table("submissions").select("user_email,name").order(
+            "created_at", desc=True).limit(2000).execute()
         for r in res.data or []:
             u = r.get("user_email") or ""
-            if not u:
-                continue
-            best.setdefault(u, {})[r["problem"]] = int(r.get("best") or 0)
-            if r.get("accepted"):
-                acc.setdefault(u, set()).add(r["problem"])
+            n = (r.get("name") or "").strip()
+            if u and n and u not in names:
+                names[u] = n[:50]
     except Exception as e:
-        print(f"[web] leaderboard_scores view unavailable ({e}); "
+        print(f"[web] leaderboard name scan failed: {e}", file=sys.stderr)
+    try:  # Settings display name wins over anything stored on submissions
+        for i in range(0, len(emails), 200):
+            chunk = emails[i:i + 200]
+            if not chunk:
+                continue
+            pres = _sb.table("profiles").select(
+                "user_email,display_name").in_("user_email", chunk).execute()
+            for p in pres.data or []:
+                dn = (p.get("display_name") or "").strip()
+                if dn:
+                    names[p["user_email"]] = dn[:50]
+    except Exception as e:
+        print(f"[web] leaderboard profile lookup failed: {e}", file=sys.stderr)
+    for email in emails:
+        if not names.get(email) and email:
+            names[email] = email.split("@")[0][:50]   # local part only, no domain
+    return names
+
+
+def _build_leaderboard(limit: int) -> dict:
+    """All-time best score per user per problem.
+
+    Uses the `leaderboard_scores` view (supabase/schema.sql) so no submission
+    ever falls out of the window; falls back to a bounded row scan when the view
+    has not been created yet.
+    """
+    best: Dict[str, Dict[str, int]] = {}
+    acc: Dict[str, set] = {}
+    view_names: Dict[str, str] = {}
+    view_seen: Dict[str, str] = {}
+    rows: List[dict] = []
+    # The view gained columns over time (name/last_at): try the richest select
+    # first so an un-migrated database still works without a redeploy.
+    view_error: Optional[Exception] = None
+    for cols in ("user_email,problem,best,accepted,name,last_at",
+                 "user_email,problem,best,accepted,name",
+                 "user_email,problem,best,accepted"):
+        try:
+            res = _sb.table("leaderboard_scores").select(cols).limit(20000).execute()
+            rows = res.data or []
+            view_error = None
+            break
+        except Exception as e:
+            view_error = e
+    if view_error is not None or (rows and "best" not in rows[0]):
+        print(f"[web] leaderboard_scores view unavailable ({view_error}); "
               "falling back to a 2000-row scan — run supabase/schema.sql", file=sys.stderr)
         try:
             res = _sb.table("submissions").select(
@@ -1592,34 +1675,37 @@ def _build_leaderboard(limit: int) -> dict:
                 "created_at", desc=True).limit(2000).execute()
         except Exception as e2:
             raise _db_err(e2)
-        for r in res.data or []:
-            u = r.get("user_email") or ""
-            if not u:
-                continue
-            names[u] = r.get("name") or names.get(u, "?")  # newest row first
-            best.setdefault(u, {})[r["problem"]] = max(
-                best.setdefault(u, {}).get(r["problem"], 0), r.get("score") or 0)
+        rows = res.data or []
+    for r in rows:
+        u = r.get("user_email") or ""
+        if not u:
+            continue
+        p = r.get("problem") or ""
+        if "best" in r:                      # view row
+            best.setdefault(u, {})[p] = int(r.get("best") or 0)
             if r.get("accepted"):
-                acc.setdefault(u, set()).add(r["problem"])
-    if _sb is not None and best:
-        # display names from Settings override historical submission names
-        keys = list(best.keys())
-        try:
-            for i in range(0, len(keys), 200):
-                chunk = keys[i:i + 200]
-                pres = _sb.table("profiles").select(
-                    "user_email,display_name").in_("user_email", chunk).execute()
-                for p in pres.data or []:
-                    dn = (p.get("display_name") or "").strip()
-                    if dn:
-                        names[p["user_email"]] = dn[:50]
-        except Exception as e:
-            print(f"[web] leaderboard profile lookup failed: {e}", file=sys.stderr)
+                acc.setdefault(u, set()).add(p)
+            n = (r.get("name") or "").strip()
+            at = str(r.get("last_at") or "")
+            if n and at >= view_seen.get(u, ""):
+                view_seen[u] = at
+                view_names[u] = n[:50]
+        else:                                # raw submissions row (newest first)
+            cur = best.setdefault(u, {})
+            cur[p] = max(cur.get(p, 0), r.get("score") or 0)
+            if r.get("accepted"):
+                acc.setdefault(u, set()).add(p)
+            n = (r.get("name") or "").strip()
+            if n and not view_names.get(u):
+                view_names[u] = n[:50]
+    if not best:
+        return {"configured": True, "top": []}
+    names = _leaderboard_names(list(best.keys()), view_names)
     top = sorted(
         ({"name": names.get(u) or "?", "solved": len(acc.get(u, ())),
           "points": sum(v.values())} for u, v in best.items()),
         key=lambda t: (-t["points"], -t["solved"], t["name"]))
-    return {"configured": True, "top": top[:limit]} 
+    return {"configured": True, "top": top[:limit]}
 
 
 @app.get("/api/stats")

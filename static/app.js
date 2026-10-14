@@ -596,14 +596,16 @@ async function renderLeaderboard() {
       return;
     }
     let html = `<table class="tests"><thead><tr>
-      <th>#</th><th>ชื่อ</th><th>แก้ได้</th><th>คะแนนรวม</th>
+      <th>#</th><th>ชื่อ</th><th>ผ่านเต็ม</th><th>คะแนนรวม</th>
     </tr></thead><tbody>`;
     top.forEach((t, i) => {
       const medal = i < 3 ? `<span class="rank rank-${i + 1}">${i + 1}</span>` : `${i + 1}`;
       html += `<tr><td>${medal}</td><td>${esc(t.name)}</td><td>${t.solved} ข้อ</td><td><strong class="${scoreCls(t.points)}">${t.points}</strong></td></tr>`;
     });
     body.classList.remove("dim");
-    body.innerHTML = html + `</tbody></table>`;
+    body.innerHTML = html + `</tbody></table>
+      <p class="dim">คะแนนรวม = ผลรวมคะแนนดีสุดของแต่ละข้อ (ข้อที่ยังไม่ผ่านก็นับคะแนนบางส่วน)
+      — คนที่ "ผ่านเต็ม" น้อยกว่าแต้มมาก แปลว่าทำได้บางเทสต์หลายข้อ</p>`;
   } catch (e) {
     body.innerHTML = `<span class="dim">โหลดไม่ได้: ${esc(e.message)}</span>`;
   }
@@ -1048,7 +1050,24 @@ async function doPasswordAuth() {
       body: JSON.stringify(payload),
     });
     const d = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
+    if (!r.ok) {
+      // Registering an email that already exists is the most common stumble:
+      // switch to the login form and keep what they typed.
+      if (r.status === 409 && authMode === "register") {
+        setAuthMode("login");
+        const em = $("auth-email");
+        if (em) em.value = email;
+        err.textContent = "อีเมลนี้มีบัญชีแล้ว — ใส่รหัสผ่านเพื่อเข้าสู่ระบบ";
+        err.classList.remove("hidden");
+        return;
+      }
+      if (r.status === 429) {
+        err.textContent = d.detail || "พยายามบ่อยเกินไป รอสักครู่แล้วลองใหม่";
+        err.classList.remove("hidden");
+        return;
+      }
+      throw new Error(d.detail || `HTTP ${r.status}`);
+    }
     await refreshMe();
     location.hash = "#/tasks";
   } catch (e) {
