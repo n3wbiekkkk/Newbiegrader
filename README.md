@@ -206,6 +206,7 @@ python3 grader.py run napprime examples/napprime_ref.cpp   # C++ ก็ได้
 | `exact_budget` | ซื้อของให้พอดีงบ (ใช้อะไรก็ได้) | medium | 10 |
 | `count_islands` | นับเกาะ (ใช้อะไรก็ได้) | medium | 10 |
 | `queens_holes` | ราชินีบนกระดานมีหลุม (ใช้อะไรก็ได้) | medium | 10 |
+| `thai_time` | ระบบบอกเวลาภาษาไทย | easy | 10 |
 
 ## Verdicts
 `AC` ผ่าน / `WA` + diff (·=space) / `TLE` เกินเวลา / `MLE` หน่วยความจำ /
