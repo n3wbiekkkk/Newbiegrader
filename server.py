@@ -26,6 +26,7 @@ from urllib.request import urlopen
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
@@ -60,6 +61,7 @@ OVERALL_TIMEOUT = 90.0        # seconds per submission (thread keeps cleaning up
 DETAIL_HEAD = 4000            # max chars of detail/diff sent to frontend
 
 app = FastAPI(title="Newbiegrader API", version="1.0.0")
+app.add_middleware(GZipMiddleware, minimum_size=500)
 submit_sem = asyncio.Semaphore(MAX_PARALLEL_SUBMITS)
 
 # Split deployment (frontend on Vercel etc.): allow the static origin, e.g.
