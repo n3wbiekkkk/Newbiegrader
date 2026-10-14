@@ -172,6 +172,7 @@ python3 grader.py run napprime examples/napprime_ref.cpp   # C++ ก็ได้
 | `flashback` | ไม่ได้ลืมแค่ไม่ได้เจอ | medium | 10 |
 | `rotation` | เธอหมุนรอบฉัน ฉันหมุนรอบเธอ | easy | 10 |
 | `shadow` | Shadow เงาปะทะมังกร (TL 1s / MEM 64MB) | easy | 10 |
+| `panda` | แพนด้าหาสบู่โอ (TL 1s / MEM 512MB) | medium | 10 |
 
 ## Verdicts
 `AC` ผ่าน / `WA` + diff (·=space) / `TLE` เกินเวลา / `MLE` หน่วยความจำ /
