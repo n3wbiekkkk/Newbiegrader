@@ -95,21 +95,25 @@
       <select id="f-diff" aria-label="filter by difficulty">
         <option value="">ทุกระดับ</option>
       </select>
+      <label class="mine-check"><input type="checkbox" id="show-tag" checked> Show tag</label>
       <span id="filter-count" class="meta"></span>
     </div>
-    <div class="tagbar">
-      <div id="tag-chips"></div>
-      <button id="tag-clear" type="button" class="ghost-btn">clear</button>
-    </div>
-    <div class="card table-card">
-      <table class="tests tasks-table">
-        <thead><tr>
-          <th>#</th><th>ชื่อโจทย์</th><th>ระดับ</th><th>tags</th><th>tests</th><th>คะแนน</th>
-        </tr></thead>
-        <tbody id="tasks-body"></tbody>
-      </table>
-      <div id="tasks-empty" class="dim hidden" style="padding:16px">
-        ยังไม่มีโจทย์ — ส่งไฟล์ PDF มาเพื่อสร้างข้อใหม่
+    <div class="tasks-layout">
+      <aside class="side">
+        <div class="side-group" role="tablist" aria-label="status filter">
+          <button class="side-btn active" data-status="all" type="button">All</button>
+          <button class="side-btn" data-status="tried" type="button">Tried</button>
+          <button class="side-btn" data-status="solved" type="button">Solved</button>
+        </div>
+        <hr class="sep">
+        <div class="side-head"><h3>Tag Filter</h3><button id="tag-clear-side" type="button" class="link-btn">clear</button></div>
+        <div id="tag-list"></div>
+      </aside>
+      <div class="tasks-main">
+        <div id="task-cards"></div>
+        <div id="tasks-empty" class="dim hidden" style="padding:16px">
+          ยังไม่มีโจทย์ — ส่งไฟล์ PDF มาเพื่อสร้างข้อใหม่
+        </div>
       </div>
     </div>
   </section>
