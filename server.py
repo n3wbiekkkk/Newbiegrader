@@ -51,6 +51,29 @@ import grader  # noqa: E402  (CLI grader module, import-safe: guarded by __main_
 
 STATIC_DIR = ROOT / "static"
 
+
+def _load_dotenv() -> None:
+    """Local-dev convenience only: load ROOT/.env into env (never commit it).
+    Real env vars always win. Production uses host env vars, no .env file."""
+    try:
+        with open(ROOT / ".env", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                k = k.strip()
+                v = v.strip().strip('"').strip("'")
+                if k and k not in os.environ:
+                    os.environ[k] = v
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        print(f"[web] warning: cannot read .env: {e}", file=sys.stderr)
+
+
+_load_dotenv()
+
 LANGS: Dict[str, Dict[str, object]] = {
     "python": {"name": "Python 3", "ext": ".py", "accept": [".py"]},
     "c": {"name": "C (C11)", "ext": ".c", "accept": [".c"]},

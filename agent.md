@@ -29,11 +29,13 @@ Newbiegrader = เว็บสนามสอบเขียนโปรแก�
 
 ```
 grader.py            # engine: run_one/judge_test/checkers/CLI (stdlib ล้วน)
-server.py            # FastAPI: /api/* + serve static/
-static/              # index.html styles.css app.js config.js vercel.json
+server.py            # FastAPI: /api/* + serve static/ (โหลด .env local ถ้ามี)
+static/              # index.html styles.css app.js (?v=N กัน cache) config.js vercel.json
+functions/api/[[proxy]].js  # Cloudflare Pages Function: proxy /api ไป backend
 problems/<id>/       # statement.pdf statement.md config.json tests/*.in|*.out
 examples/*_ref.py    # reference solution ประจำข้อ (single source of truth ตอน gen test)
 supabase/schema.sql  # schema + migration ทั้งหมด (append-only, อย่าลบของเก่า)
+.env.example         # template env (ห้าม commit .env จริง)
 requirements.txt     # fastapi uvicorn python-multipart supabase itsdangerous
 Dockerfile           # backend image (python:3.11-slim + gcc/g++)
 render.yaml          # (เลิกใช้ Render แล้ว เก็บไว้เฉยๆ)
@@ -83,11 +85,12 @@ c = Client(base_url="http://127.0.0.1:8000", cookies={"ng_session": cookie}, tim
 ## 7. Workflow: deploy
 
 ```bash
-# 1) GitHub (Vercel auto-redeploy frontend)
+# 1) GitHub (frontend auto-redeploy)
 git add -A && git commit -m "..." && git push origin main
 # 2) Backend (เฉพาะเมื่อแก้ server.py/grader.py/requirements/Dockerfile/problems/)
-git push https://Hz7e2:t4DKj9q3AW@justrunmy.app/git/r_Yr29N HEAD:deploy
-# URL/token นี้อยู่ใน panel justrunmy (ระวังอย่า commit ลง repo — มันเป็นแค่ remote URL ชั่วคราว)
+#    ใช้ remote ชื่อ deploy (ตั้งครั้งเดียวในเครื่องนี้ ไม่ถูก commit):
+#    git remote add deploy <git-url จาก justrunmy panel>
+git push deploy HEAD:deploy
 ```
 - หลัง push backend รอ ~45วิ แล้ว verify: `curl https://grader.n.onjrnm.vip/api/health`
 - ถ้า push แล้ว error "image built on different server": รอ 1 นาที push ซ้ำ (empty commit ได้) ถ้ายังพังให้ user กด recreate ที่ panel
@@ -98,6 +101,10 @@ git push https://Hz7e2:t4DKj9q3AW@justrunmy.app/git/r_Yr29N HEAD:deploy
 `SUPABASE_URL`, `SUPABASE_KEY` (service_role), `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`,
 `GOOGLE_REDIRECT_URI`, `FRONTEND_URL`, `SESSION_SECRET`, `ADMIN_EMAILS`, `GRADER_CORS_ORIGINS`
 → อยู่บน justrunmy panel (env) เท่านั้น + local shell env ตอนเทส
+- ค่า local dev: ก็อป `.env.example` เป็น `.env` แล้วขอค่าจาก user (ดูจาก justrunmy panel) —
+  `server.py` โหลด `.env` เองตอน start (env จริงชนะเสมอ), `.env` อยู่ใน `.gitignore` แล้ว
+- ถ้า token/secret หลุดลง chat หรือ commit: ให้ user rotate ที่ต้นทางทันที (เช่น reset git
+  credentials / สร้าง key ใหม่) เพราะลบออกจากประวัติไม่ได้ง่ายๆ
 
 ## 9. Database
 
