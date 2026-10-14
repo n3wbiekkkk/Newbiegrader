@@ -51,6 +51,7 @@ function setTaskTab(tab) {
     p.classList.toggle("active", p.id === "pane-" + tab));
   if (tab === "subs") loadTaskSubs();
   if (tab === "mine") loadTaskMine();
+  if (tab === "report") loadMyReports();
 }
 document.querySelectorAll(".tab-btn").forEach((b) => {
   b.onclick = () => setTaskTab(b.dataset.tab);
@@ -512,12 +513,13 @@ async function selectProblem(pid) {
   $("result-body").innerHTML = `<span class="dim">ส่งโค้ดแล้วผลจะขึ้นตรงนี้</span>`;
   $("score-line").textContent = "";
   $("your-score-num").textContent = "—";
+  $("report-status").textContent = "";
+  $("report-msg").value = "";
   try {
     const p = await apiGet(`/api/problems/${encodeURIComponent(pid)}`);
     state.detailCache[pid] = { t: Date.now(), data: p };
     fillTaskDetail(p);
     refreshYourScore();
-    loadMyReports();
   } catch (e) {
     if (!hit) $("task-body").textContent = "โหลดโจทย์ไม่สำเร็จ: " + e.message;
   }
