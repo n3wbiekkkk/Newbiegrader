@@ -146,8 +146,7 @@ body {
 .tc-title { font-size: 16px; font-weight: 700; }
 .tc-tags { margin-top: 6px; }
 .tc-meta { margin-top: 6px; display: flex; gap: 10px; align-items: center; font-size: 12px; }
-.tc-side { text-align: right; flex: none; min-width: 170px; }
-.tc-solved { font-size: 13px; margin-bottom: 6px; }
+.tc-side { flex: none; width: 210px; }
 .score-wrap { display: flex; gap: 10px; align-items: center; justify-content: flex-end; }
 .score-bar { flex: 1; min-width: 90px; max-width: 150px; height: 6px; border-radius: 3px; background: var(--panel2); border: 1px solid var(--border); overflow: hidden; }
 .score-fill { height: 100%; background: var(--link); border-radius: 3px; }

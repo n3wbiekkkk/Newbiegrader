@@ -327,11 +327,9 @@ function filteredProblems() {
 }
 
 function taskScoreHtml(pid) {
-  if (state.myBest && state.myBest[pid] != null) {
-    const s = state.myBest[pid];
-    return `<div class="score-bar"><div class="score-fill" style="width:${s}%"></div></div><span class="${scoreCls(s)}">${s} points</span>`;
-  }
-  return `<span class="dim">—</span>`;
+  const tried = state.myBest && state.myBest[pid] != null;
+  const s = tried ? state.myBest[pid] : 0;
+  return `<div class="score-bar"><div class="score-fill" style="width:${s}%"></div></div><span class="${tried ? scoreCls(s) : "dim"}">${s} points</span>`;
 }
 
 function renderTasksTable() {
@@ -360,12 +358,9 @@ function renderTasksTable() {
       <div class="tc-main">
         <div class="tc-title">${esc(p.title)} <span class="dim">${esc(p.id)}</span></div>
         ${showTag ? `<div class="tc-tags">${tags || '<span class="dim">—</span>'}</div>` : ""}
-        <div class="tc-meta">${diffBadge(p.difficulty)}<span class="dim">${p.tests} tests</span></div>
+        <div class="tc-meta">${diffBadge(p.difficulty)}<span class="dim">${p.tests} tests · Solved ${st.solvers ?? 0}</span></div>
       </div>
-      <div class="tc-side">
-        <div class="tc-solved"><span class="dim">Solved</span> <strong>${st.solvers ?? 0}</strong></div>
-        <div class="tc-score">${taskScoreHtml(p.id)}</div>
-      </div>`;
+      <div class="tc-side score-wrap">${taskScoreHtml(p.id)}</div>`;
     card.onclick = () => { location.hash = "#/task/" + encodeURIComponent(p.id); };
     card.onmouseenter = () => prefetchDetail(p.id);
     box.appendChild(card);
