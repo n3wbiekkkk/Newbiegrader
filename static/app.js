@@ -19,7 +19,7 @@ const state = {
   file: null,
   user: null,
   is_admin: false,
-  filter: { q: "", diff: "", tag: "" },
+  filter: { q: "", diff: "", tag: "", status: "all" },
 };
 
 /* ---------------- theme ---------------- */
@@ -313,42 +313,62 @@ function renderHome() {
   $("stat-accepted").textContent = acc;
 }
 
-/* ---------------- tasks table ---------------- */
+/* ---------------- tasks (sidebar + cards) ---------------- */
 function filteredProblems() {
   const q = state.filter.q.trim().toLowerCase();
   return state.problems.filter((p) => {
     if (state.filter.diff && (p.difficulty || "") !== state.filter.diff) return false;
     if (state.filter.tag && !(p.tags || []).includes(state.filter.tag)) return false;
     if (q && !(`${p.id} ${p.title}`.toLowerCase().includes(q))) return false;
+    if (state.filter.status === "tried" && !(state.myBest && p.id in state.myBest)) return false;
+    if (state.filter.status === "solved" && !(state.myBest && state.myBest[p.id] === 100)) return false;
     return true;
   });
+}
+
+function taskScoreHtml(pid) {
+  if (state.myBest && state.myBest[pid] != null) {
+    const s = state.myBest[pid];
+    return `<div class="score-bar"><div class="score-fill" style="width:${s}%"></div></div><span class="${scoreCls(s)}">${s} points</span>`;
+  }
+  return `<span class="dim">—</span>`;
 }
 
 function renderTasksTable() {
   const list = filteredProblems();
   $("filter-count").textContent = `${list.length}/${state.problems.length} ข้อ`;
-  const tb = $("tasks-body");
-  tb.innerHTML = "";
+  const box = $("task-cards");
+  box.innerHTML = "";
   $("tasks-empty").classList.toggle("hidden", list.length > 0);
   if (!state.problems.length) {
     $("tasks-empty").textContent = "ยังไม่มีโจทย์ — ส่งไฟล์ PDF มาเพื่อสร้างข้อใหม่";
     $("tasks-empty").classList.remove("hidden");
     return;
   }
-  // global rank follows the easy -> hard API order (stable under filters)
-  const rankOf = new Map(state.problems.map((p, i) => [p.id, i + 1]));
+  if (!state.user && state.filter.status !== "all") {
+    $("tasks-empty").textContent = "login ก่อนใช้ตัวกรอง Tried / Solved";
+    $("tasks-empty").classList.remove("hidden");
+    return;
+  }
+  const showTag = $("show-tag").checked;
   list.forEach((p) => {
-    const rank = rankOf.get(p.id) ?? "—";
-    const my = (state.myBest && state.myBest[p.id] != null)
-      ? `<span class="${scoreCls(state.myBest[p.id])}">${state.myBest[p.id]}/100</span>` : "—";
+    const st = state.stats[p.id] || {};
     const tags = (p.tags || []).map((t) => `<span class="tag-chip">${esc(t)}</span>`).join("");
-    const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${rank}</td><td><strong>${esc(p.id)}</strong><br><span class="dim">${esc(p.title)}</span></td>
-      <td>${diffBadge(p.difficulty)}</td><td>${tags || '<span class="dim">—</span>'}</td>
-      <td>${p.tests}</td><td>${my}</td>`;
-    tr.onclick = () => { location.hash = "#/task/" + encodeURIComponent(p.id); };
-    tr.onmouseenter = () => prefetchDetail(p.id);
-    tb.appendChild(tr);
+    const card = document.createElement("div");
+    card.className = "task-card";
+    card.innerHTML = `
+      <div class="tc-main">
+        <div class="tc-title">${esc(p.title)} <span class="dim">${esc(p.id)}</span></div>
+        ${showTag ? `<div class="tc-tags">${tags || '<span class="dim">—</span>'}</div>` : ""}
+        <div class="tc-meta">${diffBadge(p.difficulty)}<span class="dim">${p.tests} tests</span></div>
+      </div>
+      <div class="tc-side">
+        <div class="tc-solved"><span class="dim">Solved</span> <strong>${st.solvers ?? 0}</strong></div>
+        <div class="tc-score">${taskScoreHtml(p.id)}</div>
+      </div>`;
+    card.onclick = () => { location.hash = "#/task/" + encodeURIComponent(p.id); };
+    card.onmouseenter = () => prefetchDetail(p.id);
+    box.appendChild(card);
   });
   if (state.user && !state.myBestLoaded) {
     fetchMyBest().then(() => {
@@ -1083,20 +1103,11 @@ const TAGS = [
   "NP", "Recursive", "Linear Algebra", "Matching",
 ];
 
-function tagCounts() {
-  const c = {};
-  state.problems.forEach((p) => (p.tags || []).forEach((t) => {
-    c[t] = (c[t] || 0) + 1;
-  }));
-  return c;
-}
-
-function renderTagChips() {
-  const box = $("tag-chips");
+function renderTagList() {
+  const box = $("tag-list");
   if (!box) return;
-  const counts = tagCounts();
   box.innerHTML = TAGS.map((t) =>
-    `<button class="tag-chip tag-click${state.filter.tag === t ? " on" : ""}" data-tag="${esc(t)}">${esc(t)}${counts[t] ? ` × ${counts[t]}` : ""}</button>`
+    `<button class="tag-row${state.filter.tag === t ? " on" : ""}" data-tag="${esc(t)}">${esc(t)}</button>`
   ).join("");
   box.querySelectorAll("[data-tag]").forEach((b) => {
     b.onclick = () => setTagFilter(b.dataset.tag);
@@ -1105,17 +1116,14 @@ function renderTagChips() {
 
 function setTagFilter(t) {
   state.filter.tag = state.filter.tag === t ? "" : t;
-  renderTagChips();
+  renderTagList();
   if (document.querySelector("#view-tasks.active")) renderTasksTable();
 }
 
-function clearFilters() {
-  state.filter.q = "";
-  state.filter.diff = "";
-  state.filter.tag = "";
-  $("q").value = "";
-  $("f-diff").value = "";
-  renderTagChips();
+function setStatusFilter(s) {
+  state.filter.status = s;
+  document.querySelectorAll("[data-status]").forEach((b) =>
+    b.classList.toggle("active", b.dataset.status === s));
   renderTasksTable();
 }
 
@@ -1139,7 +1147,7 @@ function buildFilterOptions() {
   [fd, hf].forEach((sel, i) => {
     if ([...sel.options].some((o) => o.value === keep[i])) sel.value = keep[i];
   });
-  renderTagChips();
+  renderTagList();
 }
 
 /* ---------------- init ---------------- */
@@ -1147,7 +1155,13 @@ async function init() {
   const fd = $("f-diff"), hf = $("hist-filter");
   $("q").oninput = (e) => { state.filter.q = e.target.value; renderTasksTable(); };
   fd.onchange = (e) => { state.filter.diff = e.target.value; renderTasksTable(); };
-  $("tag-clear").onclick = clearFilters;
+  $("show-tag").onchange = () => {
+    if (document.querySelector("#view-tasks.active")) renderTasksTable();
+  };
+  document.querySelectorAll("[data-status]").forEach((b) => {
+    b.onclick = () => setStatusFilter(b.dataset.status);
+  });
+  $("tag-clear-side").onclick = () => setTagFilter(state.filter.tag);
   hf.onchange = loadHistory;
   $("hist-refresh").onclick = loadHistory;
   $("auth-go").onclick = doPasswordAuth;

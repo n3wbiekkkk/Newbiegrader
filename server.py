@@ -805,18 +805,24 @@ def stats() -> dict:
         return {"configured": False, "stats": {}}
     try:
         res = _sb.table("submissions").select(
-            "problem,accepted,score").order("created_at", desc=True).limit(500).execute()
+            "problem,accepted,score,user_email").order(
+            "created_at", desc=True).limit(500).execute()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"supabase query failed: {e}")
     agg: dict = {}
     for r in res.data or []:
-        p = agg.setdefault(r["problem"], {"subs": 0, "accepted": 0, "best": 0, "total_score": 0})
+        p = agg.setdefault(r["problem"], {"subs": 0, "accepted": 0, "best": 0,
+                                          "total_score": 0, "solvers": set()})
         p["subs"] += 1
-        p["accepted"] += 1 if r["accepted"] else 0
+        if r["accepted"]:
+            p["accepted"] += 1
+            if r.get("user_email"):
+                p["solvers"].add(r["user_email"])
         p["best"] = max(p["best"], r["score"] or 0)
         p["total_score"] += r["score"] or 0
     return {"configured": True, "stats": {
         k: {"subs": v["subs"], "accepted": v["accepted"], "best": v["best"],
+            "solvers": len(v["solvers"]),
             "avg": round(v["total_score"] / v["subs"], 1)}
         for k, v in agg.items()
     }}
