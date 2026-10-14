@@ -154,25 +154,11 @@
       <button class="tab-btn" data-tab="submit" type="button">Submit</button>
       <button class="tab-btn" data-tab="subs" type="button">Submissions</button>
       <button class="tab-btn" data-tab="mine" type="button">My Submissions</button>
+      <button class="tab-btn" data-tab="report" type="button">Report</button>
     </div>
     <div class="card tab-pane active" id="pane-statement">
       <iframe id="pdf-frame" class="hidden" title="problem statement PDF"></iframe>
       <div id="task-body" class="md">Loading...</div>
-      <hr class="sep">
-      <h3 class="pane-h">Report ปัญหาข้อนี้</h3>
-      <div id="report-box">
-        <div class="report-row">
-          <select id="report-kind" aria-label="report kind">
-            <option value="statement">โจทย์ผิด/ไม่ชัด</option>
-            <option value="tests">test ผิด</option>
-            <option value="other">อื่น ๆ</option>
-          </select>
-          <input id="report-msg" type="text" maxlength="1000" placeholder="อธิบายสั้น ๆ (ต้อง login)">
-          <button id="report-send" type="button" class="ghost-btn"><svg class="ic"><use href="#i-flag"/></svg><span>ส่งรีพอร์ต</span></button>
-        </div>
-        <div id="report-status" class="status dim"></div>
-        <div id="report-mine" class="dim"></div>
-      </div>
     </div>
     <div class="card tab-pane" id="pane-submit">
       <div class="card-head">
@@ -214,6 +200,23 @@
     <div class="card tab-pane" id="pane-mine">
       <p class="dim">เฉพาะของฉัน (ต้อง login)</p>
       <div id="task-mine-body" class="dim">—</div>
+    </div>
+    <div class="card tab-pane" id="pane-report">
+      <p class="dim">แจ้งโจทย์ผิด / test ผิด / อื่น ๆ (ต้อง login)</p>
+      <div id="report-box">
+        <div class="report-row">
+          <select id="report-kind" aria-label="report kind">
+            <option value="statement">โจทย์ผิด/ไม่ชัด</option>
+            <option value="tests">test ผิด</option>
+            <option value="other">อื่น ๆ</option>
+          </select>
+          <input id="report-msg" type="text" maxlength="1000" placeholder="อธิบายสั้น ๆ">
+          <button id="report-send" type="button" class="ghost-btn"><svg class="ic"><use href="#i-flag"/></svg><span>ส่งรีพอร์ต</span></button>
+        </div>
+        <div id="report-status" class="status dim"></div>
+        <h3 class="pane-h">รีพอร์ตที่เคยส่งข้อนี้</h3>
+        <div id="report-mine" class="dim">—</div>
+      </div>
     </div>
   </section>
 
