@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import difflib
+import hashlib
 import json
 import os
 import re
@@ -34,6 +35,12 @@ PROBLEMS_DIR = ROOT / "problems"
 # Brutal constants
 OUTPUT_LIMIT_BYTES = 32 * 1024 * 1024  # stdout เกินนี้ -> OLE (กัน print-loop อนันต์ถล่ม RAM)
 SAMPLE_INTERVAL = 0.005                # ความถี่ poll RSS (วินาที)
+
+# Judging semantics version: bump when a change could make the same submission
+# score differently (checker rules, limits handling, verdict mapping). Stored on
+# every submission together with the per-problem tests hash so old rows can be
+# told apart from new ones (and optionally rejudged).
+GRADER_VERSION = "2.0.0"
 
 # ---------- colors ----------
 class C:
@@ -81,6 +88,7 @@ class Problem:
     difficulty: str = ""        # easy | medium | hard (ไว้ filter)
     tags: list[str] = field(default_factory=list)
     notice: str = ""            # ประกาศโชว์บนหน้า task (เช่น ข้อนี้ใช้อะไรก็ได้)
+    samples: list[str] = field(default_factory=list)  # ชื่อ test ที่เป็น "ตัวอย่างสาธารณะ" (ที่เหลือ = hidden)
 
 # Canonical tag taxonomy (frontend Tag Filter renders exactly this list).
 KNOWN_TAGS = [
@@ -129,8 +137,45 @@ def load_problem(pid: str) -> Problem:
     if not tests:
         raise SystemExit(f"Problem '{pid}' has no tests in problems/{pid}/tests/")
     tests.sort(key=lambda t: t.name)
+    names = {t.name for t in tests}
+    raw_samples = cfg.get("samples", [])
+    samples: list[str] = []
+    if isinstance(raw_samples, list):
+        # canonical form: explicit test names, e.g. ["02", "03"]
+        samples = [str(s) for s in raw_samples if str(s) in names]
+        missing = [str(s) for s in raw_samples if str(s) not in names]
+        if missing:
+            print(c(f"WARNING: problem '{pid}' samples not found in tests: {missing}", C.YELLOW))
+    elif isinstance(raw_samples, int) and raw_samples > 0:
+        # shorthand: first N tests are public samples
+        samples = [t.name for t in tests[:raw_samples]]
+    samples = sorted(set(samples))
     return Problem(pid, title, time_limit, memory_limit, checker, tolerance, description, tests,
-                   difficulty, tags, notice)
+                   difficulty, tags, notice, samples)
+
+
+def tests_hash(prob: Problem) -> str:
+    """Stable 16-hex fingerprint of the data that decides a verdict.
+
+    Any edit to tests/limits/checker/samples changes it, so a stored submission
+    can be traced to the exact test set it was judged against.
+    """
+    h = hashlib.sha256()
+    h.update(f"{prob.pid}\n{prob.time_limit}\n{prob.memory_limit}\n"
+             f"{prob.checker}\n{prob.tolerance}\n"
+             f"{','.join(sorted(prob.samples))}\n".encode())
+    for tc in prob.tests:
+        h.update(b"--" + tc.name.encode("utf-8") + b"\n")
+        h.update(tc.input.encode("utf-8", "replace"))
+        h.update(b"\x00")
+        h.update(tc.expected.encode("utf-8", "replace"))
+        h.update(b"\x00")
+    return h.hexdigest()[:16]
+
+
+def sample_names(prob: Problem) -> set[str]:
+    """Public sample test names (statement examples). Everything else is hidden."""
+    return set(prob.samples)
 
 def list_problems() -> None:
     if not PROBLEMS_DIR.is_dir():

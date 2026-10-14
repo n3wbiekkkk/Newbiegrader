@@ -8,7 +8,7 @@ Grader แบบ stdlib-only (ไม่ต้องลง lib) รองรั�
 
 Stack: FastAPI + Uvicorn (backend) + HTML/CSS/JS ไม่ต้อง build (frontend).
 รองรับ Python / C / C++ ส่งได้ 2 แบบ: วางโค้ดใน editor หรือแนบไฟล์ (คลิก/ลากไฟล์ลง dropzone)
-หน้าเว็บมี 7 วิว: Home (สถิติ) / Tasks (การ์ดโจทย์ + sidebar All/Tried/Solved/Tag Filter) / Task (Statement/Submit/Submissions/My + Your Score) / Archive / Leaderboard / History (ของตัวเอง) / Settings / Login
+หน้าเว็บมีวิว: Home (สถิติ) / Tasks (การ์ดโจทย์ + sidebar All/Tried/Solved/Tag Filter) / Task (Statement/Submit/Submissions/My/Run + Your Score) / Contests (+ scoreboard) / Archive / Leaderboard / History (ของตัวเอง) / Settings (รวมเครื่องมือ admin) / Login
 
 ```bash
 pip3 install --user -r requirements.txt
@@ -97,6 +97,21 @@ alter table reports enable row level security;
 ```
 - env เพิ่มที่ backend: `ADMIN_EMAILS=a@x.com,b@y.com` (ดู + ปิดรีพอร์ตได้ในหน้า Settings)
 
+## คอนเทสต์ / ตรวจซ้ำ / ตรวจการก็อป (admin)
+
+- **Contest mode**: `GET /api/contests`, `GET /api/contests/{id}` (มี scoreboard), `POST /api/contests`
+  (admin, upsert), `DELETE /api/contests/{id}` — ตาราง `contests` เก็บ `starts_at/ends_at`,
+  `problems` (jsonb), `freeze_minutes`, `show_samples`
+  - ส่งงานเข้าคอนเทสต์: เพิ่มฟิลด์ `contest=<id>` ใน `/api/submit` (โจทย์ต้องอยู่ในคอนเทสต์ และ
+    ต้องอยู่ในช่วงเวลา ไม่ใช่ admin)
+  - scoreboard แช่แข็ง: คนทั่วไปเห็นเฉพาะผลก่อน `ends_at - freeze_minutes` ระหว่างแข่ง (admin เห็นสด)
+  - `show_samples=false` → ระหว่างแข่งแม้แต่ตัวอย่างสาธารณะก็ไม่โชว์ input/expected
+- **ตรวจซ้ำ (rejudge)**: `POST /api/admin/rejudge` body `{"ids":[...]}` หรือ `{"problem":"x","limit":50}`
+  → คืน `job_id` ให้ poll เหมือน submit (อัปเดตแถวเดิม ไม่สร้างใหม่) — ใช้หลังแก้เทสต์
+- **ตรวจการก็อป**: `GET /api/admin/plagiarism?problem=<id>&threshold=0.6&limit=300` (admin)
+  ใช้ `tools/plagiarism.py` (winnowing, stdlib ล้วน) เทียบโค้ดที่ส่งล่าสุดของข้อนั้น
+- ทุก submission เก็บ `tests_hash` + `grader_version` → รู้ว่าตัดสินด้วยเทสต์ชุดไหน/engine เวอร์ชันใด
+
 ## Supabase (ประวัติส่ง + สถิติ, optional)
 
 ไม่ตั้ง = เว็บทำงานปกติแค่ไม่มี history ตั้งแล้วทุก submission จะถูกบันทึกพร้อมดูย้อนหลังได้
@@ -113,35 +128,80 @@ python3 server.py
 ```
 4. หน้าเว็บจะมี section History (filter ตามข้อได้) + สถิติ best/avg ต่อข้อ — API: `GET /api/history`, `GET /api/history/{id}`, `GET /api/stats`
 
+อัปเดตล่าสุด (ต้องรัน `supabase/schema.sql` ใหม่ถ้ารันเวอร์ชันเก่าไปแล้ว): เพิ่มคอลัมน์
+`tests_hash/grader_version/kind/contest_id/job_id` ใน `submissions`, ตาราง `judge_jobs`
+(คิวตรวจงาน + `reveal`) และ `contests`, view `leaderboard_scores` + `problem_stats`
+— **ถ้าไม่รัน**: ระบบยังทำงานได้ (insert จะตัดคอลัมน์ใหม่ทิ้ง แล้ว log เตือน) แต่
+leaderboard/สถิติจะ fallback ไปสแกนแค่ 2000/500 แถวล่าสุด (คะแนนเก่าจะหลุดจากบอร์ด)
+และคิวงานจะเป็น in-memory (หายเมื่อ restart)
+
+env ปรับสมรรถนะ/ความยุติธรรม:
+
+| env | ค่าเริ่มต้น | ความหมาย |
+|---|---|---|
+| `GRADER_JUDGE_WORKERS` | `1` | จำนวนงานที่ตรวจพร้อมกัน (ต่อ process) — เพิ่มเมื่อ host มี CPU เหลือ (ค่าเริ่มต้น 1 กัน TLE ปลอมจากการแย่ง CPU บน free tier) |
+| `GRADER_SUBMIT_QUOTA` | `60/600` | โควตาส่งงานต่อคน (`N/วินาที`, `0` = ปิด) |
+| `GRADER_RUN_QUOTA` | `120/600` | โควตา playground `/api/run` |
+
 Migration (ถ้าสร้างตารางก่อนคอลัมน์ `name`): รันใน SQL Editor
 ```sql
 alter table submissions add column if not exists name text not null default '';
 ```
 - `GET /api/health` — สถานะ + รายชื่อโจทย์
 - `GET /api/languages` — ภาษาที่รองรับ (python/c/cpp)
+- `GET /api/version` — เวอร์ชัน engine + hash ของชุดเทสต์ทุกข้อ (`grader.GRADER_VERSION`)
 - `GET /api/problems` — รายการโจทย์
-- `GET /api/problems/{id}` — โจทย์ + statement
-- `POST /api/submit` (multipart: `problem`, `language`, `code` หรือ `file`; ต้อง login) — ตรวจแล้วตอบ JSON ทันที
+- `GET /api/problems/{id}` — โจทย์ + statement (+ `samples`, `hidden_tests`, `tests_hash`)
+- `GET /api/problems/{id}/sample/{name}` — ตัวอย่างสาธารณะ (เทสต์ลับตอบ 404)
+- `POST /api/submit` (multipart: `problem`, `language`, `code` หรือ `file`, `contest`; ต้อง login)
+  — **ตอบ 202 + `job_id` ทันที** แล้วตรวจเบื้องหลัง (คิว) ต้อง poll ต่อ:
+- `GET /api/jobs/{id}` — สถานะงาน (`queued|running|done|error`) + ผลเมื่อ `done`
+- `POST /api/run` (multipart: `language`, `code`/`file`, `input`, `problem?`, `time_limit?`)
+  — playground รันครั้งเดียวกับ input ที่ผู้ใช้พิมพ์ ไม่บันทึกประวัติ
 
 ```bash
-curl -F problem=warpz -F language=python -F code='print("YES")' http://127.0.0.1:8000/api/submit
+# ส่งแล้วรอผล (submission เป็น async job)
+JOB=$(curl -s -F problem=warpz -F language=python -F code='print("YES")' \
+      -b cookies.txt http://127.0.0.1:8000/api/submit | python3 -c 'import json,sys;print(json.load(sys.stdin)["job_id"])')
+curl -s -b cookies.txt http://127.0.0.1:8000/api/jobs/$JOB | python3 -m json.tool
 ```
+
+**นโยบายเฉลย (สำคัญ)**: ผู้ใช้ทั่วไปเห็น input/expected ของเฉพาะ test ที่อยู่ใน `samples`
+ใน `config.json` (ตัวอย่างใน statement) เท่านั้น — test ที่เหลือ ("เทสต์ลับ") คืนแค่ verdict +
+เวลา/หน่วยความจำ และข้อมูลนี้ถูกตัดออกก่อนบันทึกลง DB ด้วย (admin เห็นครบ) `samples` เป็น
+รายชื่อ test เช่น `"samples": ["03"]` (สคริปต์ตรวจ: `python3 tools/validate_problem.py`)
 
 ## โครง
 ```
 grader.py
-problems/<id>/config.json      # time_limit, memory_limit, checker, difficulty, tags (ดู KNOWN_TAGS)
+problems/<id>/config.json      # time_limit, memory_limit, checker, difficulty, tags (ดู KNOWN_TAGS), samples
 problems/<id>/statement.pdf      # โจทย์ต้นฉบับ (ถ้ามี)
 problems/<id>/statement.md
 problems/<id>/tests/*.in|*.out
 examples/                      # reference solution ประจำข้อ (*_ref.py)
-server.py                      # FastAPI backend (reuse grader.py)
+server.py                      # FastAPI backend (reuse grader.py) + คิวตรวจงาน (judge_jobs)
 static/                        # frontend: index.html, styles.css, app.js (?v=N กัน cache)
 functions/api/[[proxy]].js     # Cloudflare Pages Function proxy /api
 supabase/schema.sql            # schema + migration ทั้งหมด
+tests/                         # E2E API test (fake Supabase, ไม่แตะข้อมูลจริง)
+tools/validate_problem.py      # ตรวจโจทย์ทั้งชุด (config/tests/ตัวอย่าง/ref ต้อง AC)
+tools/plagiarism.py            # ตรวจการก็อปโค้ด (winnowing)
+tools/check_frontend.js        # เช็ค id ที่ app.js อ้างถึงว่ามีจริง
+tools/make_statement_tex.py    # สร้าง statement.pdf (LaTeX)
+.github/workflows/ci.yml       # CI: compile + syntax + id check + validate โจทย์ + E2E test
 agent.md                       # คู่มือ AI
 requirements.txt               # fastapi, uvicorn, python-multipart, supabase, itsdangerous
 ```
+
+## ตรวจคุณภาพ (รันก่อน commit ทุกครั้ง)
+```bash
+python3 tools/validate_problem.py          # 47 ข้อ: config/tests/ตัวอย่าง/ref ต้อง AC ครบ
+python3 tools/plagiarism.py                # self-test ของตัวตรวจการก็อป
+python3 -m unittest discover -s tests -v    # E2E API (คิวงาน/สิทธิ์/คอนเทสต์/quota/redact)
+node --check static/app.js && node tools/check_frontend.js
+```
+CI (`.github/workflows/ci.yml`) รันทั้งชุดนี้อัตโนมัติทุก push/PR เข้า `main`
+(validator รันแบบ jobs=1 ตั้งใจ — รัน ref หลายข้อพร้อมกันจะได้ TLE ปลอมจากการแย่ง CPU)
 
 ## ใช้ยังไง
 ```bash

@@ -13,12 +13,18 @@ const state = {
   myBest: {},
   myBestLoaded: false,
   detailCache: {},
+  samples: {},           // "<pid>/<sample name>" -> {input, output} (fetched on click)
+  contests: [],
+  contestsConfigured: null,
+  contestCache: {},
+  contest: null,         // {id,title} while the task page submits into a contest
   current: null,
   lang: "cpp",
   taskTab: "statement",
   file: null,
   user: null,
   is_admin: false,
+  isAdmin: false,        // alias of is_admin (same value)
   filter: { q: "", diff: "", tag: "", status: "all" },
 };
 
@@ -43,12 +49,22 @@ $("theme-btn").onclick = () =>
   applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
 
 /* ---------------- task tabs ---------------- */
+/* The code editor (#code-shared: dropzone + file chip + textarea) is ONE DOM
+ * node shared by the Submit and Run tabs — it is moved between their slots on
+ * tab switch, never duplicated. */
+function shareEditor(where) {
+  const wrap = $("code-shared");
+  const slot = where === "run" ? $("run-editor-slot") : $("submit-editor-slot");
+  if (wrap && slot && wrap.parentElement !== slot) slot.appendChild(wrap);
+}
+
 function setTaskTab(tab) {
   state.taskTab = tab;
   document.querySelectorAll(".tab-btn").forEach((b) =>
     b.classList.toggle("active", b.dataset.tab === tab));
   document.querySelectorAll(".tab-pane").forEach((p) =>
     p.classList.toggle("active", p.id === "pane-" + tab));
+  if (tab === "run" || tab === "submit") shareEditor(tab);
   if (tab === "subs") loadTaskSubs();
   if (tab === "mine") loadTaskMine();
   if (tab === "report") loadMyReports();
@@ -304,13 +320,39 @@ int main() {
 };
 
 /* ---------------- api ---------------- */
-async function apiGet(path) {
-  const r = await fetch(API + path, { credentials: "include" });
+/* One fetch wrapper: JSON in/out, and errors carry the server `detail`
+ * verbatim plus `status` so callers can special-case 401/403/409/429. */
+async function apiFetch(path, opts) {
+  const r = await fetch(API + path, opts);
+  const data = await r.json().catch(() => ({}));
   if (!r.ok) {
-    const body = await r.json().catch(() => ({}));
-    throw new Error(body.detail || `GET ${path}: ${r.status}`);
+    const err = new Error(data.detail || `HTTP ${r.status} (${path})`);
+    err.status = r.status;
+    const retry = r.headers.get("Retry-After");
+    if (retry) err.retryAfter = retry;
+    throw err;
   }
-  return r.json();
+  return data;
+}
+
+function apiGet(path) {
+  return apiFetch(path, { credentials: "include" });
+}
+
+function apiPostJson(path, body) {
+  return apiFetch(path, {
+    method: "POST", credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body || {}),
+  });
+}
+
+function apiPostForm(path, form) {
+  return apiFetch(path, { method: "POST", credentials: "include", body: form });
+}
+
+function apiDelete(path) {
+  return apiFetch(path, { method: "DELETE", credentials: "include" });
 }
 
 async function fetchStats() {
@@ -328,8 +370,34 @@ function show(view) {
     v.classList.toggle("active", v.id === "view-" + view));
   document.querySelectorAll(".nav-link").forEach((a) =>
     a.classList.toggle("active",
-      a.dataset.route === view || (view === "task" && a.dataset.route === "tasks")));
+      a.dataset.route === view ||
+      (view === "task" && a.dataset.route === "tasks") ||
+      (view === "contest" && a.dataset.route === "contests")));
   window.scrollTo(0, 0);
+}
+
+// Re-render whatever view is already on screen. Used after the identity fetch
+// resolves: a page opened directly on #/settings (or #/contests, #/task/<id>)
+// renders before /api/auth/me answers, so admin cards and "your score" would
+// otherwise stay stale until the next navigation. Never navigates.
+function currentRouteRender() {
+  const h = location.hash || "#/";
+  if (h.startsWith("#/task/")) {
+    const pid = decodeURIComponent(h.slice("#/task/".length));
+    if (!state.problems.some((p) => p.id === pid)) return null;
+    return () => selectProblem(pid);
+  }
+  if (h === "#/tasks") return () => renderTasksTable();
+  if (h === "#/archive") return () => renderArchive();
+  if (h === "#/leaderboard") return () => renderLeaderboard();
+  if (h === "#/contests") return () => renderContests();
+  if (h.startsWith("#/contests/")) {
+    const cid = decodeURIComponent(h.slice("#/contests/".length));
+    return () => renderContest(cid);
+  }
+  if (h === "#/history") return () => loadHistory();
+  if (h === "#/settings") return () => renderSettings();
+  return null;
 }
 
 function router() {
@@ -347,6 +415,13 @@ function router() {
   if (h === "#/tasks") { show("tasks"); renderTasksTable(); return; }
   if (h === "#/archive") { show("archive"); renderArchive(); return; }
   if (h === "#/leaderboard") { show("leaderboard"); renderLeaderboard(); return; }
+  if (h === "#/contests") { show("contests"); renderContests(); return; }
+  if (h.startsWith("#/contests/")) {
+    const cid = decodeURIComponent(h.slice("#/contests/".length));
+    show("contest");
+    renderContest(cid);
+    return;
+  }
   if (h === "#/history") { show("history"); loadHistory(); return; }
   if (h === "#/settings") { show("settings"); renderSettings(); return; }
   if (h === "#/login") { show("login"); setAuthMode("login"); return; }
@@ -550,6 +625,12 @@ function fillTaskDetail(p) {
   $("task-meta").textContent =
     `TL ${p.time_limit}s | MEM ${p.memory_limit}MB | checker ${p.checker} | ${p.tests} tests` +
     (extra ? ` | ${extra}` : "");
+  const nSamples = (p.samples || []).length;
+  const nHidden = p.hidden_tests != null
+    ? p.hidden_tests : Math.max(0, (p.tests || 0) - nSamples);
+  $("task-counts").textContent =
+    `ตัวอย่างสาธารณะ ${nSamples} ข้อ · เทสต์ลับ ${nHidden} ข้อ`;
+  renderSampleButtons(p);
   const pdfUrl = `${API}/api/problems/${encodeURIComponent(p.id)}/pdf`;
   if (p.has_pdf) {
     const fr = $("pdf-frame");
@@ -565,6 +646,89 @@ function fillTaskDetail(p) {
     tb.classList.remove("hidden");
     tb.innerHTML = renderMd(p.statement || "(no statement)");
   }
+}
+
+/* ---------------- public sample viewer (fetched on click, never prefetched) */
+function renderSampleButtons(p) {
+  const box = $("sample-btns");
+  const names = p.samples || [];
+  if (!names.length) {
+    box.innerHTML = `<span class="dim">ข้อนี้ไม่มีตัวอย่างสาธารณะ</span>`;
+    $("sample-view").innerHTML = "";
+    return;
+  }
+  box.innerHTML = names.map((n) =>
+    `<button class="chip-btn" type="button" data-sample="${esc(n)}">ตัวอย่าง ${esc(n)}</button>`
+  ).join("");
+  box.querySelectorAll("[data-sample]").forEach((b) => {
+    b.onclick = () => showSample(p.id, b.dataset.sample, b);
+  });
+  $("sample-view").innerHTML = `<span class="dim">เลือกตัวอย่างด้านบนเพื่อดู input / output</span>`;
+}
+
+async function showSample(pid, name, btn) {
+  const view = $("sample-view");
+  document.querySelectorAll("#sample-btns [data-sample]").forEach((b) =>
+    b.classList.toggle("active", b === btn));
+  const key = `${pid}/${name}`;
+  if (state.samples[key]) {
+    renderSample(state.samples[key]);
+    return;
+  }
+  view.innerHTML = `<span class="dim">กำลังโหลดตัวอย่าง ${esc(name)}...</span>`;
+  try {
+    const d = await apiGet(
+      `/api/problems/${encodeURIComponent(pid)}/sample/${encodeURIComponent(name)}`);
+    state.samples[key] = d;
+    if (state.current !== pid) return;
+    renderSample(d);
+  } catch (e) {
+    view.innerHTML = `<span class="dim">โหลดตัวอย่างไม่ได้: ${esc(e.message)}</span>`;
+  }
+}
+
+function ioBlockHtml(title, text) {
+  const t = text == null ? "" : String(text);
+  return `<div class="io-block">` +
+    `<div class="io-head"><span class="io-title">${esc(title)}</span>` +
+    `<button class="icon-btn" type="button" data-copy title="คัดลอก">${icon("copy")}</button></div>` +
+    `<pre class="io-pre">${esc(t)}</pre></div>`;
+}
+
+function renderSample(d) {
+  const view = $("sample-view");
+  view.innerHTML = `<div class="io-grid">` +
+    ioBlockHtml(`input (${d.test})`, d.input) +
+    ioBlockHtml("output", d.output) + `</div>`;
+  bindCopyButtons(view);
+}
+
+async function copyText(text, btn) {
+  let done = false;
+  try {
+    await navigator.clipboard.writeText(text);
+    done = true;
+  } catch (e) {
+    done = false;
+  }
+  if (!btn) return;
+  const prev = btn.title;
+  btn.title = done ? "คัดลอกแล้ว" : "คัดลอกไม่ได้";
+  btn.classList.toggle("copied", done);
+  setTimeout(() => {
+    btn.title = prev;
+    btn.classList.remove("copied");
+  }, 1200);
+}
+
+function bindCopyButtons(root) {
+  root.querySelectorAll("button[data-copy]").forEach((btn) => {
+    btn.onclick = () => {
+      const box = btn.closest(".io-block");
+      const pre = box && box.querySelector("pre");
+      copyText(pre ? pre.textContent : "", btn);
+    };
+  });
 }
 
 function prefetchDetail(pid) {
@@ -583,6 +747,10 @@ async function selectProblem(pid) {
   fi.value = "";
   $("file-chip").classList.add("hidden");
   $("submit-status").textContent = "";
+  shareEditor("submit");
+  $("sample-btns").innerHTML = "";
+  $("sample-view").innerHTML = `<span class="dim">เลือกตัวอย่างด้านบนเพื่อดู input / output</span>`;
+  renderContestBanner();
   const hit = state.detailCache[pid];
   if (hit && Date.now() - hit.t < DETAIL_CACHE_TTL) {
     fillTaskDetail(hit.data);
@@ -702,11 +870,11 @@ async function refreshMe() {
   try {
     const me = await apiGet("/api/auth/me");
     state.user = (me && me.user) || null;
-    state.is_admin = !!(me && me.is_admin);
+    state.is_admin = state.isAdmin = !!(me && me.is_admin);
     embedded = me && me.profile ? me : null;
   } catch (e) {
     state.user = null;
-    state.is_admin = false;
+    state.is_admin = state.isAdmin = false;
   }
   state.myBestLoaded = false;
   state.myBest = {};
@@ -762,9 +930,12 @@ async function loadOverview() {
   const stats = $("overview-stats"), probs = $("overview-problems"), recent = $("overview-recent");
   try {
     const d = await apiGet("/api/admin/overview");
+    const j = d.jobs || {};
     const tiles = [
       ["โจทย์", d.problems], ["ผู้ใช้", d.users], ["ส่งทั้งหมด", d.submissions],
       ["ผ่าน", d.accepted], ["รีพอร์ตค้าง", d.reports_open], ["uptime", uptimeText(d.system.uptime_s)],
+      ["งานรอคิว", j.queued ?? 0], ["กำลังตรวจ", j.running ?? 0],
+      ["คิวค้าง", j.queue_depth ?? 0], ["workers", j.workers ?? 0],
     ];
     stats.classList.remove("dim");
     stats.innerHTML = tiles.map(([k, v]) =>
@@ -932,18 +1103,60 @@ $("template-btn").onclick = () => {
   }
 };
 
+/* ---------------- judging jobs (async submit) ---------------- */
+const POLL_MS = 700;
+const POLL_MAX_MS = 4 * 60 * 1000;
+const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+
+/* Poll one job until it is done/error. onTick sees every state so the caller
+ * can keep the status area live. No cancel: the job keeps running server-side
+ * either way, so the UI just waits (with a hard 4 minute cap). */
+async function pollJob(jid, onTick) {
+  const t0 = Date.now();
+  for (;;) {
+    const job = await apiGet(`/api/jobs/${encodeURIComponent(jid)}`);
+    if (onTick) onTick(job);
+    if (job.status === "done" || job.status === "error") return job;
+    if (Date.now() - t0 >= POLL_MAX_MS) {
+      const err = new Error(
+        "รอผลนานเกิน 4 นาที — งานยังตรวจอยู่เบื้องหลัง กลับมาดูผลได้ที่ History");
+      err.timeout = true;
+      err.job_id = jid;
+      throw err;
+    }
+    await sleep(POLL_MS);
+  }
+}
+
+function jobStateText(job) {
+  if (job.status === "queued") {
+    const n = Number(job.queued_ahead) || 0;
+    return n > 0 ? `อยู่ในคิว (${n} งานก่อนหน้า)` : "อยู่ในคิว";
+  }
+  if (job.status === "running") return "กำลังตรวจ...";
+  return "";
+}
+
+function setJudgeStatus(msg, busy) {
+  const el = $("submit-status");
+  el.innerHTML = (busy ? `<span class="spinner" aria-hidden="true"></span>` : "") +
+    `<span>${esc(msg)}</span>`;
+}
+
 /* ---------------- submit + verdict ---------------- */
-$("submit-btn").onclick = async () => {
+$("submit-btn").onclick = doSubmit;
+
+async function doSubmit() {
   if (!state.current) return;
   const btn = $("submit-btn");
   const code = $("editor").value;
   if (!state.user) {
-    $("submit-status").textContent = "login ก่อนส่ง";
+    setJudgeStatus("login ก่อนส่ง");
     location.hash = "#/login";
     return;
   }
   if (!state.file && !code.trim()) {
-    $("submit-status").textContent = "วางโค้ดหรือแนบไฟล์ก่อนส่ง";
+    setJudgeStatus("วางโค้ดหรือแนบไฟล์ก่อนส่ง");
     return;
   }
   const fd = new FormData();
@@ -951,19 +1164,31 @@ $("submit-btn").onclick = async () => {
   fd.append("language", state.lang);
   fd.append("code", code);
   fd.append("name", state.user.name || "");
+  if (state.contest && state.contest.id) fd.append("contest", state.contest.id);
   if (state.file) fd.append("file", state.file, state.file.name);
 
   btn.disabled = true;
-  $("submit-status").textContent = `กำลังตรวจ ${state.current} (${state.lang})...`;
-  $("result-body").innerHTML = `<span class="dim">กำลังรัน — ใช้ limit โหดทุกข้อ...</span>`;
+  setJudgeStatus(`กำลังส่ง ${state.current} (${state.lang})...`, true);
+  $("result-body").innerHTML = `<span class="dim">กำลังเข้าคิวตรวจ...</span>`;
   const t0 = performance.now();
   try {
-    const r = await fetch(API + "/api/submit", { method: "POST", body: fd, credentials: "include" });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
-    renderResults(data, (performance.now() - t0) / 1000);
-    $("submit-status").textContent =
-      `เสร็จใน ${((performance.now() - t0) / 1000).toFixed(2)}s — ${data.score}/100 คะแนน`;
+    // 202 {job_id, status:"queued", ...} — judging happens in the background.
+    const job = await apiPostForm("/api/submit", fd);
+    setJudgeStatus(jobStateText(job) || "อยู่ในคิว", true);
+    const done = await pollJob(job.job_id, (j) => {
+      setJudgeStatus(jobStateText(j) || "กำลังตรวจ...", true);
+    });
+    if (done.status === "error") {
+      $("result-body").innerHTML =
+        `<div class="score-big bad">ตรวจไม่สำเร็จ</div>` +
+        `<pre class="dim">${esc(done.error || "unknown error")}</pre>`;
+      setJudgeStatus(`error: ${done.error || "unknown"}`, false);
+      return;
+    }
+    const secs = (performance.now() - t0) / 1000;
+    const result = done.result || {};
+    renderResults(result, secs);
+    setJudgeStatus(`เสร็จใน ${secs.toFixed(2)}s — ${result.score}/100 คะแนน`, false);
     await fetchStats();
     state.myBestLoaded = false;
     renderTasksTable();
@@ -972,12 +1197,29 @@ $("submit-btn").onclick = async () => {
     if (state.taskTab === "mine") loadTaskMine();
     if (document.querySelector("#view-history.active")) loadHistory();
   } catch (e) {
-    $("result-body").innerHTML = `<span class="score-big bad">ส่งไม่สำเร็จ</span><pre class="dim">${esc(e.message)}</pre>`;
-    $("submit-status").textContent = "error: " + e.message;
+    if (e.timeout) {
+      $("result-body").innerHTML =
+        `<div class="score-big bad">หมดเวลารอผล</div>` +
+        `<pre class="dim">${esc(e.message)}${e.job_id ? `\njob: ${esc(String(e.job_id))}` : ""}</pre>`;
+      setJudgeStatus(e.message, false);
+    } else if (e.status === 401) {
+      // server detail verbatim ("login first")
+      setJudgeStatus(e.message, false);
+      $("result-body").innerHTML =
+        `<div class="score-big bad">ส่งไม่สำเร็จ</div><pre class="dim">${esc(e.message)}</pre>` +
+        `<p class="dim"><a href="#/login">เข้าสู่ระบบก่อนส่ง</a></p>`;
+    } else {
+      // 409 (job in flight) / 429 (quota) / 400 / 403: show detail verbatim
+      $("result-body").innerHTML =
+        `<div class="score-big bad">ส่งไม่สำเร็จ</div><pre class="dim">${esc(e.message)}</pre>`;
+      const extra = e.status === 429 && e.retryAfter
+        ? ` (ลองใหม่ใน ${esc(String(e.retryAfter))} วินาที)` : "";
+      setJudgeStatus(`error: ${e.message}${extra}`, false);
+    }
   } finally {
     btn.disabled = false;
   }
-};
+}
 
 function badgeVerdict(v) {
   return badge(v, v);
@@ -999,6 +1241,12 @@ function renderResults(d, secs) {
     const counts = Object.entries(d.counts || {})
       .map(([k, n]) => `${esc(k)}:${n}`).join("  ");
     html += `<div class="meta">${esc(counts)} &nbsp;|&nbsp; TL ${esc(String(d.limits.time_s))}s MEM ${esc(String(d.limits.memory_mb))}MB checker ${esc(d.checker)}</div>`;
+    if (d.samples != null || d.hidden_tests != null) {
+      const nS = Array.isArray(d.samples) ? d.samples.length : (Number(d.samples) || 0);
+      const nH = d.hidden_tests != null
+        ? Number(d.hidden_tests) : Math.max(0, (Number(d.total) || 0) - nS);
+      html += `<div class="meta">ตัวอย่างสาธารณะ ${nS} ข้อ · เทสต์ลับ ${nH} ข้อ</div>`;
+    }
     if (d.build_warnings) {
       html += `<div class="detail-cell"><p class="dim">build warnings:</p><pre>${esc(d.build_warnings)}</pre></div>`;
     }
@@ -1007,7 +1255,8 @@ function renderResults(d, secs) {
     </tr></thead><tbody>`;
     (d.results || []).forEach((r, i) => {
       html += `<tr class="test-row" data-i="${i}">
-        <td>${String(i + 1).padStart(2, "0")}</td><td>${esc(r.test)}</td>
+        <td>${String(i + 1).padStart(2, "0")}</td>
+        <td>${esc(r.test)}${r.hidden ? " " + badge("เทสต์ลับ", "hidden") : ""}</td>
         <td>${badgeVerdict(r.verdict)}</td><td>${r.wall_s}s</td><td>${r.cpu_s}s</td><td>${r.peak_mb}MB</td>
       </tr>`;
       html += `<tr class="detail-row hidden" data-i="${i}"><td colspan="6" class="detail-cell">${detailHtml(r)}</td></tr>`;
@@ -1029,6 +1278,7 @@ function renderResults(d, secs) {
 }
 
 function detailHtml(r) {
+  if (r.hidden) return hiddenDetailHtml(r);
   if (r.verdict === "AC") return `<span class="dim">ผ่าน — คลิกแถวเพื่อย่อ</span>`;
   if (r.verdict === "TLE")
     return `<span class="dim">Time Limit Exceeded (wall ${esc(String(r.wall_s))}s). Hint: O(n^2) จะไม่รอด test ใหญ่สุด</span>`;
@@ -1043,6 +1293,92 @@ function detailHtml(r) {
       <p><strong>actual:</strong></p><pre>${esc(r.actual || "")}</pre>`;
   }
   return `<pre>${esc(r.detail || r.verdict)}</pre>`;
+}
+
+/* Hidden tests arrive without input/expected/actual/diff — never render any of
+ * them (even if a payload ever carried them), and never try to fetch them. */
+function hiddenDetailHtml(r) {
+  let html = `<p><strong>เทสต์ลับ (ซ่อนโจทย์)</strong> — ข้อนี้ไม่แสดง input / expected / diff</p>`;
+  html += `<p class="dim">${esc(verdictHint(r))}</p>`;
+  if (r.detail) html += `<pre>${esc(r.detail)}</pre>`;
+  return html;
+}
+
+function verdictHint(r) {
+  if (r.verdict === "AC") return "ผ่านเทสต์ลับข้อนี้";
+  if (r.verdict === "OK") return "รันจบแบบไม่มี error";
+  if (r.verdict === "TLE") return `Time Limit Exceeded (wall ${r.wall_s}s) — ลด complexity หรือ optimise I/O`;
+  if (r.verdict === "MLE") return `Memory Limit Exceeded (peak ${r.peak_mb}MB) — ใช้หน่วยความจำน้อยลง`;
+  if (r.verdict === "OLE") return "Output Limit Exceeded — ปริ้นต์ออกมามากเกินไป";
+  if (r.verdict === "RE") return "Runtime Error — ตรวจ index / การหารด้วยศูนย์ / ชนิดข้อมูล";
+  if (r.verdict === "WA") return "คำตอบไม่ตรงกับเทสต์ลับข้อนี้";
+  return String(r.verdict || "");
+}
+
+/* ---------------- playground (Run tab; never recorded) ---------------- */
+$("run-btn").onclick = doRun;
+
+async function doRun() {
+  const btn = $("run-btn");
+  const status = $("run-status");
+  const box = $("run-result");
+  if (!state.user) {
+    status.textContent = "login ก่อนใช้ playground";
+    box.innerHTML = `<span class="dim"><a href="#/login">เข้าสู่ระบบ</a> ก่อนรันโค้ด (playground คิด quota ต่อบัญชี)</span>`;
+    return;
+  }
+  const code = $("editor").value;
+  if (!state.file && !code.trim()) {
+    status.textContent = "วางโค้ดในช่อง editor ก่อนรัน";
+    return;
+  }
+  const fd = new FormData();
+  fd.append("language", state.lang);
+  fd.append("code", code);
+  fd.append("input", $("run-input").value);
+  if (state.current) fd.append("problem", state.current);
+  if (state.file) fd.append("file", state.file, state.file.name);
+
+  btn.disabled = true;
+  status.textContent = `กำลังรัน ${state.current || "โค้ด"} (${state.lang})...`;
+  box.classList.add("dim");
+  box.innerHTML = `<span class="dim">กำลังรัน...</span>`;
+  const t0 = performance.now();
+  try {
+    const d = await apiPostForm("/api/run", fd);
+    renderRunResult(d);
+    status.textContent =
+      `รันเสร็จใน ${((performance.now() - t0) / 1000).toFixed(2)}s — playground ไม่ถูกบันทึกเป็นประวัติ`;
+  } catch (e) {
+    box.innerHTML = `<span class="dim">รันไม่สำเร็จ: ${esc(e.message)}</span>`;
+    status.textContent = "error: " + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderRunResult(d) {
+  const box = $("run-result");
+  box.classList.remove("dim");
+  let html = `<div class="run-head">${badgeVerdict(d.verdict)}` +
+    `<span class="meta">wall ${esc(String(d.wall_s))}s · cpu ${esc(String(d.cpu_s))}s · peak ${esc(String(d.peak_mb))}MB` +
+    (d.reason ? ` · ${esc(d.reason)}` : "") + `</span></div>`;
+  if (d.verdict !== "OK") {
+    html += `<p class="dim">${esc(verdictHint(d))}</p>`;
+  }
+  if (d.limits) {
+    html += `<div class="meta">TL ${esc(String(d.limits.time_s))}s · MEM ${esc(String(d.limits.memory_mb))}MB</div>`;
+  }
+  html += `<div class="io-grid">` +
+    ioBlockHtml("stdout", d.stdout) + ioBlockHtml("stderr", d.stderr) + `</div>`;
+  if (d.truncated) {
+    html += `<p class="dim">เอาต์พุตยาวเกินเพดาน — ถูกตัดให้เห็นเฉพาะส่วนแรก (truncated)</p>`;
+  }
+  if (d.build_warnings) {
+    html += `<div class="detail-cell"><p class="dim">build warnings:</p><pre>${esc(d.build_warnings)}</pre></div>`;
+  }
+  box.innerHTML = html;
+  bindCopyButtons(box);
 }
 
 /* ---------------- history ---------------- */
@@ -1129,7 +1465,213 @@ async function viewSubmission(sid) {
     }, 0);
     document.querySelector("#pane-submit").scrollIntoView({ behavior: "smooth" });
   } catch (e) {
-    $("submit-status").textContent = "เปิด submission ไม่ได้: " + e.message;
+    // 403 = someone else's submission: the payload never reaches the DOM, so no
+    // foreign code can be rendered. 401 = not logged in.
+    const msg = e.status === 403
+      ? "ไม่ใช่การส่งของคุณ — ดูได้เฉพาะการส่งของตัวเอง (admin ดูได้ทุกอัน)"
+      : (e.status === 401 ? "ต้อง login ก่อนดูผลการส่ง" : e.message);
+    show("task");
+    setTaskTab("submit");
+    $("result-body").innerHTML = `<span class="dim">${esc(msg)}</span>`;
+    setJudgeStatus(msg, false);
+    $("score-line").textContent = "";
+  }
+}
+
+/* ---------------- contests ---------------- */
+const CONTEST_STATUS_TH = {
+  upcoming: "กำลังจะมาถึง", running: "กำลังแข่ง", ended: "จบแล้ว",
+};
+
+function contestStatusBadge(st) {
+  const key = st || "ended";
+  return badge(CONTEST_STATUS_TH[key] || key, key);
+}
+
+function thaiTime(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return String(iso);
+  return d.toLocaleString("th-TH", {
+    day: "2-digit", month: "short", year: "numeric",
+    hour: "2-digit", minute: "2-digit",
+  });
+}
+
+function contestWindowText(c) {
+  return `${thaiTime(c.starts_at)} — ${thaiTime(c.ends_at)}`;
+}
+
+/* Contests are stored in UTC; the datetime-local inputs are Thai local time. */
+function localToUtcIso(v) {
+  if (!v) return "";
+  const d = new Date(v);
+  if (isNaN(d.getTime())) return "";
+  return d.toISOString();  // ISO-8601 UTC, e.g. 2026-11-01T02:00:00.000Z
+}
+
+const CONTESTS_UNCONFIGURED = "ยังไม่ได้ตั้งค่าคอนเทสต์";
+
+function isUnconfiguredMessage(msg) {
+  return /not configured|configured/i.test(String(msg || ""));
+}
+
+async function renderContests() {
+  const body = $("contests-body");
+  body.classList.add("dim");
+  body.innerHTML = `<div style="padding:4px">กำลังโหลด...</div>`;
+  try {
+    const d = await apiGet("/api/contests");
+    state.contests = d.contests || [];
+    state.contestsConfigured = !!d.configured;
+    if (!d.configured) {
+      body.innerHTML = `<div style="padding:4px">${esc(CONTESTS_UNCONFIGURED)}</div>`;
+      return;
+    }
+    const rows = state.contests;
+    if (!rows.length) {
+      body.innerHTML = `<div style="padding:4px">ยังไม่มีคอนเทสต์</div>`;
+      return;
+    }
+    body.classList.remove("dim");
+    body.innerHTML = `<table class="tests"><thead><tr>
+      <th>#</th><th>คอนเทสต์</th><th>สถานะ</th><th>ช่วงเวลา (เวลาไทย)</th><th>โจทย์</th>
+    </tr></thead><tbody>` + rows.map((c, i) =>
+      `<tr class="test-row" data-contest="${esc(c.id)}">
+        <td>${String(i + 1).padStart(2, "0")}</td>
+        <td><strong>${esc(c.title || c.id)}</strong> <span class="dim">${esc(c.id)}</span></td>
+        <td>${contestStatusBadge(c.status)}</td>
+        <td>${esc(contestWindowText(c))}</td>
+        <td>${(c.problems || []).length} ข้อ</td>
+      </tr>`).join("") + `</tbody></table>`;
+    body.querySelectorAll("tr[data-contest]").forEach((tr) => {
+      tr.onclick = () => {
+        location.hash = "#/contests/" + encodeURIComponent(tr.dataset.contest);
+      };
+    });
+  } catch (e) {
+    body.innerHTML = `<div style="padding:4px">โหลดคอนเทสต์ไม่ได้: ${esc(e.message)}</div>`;
+  }
+}
+
+async function renderContest(cid) {
+  const title = $("contest-title"), meta = $("contest-meta");
+  title.textContent = "Loading...";
+  meta.textContent = "";
+  $("contest-status-chip").innerHTML = "";
+  $("contest-freeze").classList.add("hidden");
+  $("contest-problems").innerHTML = `<span class="dim">กำลังโหลด...</span>`;
+  $("contest-scoreboard").innerHTML = `<span class="dim">กำลังโหลด...</span>`;
+  try {
+    const d = await apiGet(`/api/contests/${encodeURIComponent(cid)}`);
+    state.contestCache[cid] = d;
+    title.textContent = d.title || d.id;
+    meta.textContent =
+      `${d.id} · ${contestWindowText(d)} · แช่แข็ง ${d.freeze_minutes || 0} นาที · ` +
+      (d.show_samples ? "เปิดตัวอย่าง" : "ปิดตัวอย่างระหว่างแข่ง");
+    $("contest-status-chip").innerHTML = contestStatusBadge(d.status);
+    if (d.frozen) $("contest-freeze").classList.remove("hidden");
+    renderContestProblems(d);
+    renderContestScoreboard(d);
+  } catch (e) {
+    const msg = isUnconfiguredMessage(e.message) ? CONTESTS_UNCONFIGURED : e.message;
+    title.textContent = "โหลดคอนเทสต์ไม่สำเร็จ";
+    meta.textContent = "";
+    $("contest-problems").innerHTML = `<span class="dim">${esc(msg)}</span>`;
+    $("contest-scoreboard").innerHTML = `<span class="dim">—</span>`;
+  }
+}
+
+function renderContestProblems(d) {
+  const box = $("contest-problems");
+  const list = d.problem_details || [];
+  if (!list.length) {
+    box.innerHTML = `<span class="dim">ยังไม่มีโจทย์ในคอนเทสต์นี้</span>`;
+    return;
+  }
+  const running = d.status === "running";
+  box.classList.remove("dim");
+  box.innerHTML = `<table class="tests"><thead><tr>
+    <th>#</th><th>ข้อ</th><th>ระดับ</th><th>เทสต์</th><th></th>
+  </tr></thead><tbody>` + list.map((p, i) => {
+    const nS = p.samples || 0;
+    const nH = Math.max(0, (p.tests || 0) - nS);
+    const link = `<a class="tlink contest-open" href="#/task/${encodeURIComponent(p.id)}">${esc(p.id)}</a>`;
+    const action = running
+      ? `<button class="ghost-btn" type="button" data-enter="${esc(p.id)}">${icon("send")}<span>ส่งข้อนี้เข้าคอนเทสต์</span></button>`
+      : `<a class="ghost-btn contest-open" href="#/task/${encodeURIComponent(p.id)}">${icon("eye")}<span>ดูโจทย์</span></a>`;
+    return `<tr>
+      <td>${String(i + 1).padStart(2, "0")}</td>
+      <td>${link} <span class="dim">${esc(p.title || "")}</span></td>
+      <td>${diffBadge(p.difficulty)}</td>
+      <td>${nS} ตัวอย่าง · ${nH} ลับ</td>
+      <td>${action}</td>
+    </tr>`;
+  }).join("") + `</tbody></table>`;
+  box.querySelectorAll(".contest-open").forEach((el) => {
+    el.onclick = () => enterContestFrom(d);
+  });
+  box.querySelectorAll("button[data-enter]").forEach((b) => {
+    b.onclick = () => {
+      enterContestFrom(d);
+      location.hash = "#/task/" + encodeURIComponent(b.dataset.enter);
+    };
+  });
+}
+
+function renderContestScoreboard(d) {
+  const box = $("contest-scoreboard");
+  const rows = d.scoreboard || [];
+  if (!rows.length) {
+    box.innerHTML = `<span class="dim">ยังไม่มีคะแนนในคอนเทสต์นี้</span>`;
+    return;
+  }
+  const pids = d.problems || [];
+  const showPer = pids.length > 0 &&
+    rows.some((r) => r.per_problem && Object.keys(r.per_problem).length);
+  box.classList.remove("dim");
+  let html = `<table class="tests"><thead><tr>
+    <th>#</th><th>ชื่อ</th><th>แก้ได้</th><th>คะแนน</th>` +
+    (showPer ? pids.map((p) => `<th>${esc(p)}</th>`).join("") : "") + `</tr></thead><tbody>`;
+  rows.forEach((r, i) => {
+    const medal = i < 3 ? `<span class="rank rank-${i + 1}">${i + 1}</span>` : `${i + 1}`;
+    html += `<tr><td>${medal}</td><td>${esc(r.name || "—")}</td><td>${r.solved} ข้อ</td>` +
+      `<td><strong class="${scoreCls(r.points)}">${r.points}</strong></td>` +
+      (showPer
+        ? pids.map((p) => `<td>${esc(String((r.per_problem || {})[p] ?? ""))}</td>`).join("")
+        : "") + `</tr>`;
+  });
+  box.innerHTML = html + `</tbody></table>`;
+}
+
+/* Arriving from a contest problem link pins state.contest: every submit from
+ * that task page then carries contest=<id> until the banner is cleared. */
+function enterContestFrom(d) {
+  state.contest = { id: d.id, title: d.title || d.id };
+  renderContestBanner();
+}
+
+function renderContestBanner() {
+  const box = $("contest-banner");
+  if (!box) return;
+  const c = state.contest;
+  if (!c) {
+    box.classList.add("hidden");
+    box.innerHTML = "";
+    return;
+  }
+  box.classList.remove("hidden");
+  box.innerHTML =
+    `<span>กำลังส่งเข้าคอนเทสต์ <strong>${esc(c.title)}</strong> <span class="dim">(${esc(c.id)})</span>` +
+    ` — ทุกครั้งที่กด “ส่งคำตอบ” จะนับคะแนนในคอนเทสต์นี้ · ` +
+    `<a href="#/contests/${encodeURIComponent(c.id)}">ดูคอนเทสต์</a></span>` +
+    ` <button id="contest-clear" type="button" class="ghost-btn">ออกจากคอนเทสต์</button>`;
+  const clear = $("contest-clear");
+  if (clear) {
+    clear.onclick = () => {
+      state.contest = null;
+      renderContestBanner();
+    };
   }
 }
 
@@ -1144,12 +1686,15 @@ async function renderSettings() {
   const body = $("settings-body");
   const ac = $("admin-card");
   const oc = $("overview-card");
+  const tc = $("admin-tools-card");
   const showAdmin = state.is_admin;
   ac.classList.toggle("hidden", !showAdmin);
   oc.classList.toggle("hidden", !showAdmin);
+  tc.classList.toggle("hidden", !showAdmin);
   if (showAdmin) {
     loadAdminReports();
     loadOverview();
+    renderAdminTools();
   }
   if (!state.user) {
     body.innerHTML = `<span class="dim">login ด้วย Google ก่อนตั้งค่า</span>`;
@@ -1208,6 +1753,205 @@ async function renderSettings() {
     body.innerHTML = `<span class="dim">โหลดไม่ได้: ${esc(e.message)}</span>`;
   }
 }
+
+/* ---------------- admin tools (rejudge / plagiarism / contests) ---------------- */
+function buildProblemSelect(sel, multiple) {
+  if (!sel) return;
+  const prev = multiple ? null : sel.value;
+  sel.innerHTML = state.problems.map((p) =>
+    `<option value="${esc(p.id)}">${esc(p.id)} — ${esc(p.title)}</option>`).join("");
+  if (!multiple && prev && [...sel.options].some((o) => o.value === prev)) sel.value = prev;
+}
+
+function renderAdminTools() {
+  buildProblemSelect($("rejudge-problem"));
+  buildProblemSelect($("plag-problem"));
+  buildProblemSelect($("ct-problems"), true);
+  loadAdminContests();
+}
+
+async function loadAdminContests() {
+  const box = $("ct-list");
+  if (!box) return;
+  box.classList.add("dim");
+  box.innerHTML = "กำลังโหลด...";
+  try {
+    const d = await apiGet("/api/contests");
+    state.contests = d.contests || [];
+    state.contestsConfigured = !!d.configured;
+    if (!d.configured) {
+      box.innerHTML = CONTESTS_UNCONFIGURED;
+      return;
+    }
+    if (!state.contests.length) {
+      box.innerHTML = "ยังไม่มีคอนเทสต์";
+      return;
+    }
+    box.classList.remove("dim");
+    box.innerHTML = state.contests.map((c) =>
+      `<div class="report-item"><strong>${esc(c.title || c.id)}</strong> ` +
+      `<span class="dim">${esc(c.id)} · ${esc(contestWindowText(c))} · ${(c.problems || []).length} ข้อ</span> ` +
+      `${contestStatusBadge(c.status)} ` +
+      `<button class="ghost-btn" type="button" data-del-contest="${esc(c.id)}">ลบ</button></div>`
+    ).join("");
+    box.querySelectorAll("[data-del-contest]").forEach((b) => {
+      b.onclick = async () => {
+        const cid = b.dataset.delContest;
+        if (!window.confirm(`ลบคอนเทสต์ ${cid}? การส่งที่ผูกไว้จะยังอยู่ใน Scoreboard`)) return;
+        $("ct-status").textContent = `กำลังลบ ${cid}...`;
+        try {
+          await apiDelete(`/api/contests/${encodeURIComponent(cid)}`);
+          $("ct-status").textContent = `ลบ ${cid} แล้ว`;
+          loadAdminContests();
+        } catch (e) {
+          $("ct-status").textContent = "ลบไม่สำเร็จ: " + e.message;
+        }
+      };
+    });
+  } catch (e) {
+    box.innerHTML = `โหลดไม่ได้: ${esc(e.message)}`;
+  }
+}
+
+/* rejudge: queue jobs, then poll every returned job id to completion. */
+$("rejudge-btn").onclick = async () => {
+  const btn = $("rejudge-btn"), st = $("rejudge-status");
+  const problem = $("rejudge-problem").value;
+  const limit = Math.max(1, Number($("rejudge-limit").value) || 10);
+  if (!problem) {
+    st.textContent = "เลือกข้อก่อน";
+    return;
+  }
+  btn.disabled = true;
+  st.textContent = `กำลังเข้าคิวตรวจซ้ำ ${problem} (${limit} ล่าสุด)...`;
+  try {
+    const d = await apiPostJson("/api/admin/rejudge", { problem, limit });
+    const jobs = d.jobs || [];
+    st.textContent = `เข้าคิว ${d.queued} งาน · ข้าม ${d.skipped} — กำลังตรวจ...`;
+    for (let i = 0; i < jobs.length; i++) {
+      const job = await pollJob(jobs[i], (j) => {
+        st.textContent =
+          `ตรวจซ้ำ ${i + 1}/${jobs.length} — ${jobStateText(j) || "กำลังตรวจ..."}`;
+      });
+      st.textContent = `ตรวจซ้ำ ${i + 1}/${jobs.length} — ` +
+        (job.status === "done" ? "เสร็จ" : `error: ${job.error || "unknown"}`);
+    }
+    st.textContent =
+      `เสร็จแล้ว — เข้าคิว ${d.queued} · ข้าม ${d.skipped} · ตรวจจนจบ ${jobs.length} งาน`;
+    loadOverview();
+  } catch (e) {
+    st.textContent = "ตรวจซ้ำไม่สำเร็จ: " + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+};
+
+function simCls(s) {
+  s = Number(s) || 0;
+  if (s >= 0.9) return "sim-hi";
+  if (s >= 0.75) return "sim-mid";
+  return "sim-lo";
+}
+
+function pairSideHtml(label, id, name, len) {
+  return `<div class="io-block">` +
+    `<div class="io-head"><span class="io-title">${esc(label)}: ${esc(name || "—")}</span>` +
+    `<button class="icon-btn" type="button" data-copy title="คัดลอก submission id">${icon("copy")}</button></div>` +
+    `<pre class="io-pre">${esc(id || "—")}</pre>` +
+    `<p class="dim">normalized ${esc(String(len == null ? "?" : len))} ตัวอักษร</p></div>`;
+}
+
+function renderPlagiarism(d) {
+  const box = $("plag-body"), st = $("plag-status");
+  const pairs = d.pairs || [];
+  st.textContent =
+    `สแกน ${d.scanned} การส่ง · threshold ${Number(d.threshold).toFixed(2)} · พบ ${pairs.length} คู่`;
+  if (!pairs.length) {
+    box.innerHTML = `<span class="dim">ไม่พบโค้ดที่คล้ายกันถึง threshold นี้</span>`;
+    return;
+  }
+  box.classList.remove("dim");
+  box.innerHTML = `<table class="tests"><thead><tr>
+    <th>#</th><th>ความคล้าย</th><th>A</th><th>B</th><th>ภาษา</th><th>matches</th>
+  </tr></thead><tbody>` + pairs.map((p, i) =>
+    `<tr class="test-row" data-pair="${i}">
+      <td>${String(i + 1).padStart(2, "0")}</td>
+      <td><strong class="${simCls(p.similarity)}">${(100 * (Number(p.similarity) || 0)).toFixed(1)}%</strong></td>
+      <td>${esc(p.a_name || "—")}</td>
+      <td>${esc(p.b_name || "—")}</td>
+      <td>${esc(p.language || "")}</td>
+      <td>${esc(String(p.matches == null ? "" : p.matches))}</td>
+    </tr>
+    <tr class="detail-row hidden" data-pair="${i}"><td colspan="6" class="detail-cell">` +
+      `<div class="io-grid">` +
+      pairSideHtml("A", p.a_id, p.a_name, p.normalized_len_a) +
+      pairSideHtml("B", p.b_id, p.b_name, p.normalized_len_b) +
+      `</div></td></tr>`).join("") + `</tbody></table>`;
+  box.querySelectorAll("tr.test-row").forEach((tr) => {
+    tr.onclick = () => {
+      const det = box.querySelector(`tr.detail-row[data-pair="${tr.dataset.pair}"]`);
+      if (det) det.classList.toggle("hidden");
+    };
+  });
+  bindCopyButtons(box);
+}
+
+$("plag-btn").onclick = async () => {
+  const box = $("plag-body"), st = $("plag-status");
+  const problem = $("plag-problem").value;
+  const threshold = Number($("plag-threshold").value) || 0.6;
+  if (!problem) {
+    st.textContent = "เลือกข้อก่อน";
+    return;
+  }
+  st.textContent = "กำลังสแกน...";
+  box.classList.add("dim");
+  box.innerHTML = `<span class="dim">กำลังสแกน ${esc(problem)}...</span>`;
+  try {
+    const d = await apiGet(
+      `/api/admin/plagiarism?problem=${encodeURIComponent(problem)}&threshold=${threshold}&limit=300`);
+    renderPlagiarism(d);
+  } catch (e) {
+    st.textContent = "สแกนไม่สำเร็จ: " + e.message;
+    box.innerHTML = `<span class="dim">สแกนไม่สำเร็จ: ${esc(e.message)}</span>`;
+  }
+};
+
+$("plag-threshold").oninput = () => {
+  $("plag-threshold-val").textContent = Number($("plag-threshold").value).toFixed(2);
+};
+
+$("ct-save").onclick = async () => {
+  const st = $("ct-status");
+  const problems = [...$("ct-problems").selectedOptions].map((o) => o.value);
+  const payload = {
+    id: $("ct-id").value.trim().toLowerCase(),
+    title: $("ct-title").value.trim(),
+    starts_at: localToUtcIso($("ct-start").value),
+    ends_at: localToUtcIso($("ct-end").value),
+    problems,
+    freeze_minutes: Math.max(0, Number($("ct-freeze").value) || 0),
+    show_samples: $("ct-samples").checked,
+  };
+  if (!payload.id || !payload.starts_at || !payload.ends_at) {
+    st.textContent = "กรอก id / เริ่มแข่ง / จบแข่ง ให้ครบก่อน";
+    return;
+  }
+  if (!problems.length) {
+    st.textContent = "เลือกโจทย์อย่างน้อย 1 ข้อ";
+    return;
+  }
+  st.textContent = "กำลังบันทึก...";
+  try {
+    const d = await apiPostJson("/api/contests", payload);
+    st.textContent = `บันทึกแล้ว: ${(d.contest && d.contest.id) || payload.id}`;
+    loadAdminContests();
+    if (document.querySelector("#view-contests.active")) renderContests();
+  } catch (e) {
+    // server validation messages are shown verbatim
+    st.textContent = "บันทึกไม่สำเร็จ: " + e.message;
+  }
+};
 
 /* ---------------- init (cache-first, parallel, non-blocking) ---------------- */
 const PROBLEMS_CACHE_KEY = "ng_problems_v1";
@@ -1358,8 +2102,16 @@ async function init() {
     apiGet("/api/problems").catch(() => null),
     refreshMe(),
   ]);
-  // session may have arrived after first paint: refresh session-dependent views
-  if (state.user && (location.hash || "#/") === "#/tasks") renderTasksTable();
+  // The identity arrives after the first route render, so a view opened
+  // directly (bookmark/reload on #/settings, #/contests, #/task/<id>) can be
+  // stale: admin cards hidden, contest banner missing, "your score" blank.
+  // Re-render whatever is on screen now that the session is known.
+  if (location.hash && location.hash !== "#/") {
+    const r = currentRouteRender();
+    if (r) r();
+  } else {
+    renderHome();
+  }
   if (data && JSON.stringify(data.problems) !== JSON.stringify(state.problems)) {
     state.problems = data.problems;
     saveProblemsCache();
