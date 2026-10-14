@@ -32,10 +32,10 @@ docker build -t brutal-grader .
 docker run -e GRADER_CORS_ORIGINS=https://<ชื่อโปรเจกต์>.vercel.app -p 8000:8000 brutal-grader
 ```
 
-**2. Frontend** — Vercel หรือ Cloudflare Pages ก็ได้ (เลือกที่เดียว):
-- Vercel: Root Directory = `static`, preset Other
-- Cloudflare Pages: Connect Git → repo นี้, Framework None, build ว่าง, output = `static`
-  (proxy `/api` อยู่ใน `static/_redirects` แล้ว ไม่ต้องตั้งเพิ่ม)
+**2. Frontend** — Cloudflare Pages (หรือ Vercel):
+- Pages: Connect Git → repo นี้, Framework None, build ว่าง, output = `static`
+  (proxy `/api` ผ่าน `functions/api/[[proxy]].js` อัตโนมัติ ไม่ต้องตั้งเพิ่ม)
+- Vercel (legacy): Root Directory = `static`, preset Other (`static/vercel.json` มี rewrite ให้)
 
 แล้วแก้ `static/config.js` ชี้ไป backend:
 ```js
