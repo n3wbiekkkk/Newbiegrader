@@ -12,6 +12,7 @@ const state = {
   stats: {},
   myBest: {},
   myBestLoaded: false,
+  detailCache: {},
   current: null,
   lang: "cpp",
   taskTab: "statement",
@@ -342,6 +343,7 @@ function renderTasksTable() {
       <td>${diffBadge(p.difficulty)}</td><td>${tags || '<span class="dim">—</span>'}</td>
       <td>${p.tests}</td><td>${my}</td>`;
     tr.onclick = () => { location.hash = "#/task/" + encodeURIComponent(p.id); };
+    tr.onmouseenter = () => prefetchDetail(p.id);
     tb.appendChild(tr);
   });
   if (state.user && !state.myBestLoaded) {
@@ -407,6 +409,7 @@ function renderArchive() {
   g.innerHTML = html || `<span class="dim">ยังไม่มีโจทย์</span>`;
   g.querySelectorAll("[data-pid]").forEach((tr) => {
     tr.onclick = () => { location.hash = "#/task/" + encodeURIComponent(tr.dataset.pid); };
+    tr.onmouseenter = () => prefetchDetail(tr.dataset.pid);
   });
 }
 
@@ -438,33 +441,52 @@ async function renderLeaderboard() {
 }
 
 /* ---------------- task detail ---------------- */
+const DETAIL_CACHE_TTL = 60 * 1000;
+
+function fillTaskDetail(p) {
+  $("task-title").textContent = `${p.id} — ${p.title}`;
+  const extra = [p.difficulty, ...((p.tags || []))].filter(Boolean).join(" · ");
+  $("task-meta").textContent =
+    `TL ${p.time_limit}s | MEM ${p.memory_limit}MB | checker ${p.checker} | ${p.tests} tests` +
+    (extra ? ` | ${extra}` : "");
+  $("task-body").innerHTML = renderMd(p.statement || "(no statement)");
+  const pl = $("pdf-link");
+  if (p.has_pdf) {
+    pl.classList.remove("hidden");
+    $("pdf-anchor").href = `${API}/api/problems/${encodeURIComponent(p.id)}/pdf`;
+  } else {
+    pl.classList.add("hidden");
+  }
+}
+
+function prefetchDetail(pid) {
+  if (state.detailCache[pid]) return;
+  apiGet(`/api/problems/${encodeURIComponent(pid)}`)
+    .then((p) => { state.detailCache[pid] = { t: Date.now(), data: p }; })
+    .catch(() => { /* ignore: real navigation will retry */ });
+}
+
 async function selectProblem(pid) {
   state.current = pid;
   setTaskTab("statement");
-  $("task-title").textContent = "Loading...";
-  $("task-body").textContent = "Loading problem...";
+  const hit = state.detailCache[pid];
+  if (hit && Date.now() - hit.t < DETAIL_CACHE_TTL) {
+    fillTaskDetail(hit.data);
+  } else {
+    $("task-title").textContent = "Loading...";
+    $("task-body").textContent = "Loading problem...";
+  }
   $("result-body").innerHTML = `<span class="dim">ส่งโค้ดแล้วผลจะขึ้นตรงนี้</span>`;
   $("score-line").textContent = "";
   $("your-score-num").textContent = "—";
   try {
     const p = await apiGet(`/api/problems/${encodeURIComponent(pid)}`);
-    $("task-title").textContent = `${p.id} — ${p.title}`;
-    const extra = [p.difficulty, ...((p.tags || []))].filter(Boolean).join(" · ");
-    $("task-meta").textContent =
-      `TL ${p.time_limit}s | MEM ${p.memory_limit}MB | checker ${p.checker} | ${p.tests} tests` +
-      (extra ? ` | ${extra}` : "");
-    $("task-body").innerHTML = renderMd(p.statement || "(no statement)");
-    const pl = $("pdf-link");
-    if (p.has_pdf) {
-      pl.classList.remove("hidden");
-      $("pdf-anchor").href = `${API}/api/problems/${encodeURIComponent(pid)}/pdf`;
-    } else {
-      pl.classList.add("hidden");
-    }
+    state.detailCache[pid] = { t: Date.now(), data: p };
+    fillTaskDetail(p);
     refreshYourScore();
     loadMyReports();
   } catch (e) {
-    $("task-body").textContent = "โหลดโจทย์ไม่สำเร็จ: " + e.message;
+    if (!hit) $("task-body").textContent = "โหลดโจทย์ไม่สำเร็จ: " + e.message;
   }
 }
 
