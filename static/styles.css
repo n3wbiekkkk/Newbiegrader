@@ -173,6 +173,21 @@ body {
   #tag-list { flex-direction: row; flex-wrap: wrap; }
 }
 #archive-tags { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.archive-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 12px 0; }
+.archive-card {
+  background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+  padding: 16px 18px; cursor: pointer; box-shadow: var(--shadow);
+}
+.archive-card:hover { border-color: var(--dim); }
+.archive-card:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
+.arch-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.arch-title { display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 700; min-width: 0; }
+.arch-bar { flex: 1; max-width: 150px; height: 6px; border-radius: 3px; background: var(--panel2); border: 1px solid var(--border); overflow: hidden; }
+.arch-fill { height: 100%; background: var(--link); border-radius: 3px; }
+.arch-sub { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; font-size: 12px; color: var(--dim); }
+@media (max-width: 900px) {
+  .archive-grid { grid-template-columns: 1fr; }
+}
 .settings-row { margin: 14px 0; max-width: 420px; }
 .settings-row label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
 .settings-row input, .settings-row select {
