@@ -496,6 +496,12 @@ function prefetchDetail(pid) {
 async function selectProblem(pid) {
   state.current = pid;
   setTaskTab("statement");
+  // fresh editor for each problem: no leftover code or attached file
+  $("editor").value = "";
+  state.file = null;
+  fi.value = "";
+  $("file-chip").classList.add("hidden");
+  $("submit-status").textContent = "";
   const hit = state.detailCache[pid];
   if (hit && Date.now() - hit.t < DETAIL_CACHE_TTL) {
     fillTaskDetail(hit.data);
