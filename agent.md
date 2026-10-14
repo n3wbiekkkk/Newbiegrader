@@ -19,7 +19,7 @@ Newbiegrader = เว็บสนามสอบเขียนโปรแก�
 
 | อะไร | ค่า |
 |---|---|
-| Production frontend | `https://gradernew-static.vercel.app` |
+| Production frontend | `https://gradernew.pages.dev` |
 | Production backend | `https://grader.n.onjrnm.vip` |
 | Local dev | `http://127.0.0.1:8000` (`python3 server.py --port 8000`) |
 | GitHub | `sphetpitak-sudo/gradernew` branch `main` |
@@ -67,16 +67,15 @@ checker ที่มี: `token` (default), `exact` (byte, ผ่อน newline 
 
 ## 6. Workflow: แก้ backend (`server.py`)
 
-- เพิ่ม endpoint → เทส local ก่อนเสมอ (server local: `GRADER_CORS_ORIGINS=https://gradernew-static.vercel.app python3 server.py --port 8000`)
-- **Login จำลองโดยไม่ต้องผ่าน Google** (forge session cookie แบบเดียวกับ Starlette):
+- เพิ่ม endpoint → เทส local ก่อนเสมอ (server local: `GRADER_CORS_ORIGINS=https://gradernew.pages.dev python3 server.py --port 8000`)
+- **Login จำลองโดยไม่ต้องผ่าน Google**: สมัคร/ล็อกอินผ่าน password API แล้วเก็บ cookie เอง:
 ```python
-import base64, json
-from itsdangerous import TimestampSigner
 from httpx import Client
-signer = TimestampSigner("<SESSION_SECRET env ของ server นั้น>")
-cookie = signer.sign(base64.b64encode(json.dumps({"user": {"email": "...", "name": "...", "picture": ""}}).encode())).decode()
-c = Client(base_url="http://127.0.0.1:8000", cookies={"ng_session": cookie}, timeout=90)
+c = Client(base_url="http://127.0.0.1:8000", timeout=90)
+c.post("/api/auth/register", json={"email": "test@example.com", "password": "testpass123", "name": "t"})
+# login ซ้ำใช้ c.post("/api/auth/password", json={...}) — cookie ng_session ติดมาเอง
 ```
+(ห้าม forge cookie เอง: session ใช้ Starlette SessionMiddleware + one-time token ผ่าน `/api/auth/finish`)
 - Supabase local test: ตั้ง `SUPABASE_URL` + `SUPABASE_KEY` (service_role) ใน env แล้วเทส **ห้ามลืมลบข้อมูลเทส** (delete by id/email ทันทีหลังเทส, เช็ค count กลับเท่าเดิม)
 - Session ใช้ `ng_session` (HttpOnly, SameSite=None/Secure ใน prod) — flow เต็ม: `/api/auth/login` → Google → `/api/auth/callback` (ผ่าน Vercel proxy เพื่อให้ session อยู่ origin เดียวกัน) → mint one-time token → `/api/auth/finish` ตั้ง cookie first-party → redirect หน้าเว็บ
 - CORS: `allow_methods` ต้องครอบคลุม method ที่ frontend ใช้ (เคยลืม PUT จนปุ่ม settings พัง) + `allow_credentials=True`
@@ -106,6 +105,8 @@ git push deploy HEAD:deploy
   (เครื่อง dev นี้มี `.env` พร้อมค่าแล้ว — session ใหม่ใช้ได้เลยไม่ต้องขอซ้ำ)
 - ถ้า token/secret หลุดลง chat หรือ commit: ให้ user rotate ที่ต้นทางทันที (เช่น reset git
   credentials / สร้าง key ใหม่) เพราะลบออกจากประวัติไม่ได้ง่ายๆ
+- ด่วน: git credentials ของ justrunmy เคยหลุดในประวัติ (`9b66670..c7361bd`, ลบออกแล้วแต่ยังอยู่ใน history)
+  → ให้ user reset ที่ justrunmy panel แล้ว `git remote set-url deploy <url ใหม่>` ในเครื่องนี้
 
 ## 9. Database
 

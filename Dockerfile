@@ -12,5 +12,13 @@ COPY grader.py server.py ./
 COPY problems ./problems
 COPY static ./static
 
+# Sandbox needs this: the judge child drops to `nobody` (see build_limits in
+# grader.py), so tests must not be world-readable — otherwise submissions can
+# `open('/app/problems/...')` and cheat. Backend stays root ONLY to allow the
+# setuid drop; the child itself never runs as root and gets RLIMITs + (if the
+# host allows) its own network namespace. Keep .env OUT of the image: secrets
+# come from host env vars, never from files.
+RUN chmod -R go-rwx ./problems
+
 EXPOSE 8000
 CMD ["sh", "-c", "uvicorn server:app --host 0.0.0.0 --port ${PORT:-8000}"]

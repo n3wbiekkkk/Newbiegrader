@@ -54,11 +54,11 @@ GOOGLE_CLIENT_SECRET=GOCSPX-...
 GOOGLE_REDIRECT_URI=https://gradernew.pages.dev/api/auth/callback
 FRONTEND_URL=https://gradernew.pages.dev
 SESSION_SECRET=<สุ่ม 64 hex>
-SESSION_SAMESITE=none
+SESSION_SAMESITE=lax
 SESSION_SECURE=true
 ```
 (local: `SESSION_SAMESITE=lax SESSION_SECURE=false`)
-4. หน้าเว็บมีหน้า Login: สมัครด้วยอีเมล+รหัสผ่าน (scrypt, rate-limit กัน brute force) หรือ Sign in with Google ก็ได้ — login แล้วส่งได้เลย ไม่ต้องกรอกชื่อ (ใช้ชื่อโปรไฟล์อัตโนมัติ) ประวัติดูของตัวเองได้ด้วยติ๊ก "ของฉัน"
+4. หน้าเว็บมีหน้า Login: สมัครด้วยอีเมล+รหัสผ่าน (PBKDF2 210k iterations, rate-limit กัน brute force) หรือ Sign in with Google ก็ได้ — login แล้วส่งได้เลย ไม่ต้องกรอกชื่อ (ใช้ชื่อโปรไฟล์อัตโนมัติ) ประวัติดูของตัวเองได้ด้วยติ๊ก "ของฉัน"
 5. หน้า Settings (ต้อง login): เปลี่ยน display name (ชื่อที่โชว์ใน history) + เลือกภาษา default — เก็บในตาราง `profiles` (ดู `supabase/schema.sql`)
 
 Migration ตาราง `users` (รันใน SQL Editor):

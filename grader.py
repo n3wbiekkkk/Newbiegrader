@@ -433,12 +433,48 @@ def build_limits(memory_mb: int, time_limit: float):
                 ("RLIMIT_NPROC", 64),      # กัน fork bomb
                 ("RLIMIT_FSIZE", 64 * 1024 * 1024),  # กันเขียนไฟล์ถล่ม disk
                 ("RLIMIT_CORE", 0),        # ไม่เอา core dump
+                ("RLIMIT_NOFILE", 64),     # กันเปิด fd ถล่ม (pipe+stdlib ใช้ไม่ถึง)
             ):
                 try:
                     resource.setrlimit(getattr(resource, lim), (val, val))
                 except (AttributeError, ValueError, OSError):
                     pass
         except ImportError:
+            pass
+        # Sandbox: ตัด network + ลดสิทธิ์เป็น nobody (เฉพาะ Linux ที่รันเป็น
+        # root คือ prod Docker). Best-effort: ล้มเหลวตรงไหนก็ใช้ rlimits ต่อ.
+        # หมายเหตุ: workdir/binary ต้อง chmod 0755 ฝั่ง parent ก่อน (ดู run_one)
+        try:
+            if sys.platform.startswith("linux") and os.geteuid() == 0:
+                try:  # detached net namespace ก่อน drop root (ต้องใช้ CAP_SYS_ADMIN)
+                    import ctypes
+                    libc = ctypes.CDLL("libc.so.6", use_errno=True)
+                    libc.unshare(0x40000000)  # CLONE_NEWNET
+                except Exception:
+                    pass
+                try:
+                    import grp
+                    gid = grp.getgrnam("nogroup").gr_gid
+                except Exception:
+                    gid = 65534
+                try:
+                    import pwd
+                    uid = pwd.getpwnam("nobody").pw_uid
+                except Exception:
+                    uid = 65534
+                try:
+                    # สำคัญ: setuid ไม่ล้าง supplementary groups เอง — root มักอยู่
+                    # group root ซึ่งยังมีสิทธิ์บน problems/ ผ่าน group bits ได้
+                    # ต้อง setgroups([]) ก่อน ไม่เช่นนั้น nobody ยังอ่าน test ได้
+                    os.setgroups([])
+                except OSError:
+                    pass
+                try:
+                    os.setgid(gid)
+                    os.setuid(uid)
+                except OSError:
+                    pass
+        except Exception:
             pass
         try:
             os.setsid()
@@ -480,10 +516,18 @@ def run_one(cmd: list[str], stdin_data: str, time_limit: float, memory_mb: int) 
     preexec = build_limits(memory_mb, time_limit) if use_limits else None
     start = time.perf_counter()
     cpu0 = _cpu_children()
+    cwd = _run_cwd(cmd)
+    try:  # sandbox child (nobody) ต้อง traverse cwd + exec binary ได้
+        if cwd:
+            os.chmod(cwd, 0o755)
+        if cmd and os.path.isfile(cmd[0]):
+            os.chmod(cmd[0], 0o755)
+    except OSError:
+        pass
     try:
         p = subprocess.Popen(
             cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, preexec_fn=preexec, env=judge_env(), cwd=_run_cwd(cmd),
+            text=True, preexec_fn=preexec, env=judge_env(), cwd=cwd,
         )
     except OSError as e:
         return {"stdout": "", "stderr": str(e), "wall": time.perf_counter() - start,
