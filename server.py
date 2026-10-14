@@ -1862,6 +1862,12 @@ async def admin_rejudge(request: Request) -> dict:
         limit = max(1, min(int(body.get("limit") or 50), REJUDGE_MAX))
     except (TypeError, ValueError):
         limit = 50
+    # One worker on a fractional core: a 200-row rejudge would block students for
+    # hours. Keep the batch within the queue budget; the admin can call again.
+    budget = min(REJUDGE_MAX, QUEUE_MAX)
+    if limit > budget:
+        limit = budget
+    ids = ids[:budget]
     cols = "id,problem,language,filename,name,user_email,code"
     try:
         if ids:

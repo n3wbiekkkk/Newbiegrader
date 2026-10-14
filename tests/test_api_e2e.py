@@ -414,6 +414,23 @@ class ApiE2E(unittest.TestCase):
         self.assertGreaterEqual(thai["subs"], thai["accepted"])
         self.assertGreaterEqual(thai["best"], 0)
 
+    def test_rejudge_is_capped_by_queue_budget(self):
+        original = server.QUEUE_MAX
+        server.QUEUE_MAX = 1        # one worker, one job at a time
+        try:
+            self.login(STUDENT_A)
+            job = self.judged("thai_time", THAI_REF)
+            sid = job["result"]["id"]
+
+            self.login(ADMIN)
+            r = self.client.post("/api/admin/rejudge", json={"problem": "thai_time", "limit": 50})
+            self.assertEqual(r.status_code, 200, r.text)
+            self.assertEqual(r.json()["queued"], 1, "batch must be clamped to the queue budget")
+            self.wait_job(r.json()["jobs"][0])
+            self.assertEqual(len(self.stored(id=sid)), 1)
+        finally:
+            server.QUEUE_MAX = original
+
     def test_health_and_problem_listing(self):
         h = self.client.get("/api/health").json()
         self.assertTrue(h["ok"])
