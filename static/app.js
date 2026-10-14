@@ -467,21 +467,44 @@ function renderArchive() {
     const ia = order.indexOf(a), ib = order.indexOf(b);
     return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
   });
-  let html = "";
-  keys.forEach((d) => {
-    html += `<h3 class="pane-h">${esc(d)} (${groups[d].length})</h3>`;
-    html += `<table class="tests"><tbody>`;
-    groups[d].forEach((p) => {
-      html += `<tr class="test-row" data-pid="${esc(p.id)}"><td><strong>${esc(p.id)}</strong></td><td>${esc(p.title)}</td><td>${p.tests} tests</td></tr>`;
-    });
-    html += `</tbody></table>`;
-  });
+  // Personal progress per group (solved = best score 100), like programming.in.th archive cards.
   const g = $("archive-groups");
-  g.innerHTML = html || `<span class="dim">ยังไม่มีโจทย์</span>`;
-  g.querySelectorAll("[data-pid]").forEach((tr) => {
-    tr.onclick = () => { location.hash = "#/task/" + encodeURIComponent(tr.dataset.pid); };
-    tr.onmouseenter = () => prefetchDetail(tr.dataset.pid);
+  let html = `<div class="archive-grid">`;
+  keys.forEach((d) => {
+    const list = groups[d];
+    const total = list.length;
+    let solved = 0;
+    list.forEach((p) => {
+      if (state.myBest && state.myBest[p.id] === 100) solved++;
+    });
+    const pct = total ? Math.round((100 * solved) / total) : 0;
+    html += `<div class="archive-card" data-diff="${esc(d)}" role="button" tabindex="0">` +
+      `<div class="arch-top"><div class="arch-title">${icon("archive")}<span>${esc(d)}</span></div>` +
+      `<div class="arch-bar"><div class="arch-fill" style="width:${pct}%"></div></div></div>` +
+      `<div class="arch-sub"><span>${pct}% solved</span><span>${solved}/${total}</span></div>` +
+      `</div>`;
   });
+  html += `</div>`;
+  html += state.user
+    ? `<p class="dim">คลิกการ์ดเพื่อดูโจทย์ระดับนั้นใน Tasks</p>`
+    : `<p class="dim">login เพื่อดู progress ของตัวเอง</p>`;
+  g.innerHTML = html || `<span class="dim">ยังไม่มีโจทย์</span>`;
+  g.querySelectorAll("[data-diff]").forEach((card) => {
+    const go = () => {
+      const d = card.dataset.diff;
+      state.filter.diff = d === "unrated" ? "" : d;
+      const fd = $("f-diff");
+      if (fd) fd.value = state.filter.diff;
+      location.hash = "#/tasks";
+    };
+    card.onclick = go;
+    card.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } };
+  });
+  if (state.user && !state.myBestLoaded) {
+    fetchMyBest().then(() => {
+      if (document.querySelector("#view-archive.active")) renderArchive();
+    });
+  }
 }
 
 async function renderLeaderboard() {
