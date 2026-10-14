@@ -52,4 +52,16 @@ create table if not exists reports (
 );
 create index if not exists reports_problem_time
   on reports (problem, created_at desc);
-alter table reports enable row level security;
+-- user accounts for password login (Google users live in session only)
+create table if not exists users (
+  email text primary key,
+  name text not null default '',
+  password_hash text not null default '',
+  created_at timestamptz not null default now()
+);
+alter table users enable row level security;
+
+create index if not exists submissions_user_time
+  on submissions (user_email, created_at desc);
+create index if not exists submissions_created
+  on submissions (created_at desc);
