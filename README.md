@@ -8,7 +8,7 @@ Grader แบบ stdlib-only (ไม่ต้องลง lib) รองรั�
 
 Stack: FastAPI + Uvicorn (backend) + HTML/CSS/JS ไม่ต้อง build (frontend).
 รองรับ Python / C / C++ ส่งได้ 2 แบบ: วางโค้ดใน editor หรือแนบไฟล์ (คลิก/ลากไฟล์ลง dropzone)
-หน้าเว็บมี 4 วิว: Home (สถิติ) / Tasks (ตารางโจทย์ + ค้นหา/กรองระดับ/tag) / Task (โจทย์ + ส่ง + ผล) / History
+หน้าเว็บมี 7 วิว: Home (สถิติ) / Tasks (การ์ดโจทย์ + sidebar All/Tried/Solved/Tag Filter) / Task (Statement/Submit/Submissions/My + Your Score) / Archive / Leaderboard / History (ของตัวเอง) / Settings / Login
 
 ```bash
 pip3 install --user -r requirements.txt
@@ -16,32 +16,23 @@ python3 server.py                  # http://127.0.0.1:8000
 python3 server.py --port 8080
 ```
 
-## Deploy (Vercel + backend แยกกัน)
+## Deploy (frontend + backend แยกกัน)
 
-อย่า deploy ทั้ง repo ด้วย preset FastAPI บน Vercel — serverless ไม่มี compiler (C/C++ คอมไพล์ไม่ได้),
+อย่า deploy ทั้ง repo ด้วย preset FastAPI บน serverless — ไม่มี compiler (C/C++ คอมไพล์ไม่ได้),
 filesystem เขียนไม่ได้นอกจาก `/tmp`, โดนตัด timeout กลางคัน แผนที่ถูก:
 
-**1. Backend (judge) ขึ้น host ที่มี Docker** — Render / Fly.io / Railway / VPS
+**1. Backend (judge) ขึ้น host ที่มี Docker** — ปัจจุบันใช้ justrunmy (push `HEAD:deploy` ไป git remote ของมัน)
 ```bash
-# Render: New -> Blueprint -> เลือก repo นี้ (ใช้ render.yaml)
-# แล้วตั้ง env: GRADER_CORS_ORIGINS=https://<ชื่อโปรเจกต์>.vercel.app
+git push <justrunmy-git-url> HEAD:deploy
 ```
-หรือ Docker เอง:
-```bash
-docker build -t brutal-grader .
-docker run -e GRADER_CORS_ORIGINS=https://<ชื่อโปรเจกต์>.vercel.app -p 8000:8000 brutal-grader
-```
+สำรอง: Render (Blueprint + `render.yaml`) / Fly.io / VPS แล้วตั้ง env ตามต้องการ
 
-**2. Frontend** — Cloudflare Pages (หรือ Vercel):
-- Pages: Connect Git → repo นี้, Framework None, build ว่าง, output = `static`
+**2. Frontend** — ปัจจุบันใช้ Cloudflare Pages:
+- Connect Git → repo นี้, Framework None, build ว่าง, output = `static`
   (proxy `/api` ผ่าน `functions/api/[[proxy]].js` อัตโนมัติ ไม่ต้องตั้งเพิ่ม)
-- Vercel (legacy): Root Directory = `static`, preset Other (`static/vercel.json` มี rewrite ให้)
+- เหลือ `static/vercel.json` ไว้เผื่อย้อนกลับ (legacy)
 
-แล้วแก้ `static/config.js` ชี้ไป backend:
-```js
-window.GRADER_API_BASE = "https://brutal-grader-api.onrender.com";
-```
-commit + push — Vercel redeploy อัตโนมัติ
+config.js ปล่อย `""` ไว้ (same-origin ผ่าน proxy) — ถ้าโฮสต์ frontend ที่ไม่มี proxy ค่อยชี้ URL backend + ตั้ง `GRADER_CORS_ORIGINS`
 
 รัน local ทั้งก้อนแบบเดิมได้อยู่ (`python3 server.py` — same origin, ไม่ต้องมี CORS)
 
@@ -49,7 +40,7 @@ commit + push — Vercel redeploy อัตโนมัติ
 
 1. Google Auth Platform → Create OAuth client (Web application)
    - Authorised redirect URIs (ใส่ทั้งสองบรรทัด):
-     `https://gradernew-static.vercel.app/api/auth/callback`
+     `https://gradernew.pages.dev/api/auth/callback`
      `https://grader.n.onjrnm.vip/api/auth/callback`
    - JavaScript origins: ปล่อยว่างได้
 2. รัน migration คอลัมน์ email:
@@ -60,8 +51,8 @@ alter table submissions add column if not exists user_email text not null defaul
 ```
 GOOGLE_CLIENT_ID=....apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=GOCSPX-...
-GOOGLE_REDIRECT_URI=https://gradernew-static.vercel.app/api/auth/callback
-FRONTEND_URL=https://<vercel-app>
+GOOGLE_REDIRECT_URI=https://gradernew.pages.dev/api/auth/callback
+FRONTEND_URL=https://gradernew.pages.dev
 SESSION_SECRET=<สุ่ม 64 hex>
 SESSION_SAMESITE=none
 SESSION_SECURE=true
@@ -130,34 +121,35 @@ alter table submissions add column if not exists name text not null default '';
 - `GET /api/languages` — ภาษาที่รองรับ (python/c/cpp)
 - `GET /api/problems` — รายการโจทย์
 - `GET /api/problems/{id}` — โจทย์ + statement
-- `POST /api/submit` (multipart: `problem`, `language`, `name` (บังคับ), `code` หรือ `file`) — ตรวจแล้วตอบ JSON ทันที
+- `POST /api/submit` (multipart: `problem`, `language`, `code` หรือ `file`; ต้อง login) — ตรวจแล้วตอบ JSON ทันที
 
 ```bash
-curl -F problem=aplusb -F language=python -F code='import sys
-print(sum(map(int, sys.stdin.read().split())))' http://127.0.0.1:8000/api/submit
+curl -F problem=warpz -F language=python -F code='print("YES")' http://127.0.0.1:8000/api/submit
 ```
 
 ## โครง
 ```
 grader.py
-problems/<id>/config.json      # time_limit, memory_limit, checker (token|exact|float)
+problems/<id>/config.json      # time_limit, memory_limit, checker, difficulty, tags (ดู KNOWN_TAGS)
 problems/<id>/statement.pdf      # โจทย์ต้นฉบับ (ถ้ามี)
 problems/<id>/statement.md
 problems/<id>/tests/*.in|*.out
-examples/                      # โค้ดถูก/ผิด/TLE ไว้ลอง
+examples/                      # reference solution ประจำข้อ (*_ref.py)
 server.py                      # FastAPI backend (reuse grader.py)
-static/                        # frontend: index.html, styles.css, app.js
-requirements.txt               # fastapi, uvicorn, python-multipart
+static/                        # frontend: index.html, styles.css, app.js (?v=N กัน cache)
+functions/api/[[proxy]].js     # Cloudflare Pages Function proxy /api
+supabase/schema.sql            # schema + migration ทั้งหมด
+agent.md                       # คู่มือ AI
+requirements.txt               # fastapi, uvicorn, python-multipart, supabase, itsdangerous
 ```
 
 ## ใช้ยังไง
 ```bash
 python3 grader.py list
-python3 grader.py info aplusb
-python3 grader.py run aplusb examples/aplusb_correct.py
-python3 grader.py run fizzbuzz examples/fizzbuzz_correct.py -v
-python3 grader.py run palindrome examples/palindrome_correct.py --strict --stop-on-fail
-python3 grader.py run aplusb examples/aplusb_correct.cpp   # C++ ก็ได้ (auto compile -O2)
+python3 grader.py info warpz
+python3 grader.py run warpz examples/warpz_ref.py
+python3 grader.py run mana_crystal examples/mana_crystal_ref.py --strict --stop-on-fail
+python3 grader.py run napprime examples/napprime_ref.cpp   # C++ ก็ได้ (auto compile -O2)
 ```
 
 ## โจทย์ (PDF workflow)
@@ -186,7 +178,7 @@ python3 grader.py run aplusb examples/aplusb_correct.cpp   # C++ ก็ได้
 ```bash
 mkdir -p problems/myprob/tests
 # config.json: {"title":"...","time_limit":1.0,"memory_limit":256,"checker":"token",
-#               "difficulty":"easy|medium|hard","tags":["math","impl"]}
+#               "difficulty":"easy|medium|hard","tags":["Math","Greedy"]}  (tags ดู KNOWN_TAGS ใน grader.py)
 # ใส่ 01.in / 01.out, 02.in / 02.out ... (+ statement.pdf ได้) แล้ว run ได้เลย
 ```
 
