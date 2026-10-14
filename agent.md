@@ -50,6 +50,8 @@ agent.md             # ไฟล์นี้
      `python3 tools/make_statement_tex.py <id>` (tectonic + TH Sarabun, คณิตสวย, ตัวอย่างเป็นกล่องคู่ —
      build นิ่งแบบ byte-identical ทุกรอบ (SOURCE_DATE_EPOCH คงที่ในสคริปต์) + footer `Newbiegrader | หน้า`
      ติดทุกไฟล์ — verify ด้วย pdftotext + เปิดภาพดูทุกข้อก่อน commit)
+   - โจทย์ค่ายที่มี PDF ต้นฉบับแล้วแต่อยากได้เวอร์ชัน LaTeX ดำ (style เดียวกัน): เขียน `statement.md`
+     เองแล้วรันสคริปต์เดียวกันทับ `statement.pdf` ได้เลย
 2. อ่าน PDF (tool `read` อ่าน PDF ได้) แล้วสร้าง:
    - `config.json`: `{"title","time_limit":1.0,"memory_limit":256,"checker":"token|exact|float|decimal2","difficulty":"easy|medium|hard","tags":[...],"notice":"..."}` (tags ต้องอยู่ใน KNOWN_TAGS ใน `grader.py`; `notice` โชว์แบนเนอร์บนหน้า task)
    - `statement.md`: spec ภาษาไทย (input/output/constraints/subtasks/ตัวอย่าง) — **ห้ามใส่ section กับดัก** (นโยบาย: ไม่บอกใบ้)

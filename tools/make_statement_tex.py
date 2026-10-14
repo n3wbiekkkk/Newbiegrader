@@ -160,8 +160,12 @@ def split_sample(code: str):
 
 
 def tex_verbatim(s: str) -> str:
-    # samples are ASCII judge data; escape only TeX specials for verbatim-lite
-    return s.replace("\\", "\\textbackslash{}")
+    # sample boxes are \ttfamily text (not real verbatim): escape everything
+    return (s.replace("\\", "\\textbackslash{}")
+             .replace("&", "\\&").replace("%", "\\%")
+             .replace("$", "\\$").replace("#", "\\#")
+             .replace("_", "\\_").replace("{", "\\{").replace("}", "\\}")
+             .replace("~", "\\textasciitilde{}").replace("^", "\\^{}"))
 
 
 def render_sample(inp: str, outp: str) -> str:
