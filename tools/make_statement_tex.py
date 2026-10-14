@@ -167,9 +167,9 @@ def tex_verbatim(s: str) -> str:
 def render_sample(inp: str, outp: str) -> str:
     def box(title, body):
         return ("\\begin{minipage}[t]{0.48\\linewidth}\n"
-                "{\\small\\bfseries\\color{accent} " + title + "}\n"
-                "\\begin{mdframed}[backgroundcolor=black!4,linewidth=0.6pt,"
-                "linecolor=black!25,innerleftmargin=6pt,innerrightmargin=6pt,"
+                "{\\small\\bfseries " + title + "}\n"
+                "\\begin{mdframed}[backgroundcolor=white,linewidth=0.8pt,"
+                "linecolor=black,innerleftmargin=6pt,innerrightmargin=6pt,"
                 "innertopmargin=4pt,innerbottommargin=4pt]\n"
                 "{\\ttfamily\\small\\setlength{\\baselineskip}{14pt}\n" +
                 "\\\\\n".join(tex_verbatim(l) if l.strip() else "~"
@@ -203,7 +203,7 @@ PREAMBLE = """\\documentclass[a4paper,12pt]{article}
 \\setlength{\\parindent}{0pt}
 \\pagestyle{fancy}
 \\fancyhf{}
-\\fancyfoot[C]{\\small\\color{black!45} Newbiegrader \\quad\\textbar\\quad \\thepage}
+\\fancyfoot[C]{\\small Newbiegrader \\quad\\textbar\\quad \\thepage}
 \\renewcommand{\\headrulewidth}{0pt}
 \\begin{document}
 \\normalsize
@@ -214,22 +214,18 @@ def build(pid: str, title: str, tl: float, mem: int, md: str) -> str:
     blocks = [b for b in md.split("\n") if b.strip()]
     _ = blocks
     parts = [PREAMBLE]
-    parts.append("{\\small\\ttfamily\\color{black!50} " + esc_plain(pid) + "}\n\n")
+    parts.append("{\\small\\ttfamily " + esc_plain(pid) + "}\n\n")
     parts.append("{\\LARGE\\bfseries " + tex_inline(title) + "}\n\n")
-    parts.append("\\textcolor{accent}{\\rule{\\linewidth}{1.2pt}}\n\n")
-    parts.append("\\begin{mdframed}[backgroundcolor=black!4,linewidth=0pt,"
-                 "innerleftmargin=8pt,innerrightmargin=8pt,"
-                 "innertopmargin=5pt,innerbottommargin=5pt]\n"
-                 "{\\small\\textsf{Time limit: " + str(tl).rstrip("0").rstrip(".")
-                 + " s \\quad\\textbar\\quad Memory limit: " + str(mem) + " MB}}\n"
-                 "\\end{mdframed}\n\n\\bigskip\n")
+    parts.append("{\\small\\textsf{Time limit: " + str(tl).rstrip("0").rstrip(".")
+                 + " s \\quad\\textbar\\quad Memory limit: " + str(mem) + " MB}}\n\n")
+    parts.append("\\rule{\\linewidth}{1.2pt}\n\n\\bigskip\n")
     story_done = False
     for kind, text in md_blocks(md):
         if kind == "h1":
             continue  # title already in header
         if kind == "h2":
             story_done = True
-            parts.append("{\\large\\bfseries\\color{accent} " + tex_inline(text) + "}\n\n")
+            parts.append("{\\large\\bfseries " + tex_inline(text) + "}\n\n")
         elif kind == "code":
             story_done = True
             inp, outp = split_sample(text)
