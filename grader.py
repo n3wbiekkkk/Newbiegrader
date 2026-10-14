@@ -162,6 +162,7 @@ def prepare_command(src: Path, workdir: Path) -> tuple[list[str], str, str]:
     lang = detect_language(src)
     if lang is None:
         raise SystemExit(f"Unsupported extension '{src.suffix}'. Supported: .py .cpp .c .java .js .go .rs")
+    src = src.resolve()  # absolute: compile/run steps chdir into isolated dirs
     if lang == "python":
         return [sys.executable, str(src.resolve())], f"python {src.name}", ""
     if lang == "node":
