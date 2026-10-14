@@ -11,7 +11,8 @@
   --yellow: #a16207;
   --magenta: #7e22ce;
   --red: #dc2626;
-  --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  --mono: "JetBrains Mono", "Prompt", ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  --sans: "Prompt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --on-acc: #fff;
   --field: #fff;
   --card: #ffffff;
@@ -73,8 +74,8 @@ button, a, input, select, textarea { transition: border-color .15s ease, backgro
 .rank-3 { background: #f0c8a0; border-color: #d69a63; color: #6b3d16; }
 body {
   margin: 0; background: var(--bg); color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  font-size: 14px; line-height: 1.6;
+  font-family: var(--sans);
+  font-size: 15px; line-height: 1.65;
   min-height: 100vh; display: flex; flex-direction: column;
   -webkit-font-smoothing: antialiased;
 }
