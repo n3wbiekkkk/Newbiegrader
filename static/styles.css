@@ -99,6 +99,22 @@ body {
 .health { margin-left: auto; font-size: 11px; color: var(--dim); font-family: var(--mono); letter-spacing: .5px; }
 .health.ok { color: var(--green); }
 .auth { display: flex; gap: 8px; align-items: center; }
+.signup-btn {
+  background: var(--acc); color: var(--on-acc); border: 1px solid var(--acc);
+  border-radius: 8px; padding: 7px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.signup-btn:hover { opacity: .85; }
+.google-btn {
+  width: 100%; display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+  background: #fff; color: #1f1f1f; border: 1px solid #dadce0; border-radius: 8px;
+  padding: 10px 16px; font-size: 14px; font-weight: 500; cursor: pointer;
+}
+.google-btn:hover { background: #f8faff; border-color: #c6d7f5; box-shadow: var(--shadow); }
+.google-btn .ic { color: #1a73e8; }
+.or-divider { display: flex; align-items: center; gap: 12px; color: var(--dim); font-size: 12px; margin: 4px 0 12px; }
+.or-divider::before, .or-divider::after { content: ""; flex: 1; border-top: 1px solid var(--border); }
+[data-theme="dark"] .google-btn { background: #131314; color: #e3e3e3; border-color: #8e918f; }
+[data-theme="dark"] .google-btn:hover { background: #1f2020; border-color: #bdc1c6; }
 #user-chip { font-size: 13px; font-weight: 600; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .report-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
 .report-row select {
