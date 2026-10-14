@@ -173,6 +173,14 @@ python3 grader.py run napprime examples/napprime_ref.cpp   # C++ ก็ได้
 | `rotation` | เธอหมุนรอบฉัน ฉันหมุนรอบเธอ | easy | 10 |
 | `shadow` | Shadow เงาปะทะมังกร (TL 1s / MEM 64MB) | easy | 10 |
 | `panda` | แพนด้าหาส้มโอ (TL 1s / MEM 512MB) | medium | 10 |
+| `sing_contest` | อันดับประกวดร้องเพลง | easy | 10 |
+| `candy_sales` | ยอดขายสายไหมรายวัน | easy | 10 |
+| `snack_budget` | งบจำกัดแต่อยากกินเยอะ | easy | 10 |
+| `stage_show` | ตารางการแสดงบนเวที | easy | 10 |
+| `ticket_queue` | คิวซื้อตั๋วคอนเสิร์ต | easy | 10 |
+| `club_vote` | เลือกตั้งประธานชมรมดนตรี | easy | 10 |
+| `stage_lights` | จุดไฟประดับใกล้เวทีที่สุด | easy | 10 |
+| `boat_crossing` | เรือพายข้ามคลอง | easy | 10 |
 
 ## Verdicts
 `AC` ผ่าน / `WA` + diff (·=space) / `TLE` เกินเวลา / `MLE` หน่วยความจำ /
