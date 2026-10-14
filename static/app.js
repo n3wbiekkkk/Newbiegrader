@@ -96,6 +96,54 @@ function badge(text, cls) {
   return `<span class="badge b-${esc(cls)}">${esc(text)}</span>`;
 }
 
+/* Tiny offline syntax highlighter (Python/C/C++) for the code viewer. */
+const KEYWORDS = {
+  python: new Set(("False None True and as assert async await break class continue " +
+    "def del elif else except finally for from global if import in is lambda " +
+    "nonlocal not or pass raise return try while with yield").split(" ")),
+  c: new Set(("auto break case char const continue default do double else enum " +
+    "extern float for goto if inline int long register return short signed " +
+    "sizeof static struct switch typedef union unsigned void volatile while").split(" ")),
+  cpp: new Set(("alignas and and_eq asm auto bitand bitor bool break case catch " +
+    "char class compl concept const constexpr consteval constinit const_cast " +
+    "continue decltype default delete do double else enum explicit export extern " +
+    "false float for friend goto if inline int long mutable namespace new " +
+    "noexcept not nullptr operator or private protected public return short " +
+    "signed sizeof static struct switch template this throw true try typedef " +
+    "typename union unsigned using virtual void volatile while").split(" ")),
+};
+
+function highlightCode(src, lang) {
+  const key = KEYWORDS[lang] || KEYWORDS.cpp;
+  const com = lang === "python" ? "#[^\\n]*" : "\\/\\/[^\\n]*|\\/\\*[\\s\\S]*?\\*\\/";
+  const pp = lang === "python" ? "(?!)" : "#[^\\n]*";
+  const re = new RegExp(
+    `(?<com>${com})|(?<pp>${pp})|` +
+    `(?<str>"(?:[^"\\\\\\n]|\\\\.)*"|'(?:[^'\\\\\\n]|\\\\.)*')|` +
+    `(?<num>\\b\\d[\\w.]*(?:[eE][+-]?\\d+)?[uUlLfF]*)|` +
+    `(?<word>\\b[A-Za-z_]\\w*)`,
+    "g");
+  let out = "", last = 0, m;
+  while ((m = re.exec(src)) !== null) {
+    out += esc(src.slice(last, m.index));
+    const t = m[0];
+    if (m.groups.com) out += `<span class="tk-c">${esc(t)}</span>`;
+    else if (m.groups.pp) out += `<span class="tk-p">${esc(t)}</span>`;
+    else if (m.groups.str) out += `<span class="tk-s">${esc(t)}</span>`;
+    else if (m.groups.num) out += `<span class="tk-n">${esc(t)}</span>`;
+    else if (key.has(t)) out += `<span class="tk-k">${esc(t)}</span>`;
+    else {
+      let j = re.lastIndex;
+      while (src[j] === " " || src[j] === "\t") j++;
+      out += src[j] === "("
+        ? `<span class="tk-f">${esc(t)}</span>`
+        : esc(t);
+    }
+    last = re.lastIndex;
+  }
+  return out + esc(src.slice(last));
+}
+
 function diffBadge(d) {
   if (!d) return `<span class="dim">—</span>`;
   return `<span class="diff-tag diff-${esc(d)}">${esc(d)}</span>`;
@@ -935,7 +983,7 @@ function renderResults(d, secs) {
     html += `</tbody></table>`;
   }
   if (d.code) {
-    html += `<details class="code-view"><summary>ดูโค้ดที่ส่ง (${esc(String(d.code).split("\n").length)} บรรทัด)</summary><pre>${esc(d.code)}</pre></details>`;
+    html += `<details class="code-view"><summary>ดูโค้ดที่ส่ง (${esc(String(d.code).split("\n").length)} บรรทัด)</summary><pre>${highlightCode(d.code, d.language)}</pre></details>`;
   }
   const body = $("result-body");
   body.classList.remove("dim");
