@@ -298,7 +298,8 @@ function router() {
   if (h === "#/leaderboard") { show("leaderboard"); renderLeaderboard(); return; }
   if (h === "#/history") { show("history"); loadHistory(); return; }
   if (h === "#/settings") { show("settings"); renderSettings(); return; }
-  if (h === "#/login") { show("login"); return; }
+  if (h === "#/login") { show("login"); setAuthMode("login"); return; }
+  if (h === "#/login/register") { show("login"); setAuthMode("register"); return; }
   show("home");
   renderHome();
 }
@@ -613,6 +614,7 @@ async function refreshMe() {
   state.myBestLoaded = false;
   state.myBest = {};
   $("login-btn").classList.toggle("hidden", !!state.user);
+  $("signup-btn").classList.toggle("hidden", !!state.user);
   $("logout-btn").classList.toggle("hidden", !state.user);
   const chip = $("user-chip");
   chip.classList.toggle("hidden", !state.user);
@@ -635,6 +637,11 @@ async function refreshMe() {
 $("login-btn").onclick = () => {
   try { sessionStorage.setItem("ng_next", location.hash || "#/"); } catch (e) { /* ignore */ }
   location.hash = "#/login";
+};
+
+$("signup-btn").onclick = () => {
+  try { sessionStorage.setItem("ng_next", location.hash || "#/"); } catch (e) { /* ignore */ }
+  location.hash = "#/login/register";
 };
 
 $("logout-btn").onclick = async () => {
