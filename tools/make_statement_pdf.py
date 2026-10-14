@@ -67,19 +67,29 @@ def md_blocks(md: str):
     return blocks
 
 
-THAI_RE = re.compile(r"[\u0E00-\u0E7F]+")
-LATIN_RE = re.compile(r"[^\u0E00-\u0E7F]+")
+def _cls(ch: str) -> str:
+    o = ord(ch)
+    if 0x0E00 <= o <= 0x0E7F:
+        return "T"
+    try:
+        ch.encode("latin-1")
+        return "L"
+    except UnicodeEncodeError:
+        return "T"  # Sarabun covers symbols like — • ≤
 
 
 def script_segs(text: str):
-    """Split into (is_thai, chunk) keeping order. Latin/digits stay ASCII
-    (this Sarabun file draws ASCII digits as Thai digits, so Latin runs
-    must use a core font)."""
-    out = []
-    pos = 0
-    for m in re.finditer(r"[\u0E00-\u0E7F]+|[^\u0E00-\u0E7F]+", text):
-        out.append((bool(THAI_RE.fullmatch(m.group(0))), m.group(0)))
-    return out
+    """Split into (is_thai, chunk) keeping order. Latin/digit runs use a
+    core font (this Sarabun file draws ASCII digits as Thai digits, and
+    core fonts lack some symbols, so non-latin-1 goes to Sarabun)."""
+    out: list = []
+    for ch in text:
+        c = _cls(ch)
+        if out and out[-1][0] == c:
+            out[-1][1] += ch
+        else:
+            out.append([c, ch])
+    return [(c == "T", chunk) for c, chunk in out]
 
 
 def write_rich(pdf: StatementPDF, text: str, size: int, bold: bool = False,
