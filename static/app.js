@@ -335,12 +335,15 @@ function renderTasksTable() {
     $("tasks-empty").classList.remove("hidden");
     return;
   }
-  list.forEach((p, idx) => {
+  // global rank follows the easy -> hard API order (stable under filters)
+  const rankOf = new Map(state.problems.map((p, i) => [p.id, i + 1]));
+  list.forEach((p) => {
+    const rank = rankOf.get(p.id) ?? "—";
     const my = (state.myBest && state.myBest[p.id] != null)
       ? `<span class="${scoreCls(state.myBest[p.id])}">${state.myBest[p.id]}/100</span>` : "—";
     const tags = (p.tags || []).map((t) => `<span class="tag-chip">${esc(t)}</span>`).join("");
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${idx + 1}</td><td><strong>${esc(p.id)}</strong><br><span class="dim">${esc(p.title)}</span></td>
+    tr.innerHTML = `<td>${rank}</td><td><strong>${esc(p.id)}</strong><br><span class="dim">${esc(p.title)}</span></td>
       <td>${diffBadge(p.difficulty)}</td><td>${tags || '<span class="dim">—</span>'}</td>
       <td>${p.tests}</td><td>${my}</td>`;
     tr.onclick = () => { location.hash = "#/task/" + encodeURIComponent(p.id); };
