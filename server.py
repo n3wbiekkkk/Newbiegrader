@@ -26,6 +26,7 @@ import time
 import traceback
 import uuid
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from pathlib import Path
 from typing import Dict, List, Optional
 from urllib.parse import urlencode
@@ -86,17 +87,54 @@ LANGS: Dict[str, Dict[str, object]] = {
 EXT2LANG = {".py": "python", ".c": "c", ".cpp": "cpp", ".cc": "cpp", ".cxx": "cpp"}
 
 MAX_CODE_BYTES = 256 * 1024   # 256 KB source cap
-JUDGE_JOBS = 4                # parallel test workers per submission
-OVERALL_TIMEOUT = 90.0        # seconds per submission (thread keeps cleaning up after)
 DETAIL_HEAD = 4000            # max chars of detail/diff sent to frontend
+
+# ---- capacity, derived from the host/container this runs in ----
+# Prod is a fractional vCPU container (0.5 CPU / 0.5 GB): judging two submissions
+# at once, or running 4 tests of one submission in parallel, oversubscribes the
+# core and produces wall-clock TLEs that have nothing to do with the student's
+# code. Everything below is auto-derived from cgroup limits (see grader.cpu_quota
+# / grader.ram_limit_mb) and overridable by env when the host changes.
+CPU_QUOTA = grader.CPU_QUOTA
+RAM_MB = grader.RAM_MB
+
+
+def _env_int(name: str, auto: int) -> int:
+    """`0`/unset = auto (host derived); any positive value wins."""
+    raw = os.environ.get(name, "").strip()
+    if raw:
+        try:
+            val = int(raw)
+            if val > 0:
+                return val
+        except ValueError:
+            print(f"[web] warning: bad {name}={raw!r}, using auto", file=sys.stderr)
+    return auto
+
+
+JUDGE_JOBS = _env_int("GRADER_JUDGE_JOBS", 4 if CPU_QUOTA >= 2 else 1)
+JUDGE_WORKERS = _env_int("GRADER_JUDGE_WORKERS", 2 if CPU_QUOTA >= 2 else 1)
+# Per-test memory ceiling. A problem may declare 512 MB, but letting a 512 MB
+# process loose in a 512 MB container OOM-kills the judge server itself, so the
+# effective limit is capped to half the container (reported as limits.capped).
+MEMORY_CAP_MB = _env_int("GRADER_MEMORY_CAP_MB", max(64, int(RAM_MB * 0.5)))
+QUEUE_MAX = _env_int("GRADER_QUEUE_MAX", 25)
+# Worst case per submission = compile + every test at its limit, serially.
+OVERALL_TIMEOUT = float(os.environ.get("GRADER_OVERALL_TIMEOUT", "") or 0) or (
+    90.0 if CPU_QUOTA >= 2 else 240.0)
+
+print(f"[web] host: cpu={CPU_QUOTA:g} core(s), ram={RAM_MB}MB -> "
+      f"workers={JUDGE_WORKERS}, tests/submission={JUDGE_JOBS}, "
+      f"memory_cap={MEMORY_CAP_MB}MB, queue_max={QUEUE_MAX}, "
+      f"overall_timeout={OVERALL_TIMEOUT:g}s, "
+      f"sample_interval={grader.SAMPLE_INTERVAL * 1000:g}ms, "
+      f"compile_timeout={grader.COMPILE_TIMEOUT:g}s", file=sys.stderr)
 
 # ---- async judging (B9) ----
 # The HTTP path never judges inline: it queues a job and the client polls
 # /api/jobs/{id}. Workers live in the same process (one container deploy), each
-# running a job in a thread so uvicorn's loop stays responsive.
-# Default 1: on a 0.25-vCPU host two submissions judging at once steal CPU from
-# each other and turn wall-clock TLEs into noise. Raise it on a bigger box.
-JUDGE_WORKERS = max(1, int(os.environ.get("GRADER_JUDGE_WORKERS", "1")))
+# running a job in a thread so uvicorn's loop stays responsive. Concurrency and
+# limits are host derived — see the capacity block above.
 JOB_TTL_S = 3600              # in-memory job records kept this long (no-DB mode)
 JOB_MAX_AGE_S = 24 * 3600     # queued jobs older than this are dropped, not run
 REJUDGE_MAX = 200             # cap per /api/admin/rejudge call
@@ -946,6 +984,27 @@ def _problem_or_404(pid: str) -> grader.Problem:
     return p
 
 
+def _host_limits() -> dict:
+    return {"cpu_quota": CPU_QUOTA, "host_memory_mb": RAM_MB,
+            "judge_workers": JUDGE_WORKERS, "judge_jobs": JUDGE_JOBS,
+            "memory_cap_mb": MEMORY_CAP_MB, "queue_max": QUEUE_MAX,
+            "overall_timeout_s": OVERALL_TIMEOUT,
+            "sample_interval_ms": round(grader.SAMPLE_INTERVAL * 1000, 2),
+            "compile_timeout_s": grader.COMPILE_TIMEOUT}
+
+
+def _effective(prob: Optional[grader.Problem], time_limit: float,
+               memory_mb: int) -> tuple[float, int, dict]:
+    """Clamp a problem's declared limits to what this host can actually give."""
+    eff = min(memory_mb, MEMORY_CAP_MB)
+    limits = {
+        "time_s": time_limit, "memory_mb": eff, "declared_mb": memory_mb,
+        "capped": eff < memory_mb, "host_memory_mb": RAM_MB,
+        "host_cpu": CPU_QUOTA, "problem": prob.pid if prob else "",
+    }
+    return time_limit, eff, limits
+
+
 def run_submission(prob: grader.Problem, ext: str, source: str,
                    reveal: str = REVEAL_SAMPLES) -> dict:
     """Judge one submission (runs inside a worker thread, never inline in the loop).
@@ -954,6 +1013,13 @@ def run_submission(prob: grader.Problem, ext: str, source: str,
     that gets persisted is always reduced to REVEAL_SAMPLES by the caller.
     """
     samples = grader.sample_names(prob)
+    limits = _effective(prob, prob.time_limit, prob.memory_limit)[2]
+    if limits["capped"]:
+        # Judge against the host-appropriate ceiling, keep the declared value
+        # in the response so nobody wonders why 512 MB became 256 MB.
+        capped = replace(prob, memory_limit=limits["memory_mb"])
+    else:
+        capped = prob
     with tempfile.TemporaryDirectory(prefix="websub_") as tmp:
         workdir = Path(tmp)
         src = workdir / ("solution" + ext)
@@ -971,7 +1037,7 @@ def run_submission(prob: grader.Problem, ext: str, source: str,
                 "passed": 0, "total": len(prob.tests), "score": 0,
                 "counts": {"CE": len(prob.tests)},
                 "build_warnings": "", "compile_error": str(e)[:4000],
-                "limits": {"time_s": prob.time_limit, "memory_mb": prob.memory_limit},
+                "limits": limits, "memory_capped": limits["capped"],
                 "checker": prob.checker, "results": [], "samples": len(samples),
                 "tests_hash": grader.tests_hash(prob),
                 "grader_version": grader.GRADER_VERSION,
@@ -981,7 +1047,7 @@ def run_submission(prob: grader.Problem, ext: str, source: str,
 
         results: List[dict] = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=JUDGE_JOBS) as ex:
-            futs = [ex.submit(grader.judge_test, cmd, tc, prob, False, False)
+            futs = [ex.submit(grader.judge_test, cmd, tc, capped, False, False)
                     for tc in prob.tests]
             for tc, f in zip(prob.tests, futs):
                 v, wall, cpu, mem, detail, actual = f.result()
@@ -1012,7 +1078,7 @@ def run_submission(prob: grader.Problem, ext: str, source: str,
             "score": (100 * passed // total) if total else 0,
             "counts": counts, "build_warnings": (warnings or "")[:2000],
             "compile_error": "",
-            "limits": {"time_s": prob.time_limit, "memory_mb": prob.memory_limit},
+            "limits": limits, "memory_capped": limits["capped"],
             "checker": prob.checker,
             "results": _redact_results(results, reveal),
             "samples": len(samples), "hidden_tests": total - len(samples),
@@ -1040,11 +1106,13 @@ def _run_playground(prob: Optional[grader.Problem], ext: str, source: str,
             return {"verdict": "CE", "stdout": "", "stderr": str(e)[:4000],
                     "wall_s": round(time.perf_counter() - started, 4),
                     "cpu_s": 0.0, "peak_mb": 0.0, "reason": "compile-error",
-                    "build_warnings": "", "limits": {"time_s": time_limit,
-                                                     "memory_mb": memory_mb}}
+                    "build_warnings": "",
+                    "limits": _effective(prob, time_limit, memory_mb)[2],
+                    "memory_capped": memory_mb > MEMORY_CAP_MB}
         except SystemExit as e:
             return {"error": str(e)}
-        res = grader.run_one(cmd, stdin_data, time_limit, memory_mb)
+        _tl, eff_mem, limits = _effective(prob, time_limit, memory_mb)
+        res = grader.run_one(cmd, stdin_data, time_limit, eff_mem)
         reason = res.get("reason", "")
         if reason == "timeout":
             verdict = "TLE"
@@ -1068,7 +1136,8 @@ def _run_playground(prob: Optional[grader.Problem], ext: str, source: str,
             "wall_s": round(res.get("wall", 0.0), 4), "cpu_s": round(res.get("cpu", 0.0), 4),
             "peak_mb": round(res.get("peak_mb", 0.0), 2),
             "build_warnings": (warnings or "")[:2000],
-            "limits": {"time_s": time_limit, "memory_mb": memory_mb},
+            "limits": limits,
+            "memory_capped": limits["capped"],
         }
 
 
@@ -1203,6 +1272,13 @@ async def submit(
     if _active_jobs.get(email):
         raise HTTPException(status_code=409,
                             detail="you already have a submission judging, please wait")
+    if _queue_depth() >= QUEUE_MAX:
+        # One worker on a fractional core: letting the queue grow unbounded means
+        # everybody waits minutes. Shed load instead.
+        raise HTTPException(
+            status_code=503,
+            detail=f"judge queue is full ({QUEUE_MAX} jobs) — try again in a moment",
+            headers={"Retry-After": "30"})
 
     source, filename = await _read_source(language, code, file)
     display = await asyncio.to_thread(
@@ -1250,6 +1326,7 @@ def version() -> dict:
         "version": grader.GRADER_VERSION,
         "problems": len(PROBLEMS),
         "languages": sorted(LANGS.keys()),
+        "system": _host_limits(),
         "tests": {pid: {"hash": grader.tests_hash(p), "tests": len(p.tests),
                         "samples": list(p.samples)}
                   for pid, p in sorted(PROBLEMS.items())},

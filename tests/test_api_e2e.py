@@ -120,6 +120,47 @@ class ApiE2E(unittest.TestCase):
         self.assertEqual(thai["samples"], ["02"])
         self.assertGreater(thai["tests"], len(thai["samples"]))
 
+    def test_version_reports_host_capacity(self):
+        sysinfo = self.client.get("/api/version").json()["system"]
+        self.assertGreater(sysinfo["cpu_quota"], 0)
+        self.assertGreater(sysinfo["host_memory_mb"], 0)
+        self.assertGreaterEqual(sysinfo["judge_workers"], 1)
+        self.assertGreaterEqual(sysinfo["judge_jobs"], 1)
+        self.assertGreaterEqual(sysinfo["memory_cap_mb"], 64)
+        self.assertLessEqual(sysinfo["memory_cap_mb"], sysinfo["host_memory_mb"])
+        self.assertGreater(sysinfo["overall_timeout_s"], 0)
+
+    def test_memory_cap_is_applied_and_reported(self):
+        # Pretend the host only has room for 64 MB per test, as on the 0.5 GB box.
+        original = server.MEMORY_CAP_MB
+        server.MEMORY_CAP_MB = 64
+        try:
+            self.login(STUDENT_A)
+            job = self.judged("thai_time", THAI_REF)   # problem declares 256 MB
+            result = job["result"]
+            self.assertEqual(result["limits"]["memory_mb"], 64)
+            self.assertEqual(result["limits"]["declared_mb"], 256)
+            self.assertTrue(result["limits"]["capped"])
+            self.assertTrue(result["memory_capped"])
+            self.assertTrue(result["accepted"], "a tiny Python solution must still pass at 64 MB")
+            row = self.stored(job_id=job["id"])[0]
+            self.assertEqual(row["results"] and row["verdict"], "AC")
+        finally:
+            server.MEMORY_CAP_MB = original
+
+    def test_submit_sheds_load_when_the_queue_is_full(self):
+        original = server.QUEUE_MAX
+        server.QUEUE_MAX = 0        # any depth counts as full
+        try:
+            self.login("queuefull@example.com")
+            r = self.client.post("/api/submit", data={
+                "problem": "thai_time", "language": "python", "code": THAI_REF})
+            self.assertEqual(r.status_code, 503, r.text)
+            self.assertIn("queue", r.json()["detail"])
+            self.assertEqual(r.headers.get("Retry-After"), "30")
+        finally:
+            server.QUEUE_MAX = original
+
     def test_samples_are_public_hidden_tests_are_not(self):
         ok = self.client.get("/api/problems/thai_time/sample/02")
         self.assertEqual(ok.status_code, 200)

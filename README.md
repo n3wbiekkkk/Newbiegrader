@@ -135,13 +135,23 @@ python3 server.py
 leaderboard/สถิติจะ fallback ไปสแกนแค่ 2000/500 แถวล่าสุด (คะแนนเก่าจะหลุดจากบอร์ด)
 และคิวงานจะเป็น in-memory (หายเมื่อ restart)
 
-env ปรับสมรรถนะ/ความยุติธรรม:
+env ปรับสมรรถนะ/ความยุติธรรม — **ทุกตัวมี auto** จาก cgroup ของ container (ดู `GET /api/version` → `system`)
 
-| env | ค่าเริ่มต้น | ความหมาย |
+| env | auto (host 0.5 vCPU / 0.5 GB) | ความหมาย |
 |---|---|---|
-| `GRADER_JUDGE_WORKERS` | `1` | จำนวนงานที่ตรวจพร้อมกัน (ต่อ process) — เพิ่มเมื่อ host มี CPU เหลือ (ค่าเริ่มต้น 1 กัน TLE ปลอมจากการแย่ง CPU บน free tier) |
+| `GRADER_JUDGE_WORKERS` | `1` (`2` ถ้า cpu ≥ 2) | งานที่ตรวจพร้อมกัน — 0.5 CPU ตั้ง 1 เพื่อไม่ให้ TLE ปลอมจากการแย่ง CPU |
+| `GRADER_JUDGE_JOBS` | `1` (`4` ถ้า cpu ≥ 2) | เทสต์ที่รันพร้อมกันในหนึ่งงาน |
+| `GRADER_MEMORY_CAP_MB` | `ram × 0.5` = **256** | เพดานหน่วยความจำจริงต่อเทสต์ (โจทย์ที่ประกาศ 512MB จะถูกตัดเหลือ 256MB และรายงาน `limits.capped` ให้ผู้ใช้เห็น) — กันโจทย์อัดแรมจน OOM killer ฆ่า server |
+| `GRADER_QUEUE_MAX` | `25` | คิวเต็ม = ตอบ 503 + `Retry-After` (shed load) แทนที่จะให้คิวบวมเป็นชั่วโมง |
+| `GRADER_OVERALL_TIMEOUT` | `240`s (90 ถ้า cpu ≥ 2) | เวลาสูงสุดต่องาน (compile + ทุกเทสต์แบบ serial) |
+| `GRADER_COMPILE_TIMEOUT` | `90`s (60 ถ้า cpu ≥ 2) | timeout ตอน compile (C++ -O2 บน 0.5 CPU กินเวลาหลายสิบวิ) |
+| `GRADER_SAMPLE_INTERVAL` | `0.02`s (0.005 ถ้า cpu ≥ 2) | ความถี่ poll peak RSS |
 | `GRADER_SUBMIT_QUOTA` | `60/600` | โควตาส่งงานต่อคน (`N/วินาที`, `0` = ปิด) |
 | `GRADER_RUN_QUOTA` | `120/600` | โควตา playground `/api/run` |
+
+`python3 server.py` จะ print ค่าที่ใช้จริงตอน boot หนึ่งบรรทัด เช่น
+`[web] host: cpu=0.5 core(s), ram=512MB -> workers=1, tests/submission=1, memory_cap=256MB, ...`
+ถ้าย้ายไป host ใหญ่ขึ้นไม่ต้องแก้อะไร (auto ตาม cgroup) หรือ override รายตัวผ่าน env
 
 Migration (ถ้าสร้างตารางก่อนคอลัมน์ `name`): รันใน SQL Editor
 ```sql
