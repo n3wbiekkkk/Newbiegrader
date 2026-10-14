@@ -761,6 +761,51 @@ async def set_report_status(request: Request, rid: str) -> dict:
     return {"ok": True}
 
 
+_boot_time = time.monotonic()
+
+
+@app.get("/api/admin/overview")
+def admin_overview(request: Request) -> dict:
+    user = request.session.get("user") or {}
+    if not _is_admin(user.get("email", "")):
+        raise HTTPException(status_code=403, detail="admin only")
+    if _sb is None:
+        raise HTTPException(status_code=404, detail="supabase not configured")
+    try:
+        n_users = (_sb.table("users").select("email", count="exact").limit(1)
+                   .execute().count) or 0
+        subs = _sb.table("submissions").select(
+            "id,created_at,problem,name,language,verdict,accepted,score").order(
+            "created_at", desc=True).limit(500).execute().data or []
+        reps = _sb.table("reports").select("status", count="exact").limit(1).execute()
+        rep_open = _sb.table("reports").select("id", count="exact").eq(
+            "status", "open").limit(1).execute().count or 0
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"supabase query failed: {e}")
+    per_problem: dict = {}
+    for r in subs:
+        p = per_problem.setdefault(r["problem"],
+                                   {"subs": 0, "accepted": 0, "best": 0})
+        p["subs"] += 1
+        if r.get("accepted"):
+            p["accepted"] += 1
+        p["best"] = max(p["best"], r.get("score") or 0)
+    return {
+        "problems": len(PROBLEMS),
+        "users": n_users,
+        "submissions": len(subs),
+        "accepted": sum(1 for r in subs if r.get("accepted")),
+        "reports_open": rep_open,
+        "reports_total": (reps.count if reps else 0) or 0,
+        "per_problem": per_problem,
+        "recent": [{k: r.get(k) for k in
+                    ("id", "created_at", "problem", "name", "language",
+                     "verdict", "score")} for r in subs[:10]],
+        "system": {"uptime_s": int(time.monotonic() - _boot_time),
+                   "problems_loaded": sorted(PROBLEMS.keys())},
+    }
+
+
 @app.get("/api/leaderboard")
 def leaderboard(limit: int = 50) -> dict:
     if _sb is None:
