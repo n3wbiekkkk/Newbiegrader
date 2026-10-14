@@ -385,8 +385,7 @@ function renderArchive() {
     : `<span class="dim">ยังไม่มี tag</span>`;
   box.querySelectorAll("[data-tag]").forEach((b) => {
     b.onclick = () => {
-      state.filter.tag = b.dataset.tag;
-      $("f-tag").value = b.dataset.tag;
+      setTagFilter(b.dataset.tag);
       location.hash = "#/tasks";
     };
   });
@@ -1075,23 +1074,61 @@ function saveProblemsCache() {
   } catch (e) { /* ignore */ }
 }
 
+/* Canonical tag taxonomy (mirrors KNOWN_TAGS in grader.py). */
+const TAGS = [
+  "Implementation", "Math", "Ad-hoc", "String", "Data Structure", "DP",
+  "Sweepline", "Greedy", "DFS", "Bitmasks", "Binary Search", "Graph",
+  "DSU", "Sorting", "Sliding Window", "Divide and Conquer",
+  "Matrix Exponential", "Tree", "Fixed Parameter", "Hashing", "Geometry",
+  "NP", "Recursive", "Linear Algebra", "Matching",
+];
+
+function tagCounts() {
+  const c = {};
+  state.problems.forEach((p) => (p.tags || []).forEach((t) => {
+    c[t] = (c[t] || 0) + 1;
+  }));
+  return c;
+}
+
+function renderTagChips() {
+  const box = $("tag-chips");
+  if (!box) return;
+  const counts = tagCounts();
+  box.innerHTML = TAGS.map((t) =>
+    `<button class="tag-chip tag-click${state.filter.tag === t ? " on" : ""}" data-tag="${esc(t)}">${esc(t)}${counts[t] ? ` × ${counts[t]}` : ""}</button>`
+  ).join("");
+  box.querySelectorAll("[data-tag]").forEach((b) => {
+    b.onclick = () => setTagFilter(b.dataset.tag);
+  });
+}
+
+function setTagFilter(t) {
+  state.filter.tag = state.filter.tag === t ? "" : t;
+  renderTagChips();
+  if (document.querySelector("#view-tasks.active")) renderTasksTable();
+}
+
+function clearFilters() {
+  state.filter.q = "";
+  state.filter.diff = "";
+  state.filter.tag = "";
+  $("q").value = "";
+  $("f-diff").value = "";
+  renderTagChips();
+  renderTasksTable();
+}
+
 function buildFilterOptions() {
   const diffs = [...new Set(state.problems.map((p) => p.difficulty).filter(Boolean))].sort();
-  const tags = [...new Set(state.problems.flatMap((p) => p.tags || []))].sort();
-  const fd = $("f-diff"), ft = $("f-tag"), hf = $("hist-filter");
-  const keep = [fd.value, ft.value, hf.value];
+  const fd = $("f-diff"), hf = $("hist-filter");
+  const keep = [fd.value, hf.value];
   fd.querySelectorAll("option:not([value=''])").forEach((o) => o.remove());
-  ft.querySelectorAll("option:not([value=''])").forEach((o) => o.remove());
   hf.querySelectorAll("option:not([value=''])").forEach((o) => o.remove());
   diffs.forEach((d) => {
     const o = document.createElement("option");
     o.value = d; o.textContent = d;
     fd.appendChild(o);
-  });
-  tags.forEach((t) => {
-    const o = document.createElement("option");
-    o.value = t; o.textContent = t;
-    ft.appendChild(o);
   });
   state.problems.forEach((p) => {
     const o = document.createElement("option");
@@ -1099,17 +1136,18 @@ function buildFilterOptions() {
     o.textContent = `${p.id} — ${p.title}`;
     hf.appendChild(o);
   });
-  [fd, ft, hf].forEach((sel, i) => {
+  [fd, hf].forEach((sel, i) => {
     if ([...sel.options].some((o) => o.value === keep[i])) sel.value = keep[i];
   });
+  renderTagChips();
 }
 
 /* ---------------- init ---------------- */
 async function init() {
-  const fd = $("f-diff"), ft = $("f-tag"), hf = $("hist-filter");
+  const fd = $("f-diff"), hf = $("hist-filter");
   $("q").oninput = (e) => { state.filter.q = e.target.value; renderTasksTable(); };
   fd.onchange = (e) => { state.filter.diff = e.target.value; renderTasksTable(); };
-  ft.onchange = (e) => { state.filter.tag = e.target.value; renderTasksTable(); };
+  $("tag-clear").onclick = clearFilters;
   hf.onchange = loadHistory;
   $("hist-refresh").onclick = loadHistory;
   $("auth-go").onclick = doPasswordAuth;

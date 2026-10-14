@@ -81,6 +81,15 @@ class Problem:
     difficulty: str = ""        # easy | medium | hard (ไว้ filter)
     tags: list[str] = field(default_factory=list)
 
+# Canonical tag taxonomy (frontend Tag Filter renders exactly this list).
+KNOWN_TAGS = [
+    "Implementation", "Math", "Ad-hoc", "String", "Data Structure", "DP",
+    "Sweepline", "Greedy", "DFS", "Bitmasks", "Binary Search", "Graph",
+    "DSU", "Sorting", "Sliding Window", "Divide and Conquer",
+    "Matrix Exponential", "Tree", "Fixed Parameter", "Hashing", "Geometry",
+    "NP", "Recursive", "Linear Algebra", "Matching",
+]
+
 def load_problem(pid: str) -> Problem:
     pdir = PROBLEMS_DIR / pid
     if not pdir.is_dir():
@@ -95,6 +104,9 @@ def load_problem(pid: str) -> Problem:
     difficulty = str(cfg.get("difficulty", ""))
     _tags = cfg.get("tags", [])
     tags = [str(t) for t in _tags] if isinstance(_tags, list) else []
+    for t in tags:
+        if t not in KNOWN_TAGS:
+            print(c(f"WARNING: problem '{pid}' uses unknown tag '{t}'", C.YELLOW))
     desc_path = pdir / "statement.md"
     description = desc_path.read_text(encoding="utf-8") if desc_path.exists() else ""
 
