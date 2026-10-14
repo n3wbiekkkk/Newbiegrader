@@ -126,7 +126,10 @@ def _cached(key: str, ttl: int, build):
 
 def _bust_cache() -> None:
     _cache.pop("stats", None)
-    _cache.pop("leaderboard", None)
+    # leaderboard keys carry the limit ("leaderboard:50") — clear them all,
+    # otherwise scores stay stale for the full 60s TTL after every submit.
+    for k in [k for k in _cache if k.startswith("leaderboard")]:
+        _cache.pop(k, None)
 
 # Split deployment: same-origin via frontend /api proxy (Cloudflare Pages
 # Function or legacy vercel.json), so the browser never talks cross-origin.
