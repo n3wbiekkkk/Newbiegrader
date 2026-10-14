@@ -34,13 +34,84 @@ PROBLEMS_DIR = ROOT / "problems"
 
 # Brutal constants
 OUTPUT_LIMIT_BYTES = 32 * 1024 * 1024  # stdout เกินนี้ -> OLE (กัน print-loop อนันต์ถล่ม RAM)
-SAMPLE_INTERVAL = 0.005                # ความถี่ poll RSS (วินาที)
-
 # Judging semantics version: bump when a change could make the same submission
 # score differently (checker rules, limits handling, verdict mapping). Stored on
 # every submission together with the per-problem tests hash so old rows can be
 # told apart from new ones (and optionally rejudged).
 GRADER_VERSION = "2.0.0"
+
+# ---------- host capability (container aware) ----------
+def cgroup_root() -> str:
+    """Where to look for cgroup files. Overridable so the detection math can be
+    unit-tested (and for exotic mounts)."""
+    return (os.environ.get("GRADER_CGROUP_ROOT", "/sys/fs/cgroup").rstrip("/")
+            or "/sys/fs/cgroup")
+
+
+def _read_first(path: str) -> str:
+    try:
+        return Path(path).read_text().strip()
+    except (OSError, ValueError):
+        return ""
+
+
+def cpu_quota() -> float:
+    """vCPU allowance of this container (cgroup v2 -> v1 -> cpu_count).
+
+    Hosts are often a fraction of a core (e.g. 0.5), where judging two
+    submissions at once steals CPU from both and turns wall-clock TLEs into
+    noise, so the grader scales its concurrency from this number.
+    """
+    root = cgroup_root()
+    parts = _read_first(f"{root}/cpu.max").split()
+    if len(parts) == 2 and parts[0] != "max":
+        try:
+            quota, period = float(parts[0]), float(parts[1])
+            if quota > 0 and period > 0:
+                return max(0.1, quota / period)
+        except ValueError:
+            pass
+    try:
+        quota = float(_read_first(f"{root}/cpu/cpu.cfs_quota_us"))
+        period = float(_read_first(f"{root}/cpu/cpu.cfs_period_us"))
+        if quota > 0 and period > 0:
+            return max(0.1, quota / period)
+    except ValueError:
+        pass
+    return float(os.cpu_count() or 1)
+
+
+def ram_limit_mb() -> int:
+    """Memory ceiling of this container in MB (cgroup v2 -> v1 -> total RAM)."""
+    root = cgroup_root()
+    unlimited = 1 << 62
+    for path in (f"{root}/memory.max",
+                 f"{root}/memory/memory.limit_in_bytes"):
+        raw = _read_first(path)
+        if raw and raw != "max":
+            try:
+                val = int(raw)
+            except ValueError:
+                continue
+            if 0 < val < unlimited:
+                return max(64, val // (1024 * 1024))
+    try:
+        return max(64, (os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE"))
+                   // (1024 * 1024))
+    except (ValueError, OSError, AttributeError):
+        return 512
+
+
+CPU_QUOTA = cpu_quota()
+RAM_MB = ram_limit_mb()
+
+# Peak-RSS sampling: 5 ms is free on a real core, wasteful on a 0.5 vCPU box
+# (a thread waking 200x/s competes with the very process being measured).
+SAMPLE_INTERVAL = float(os.environ.get("GRADER_SAMPLE_INTERVAL", "0") or 0) or (
+    0.005 if CPU_QUOTA > 1 else 0.02)
+# Compiling C++ with -O2 can take tens of seconds on a fractional core.
+COMPILE_TIMEOUT = float(os.environ.get("GRADER_COMPILE_TIMEOUT", "0") or 0) or (
+    60.0 if CPU_QUOTA > 1 else 90.0)
 
 # ---------- colors ----------
 class C:
@@ -221,7 +292,7 @@ def prepare_command(src: Path, workdir: Path) -> tuple[list[str], str, str]:
         exe = workdir / "sol"
         r = subprocess.run([comp, "-O2", "-std=c++17", "-Wall", "-Wextra",
                             "-o", str(exe), str(src)],
-                           capture_output=True, text=True, cwd=str(workdir), env=judge_env(), timeout=30)
+                           capture_output=True, text=True, cwd=str(workdir), env=judge_env(), timeout=COMPILE_TIMEOUT)
         if r.returncode != 0:
             raise CompileError(r.stderr or r.stdout or "compile failed")
         return [str(exe)], f"{Path(comp).name} -O2 -Wall {src.name}", (r.stderr or "").strip()
@@ -232,7 +303,7 @@ def prepare_command(src: Path, workdir: Path) -> tuple[list[str], str, str]:
         exe = workdir / "sol"
         r = subprocess.run([comp, "-O2", "-std=c11", "-Wall", "-Wextra",
                             "-o", str(exe), str(src)],
-                           capture_output=True, text=True, cwd=str(workdir), env=judge_env(), timeout=30)
+                           capture_output=True, text=True, cwd=str(workdir), env=judge_env(), timeout=COMPILE_TIMEOUT)
         if r.returncode != 0:
             raise CompileError(r.stderr or r.stdout or "compile failed")
         return [str(exe)], f"{Path(comp).name} -O2 -Wall {src.name}", (r.stderr or "").strip()
@@ -240,7 +311,7 @@ def prepare_command(src: Path, workdir: Path) -> tuple[list[str], str, str]:
         if not shutil.which("javac") or not shutil.which("java"):
             raise SystemExit("javac/java not found")
         r = subprocess.run(["javac", "-Xlint:all", "-d", str(workdir), str(src)],
-                           capture_output=True, text=True, cwd=str(workdir), env=judge_env(), timeout=30)
+                           capture_output=True, text=True, cwd=str(workdir), env=judge_env(), timeout=COMPILE_TIMEOUT)
         if r.returncode != 0:
             raise CompileError(r.stderr or r.stdout or "compile failed")
         cls = src.stem
@@ -250,7 +321,7 @@ def prepare_command(src: Path, workdir: Path) -> tuple[list[str], str, str]:
             raise SystemExit("go not found")
         exe = workdir / "sol"
         r = subprocess.run(["go", "build", "-o", str(exe), str(src)],
-                           capture_output=True, text=True, cwd=str(workdir), env=judge_env(), timeout=60)
+                           capture_output=True, text=True, cwd=str(workdir), env=judge_env(), timeout=COMPILE_TIMEOUT)
         if r.returncode != 0:
             raise CompileError(r.stderr or r.stdout or "compile failed")
         return [str(exe)], f"go build {src.name}", (r.stderr or "").strip()
@@ -259,7 +330,7 @@ def prepare_command(src: Path, workdir: Path) -> tuple[list[str], str, str]:
             raise SystemExit("rustc not found")
         exe = workdir / "sol"
         r = subprocess.run(["rustc", "-O", "-o", str(exe), str(src)],
-                           capture_output=True, text=True, cwd=str(workdir), env=judge_env(), timeout=60)
+                           capture_output=True, text=True, cwd=str(workdir), env=judge_env(), timeout=COMPILE_TIMEOUT)
         if r.returncode != 0:
             raise CompileError(r.stderr or r.stdout or "compile failed")
         return [str(exe)], f"rustc -O {src.name}", (r.stderr or "").strip()

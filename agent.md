@@ -169,6 +169,13 @@ git push deploy HEAD:deploy
 17. **asyncio primitive ผูกกับ event loop**: `asyncio.Queue()` ที่สร้างตอน import (หรือใช้ข้าม TestClient ที่มี loop คนละตัว)
    จะค้างเงียบ ๆ — งานไม่ถูกกินเลยดูเหมือน "queued" ตลอด ใช้ `_queue()` ใน `server.py` (สร้างใหม่เมื่อ loop เปลี่ยน
    แล้วยก job ที่ค้างไปด้วย) ทุกครั้งที่ต้องแตะคิว
+18. **host เป็น container เศษเสี้ยว** (prod: 0.5 vCPU / 0.5 GB) → ห้าม hardcode concurrency/limit:
+   `grader.cpu_quota()` / `grader.ram_limit_mb()` อ่าน cgroup ให้, `server.py` แปลงเป็น `JUDGE_WORKERS/JUDGE_JOBS/
+   MEMORY_CAP_MB/QUEUE_MAX/OVERALL_TIMEOUT/COMPILE_TIMEOUT/SAMPLE_INTERVAL` (env override ได้, 0 = auto)
+   ดูค่าจริงได้ที่ `GET /api/version` → `system` และบรรทัด `[web] host: ...` ตอน boot
+   - memory cap ต่อเทสต์ = ram/2: โจทย์ที่ประกาศ 512MB (panda) จะรันจริงที่ 256MB และรายงาน `limits.capped: true`
+     (frontend โชว์ "(เครื่องตัดที่ X MB จาก Y MB)") — จำเป็น เพราะปล่อย 512MB ใน container 512MB = OOM killer ฆ่า server
+   - endpoint ที่เป็น `def` (sync) รันใน threadpool: **ห้ามเรียก `_queue()`** ที่นั่น (ไม่มี running loop) ใช้ `_queue_depth()`
 
 ## 11. Definition of done (ทุกงาน)
 

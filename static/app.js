@@ -1240,7 +1240,7 @@ function renderResults(d, secs) {
     }
     const counts = Object.entries(d.counts || {})
       .map(([k, n]) => `${esc(k)}:${n}`).join("  ");
-    html += `<div class="meta">${esc(counts)} &nbsp;|&nbsp; TL ${esc(String(d.limits.time_s))}s MEM ${esc(String(d.limits.memory_mb))}MB checker ${esc(d.checker)}</div>`;
+    html += `<div class="meta">${esc(counts)} &nbsp;|&nbsp; ${limitsMeta(d)} checker ${esc(d.checker)}</div>`;
     if (d.samples != null || d.hidden_tests != null) {
       const nS = Array.isArray(d.samples) ? d.samples.length : (Number(d.samples) || 0);
       const nH = d.hidden_tests != null
@@ -1357,6 +1357,15 @@ async function doRun() {
   }
 }
 
+function limitsMeta(d) {
+  const lim = d.limits || {};
+  let out = `TL ${esc(String(lim.time_s))}s MEM ${esc(String(lim.memory_mb))}MB`;
+  if (lim.capped) {
+    out += ` <span class="dim">(เครื่องตัดที่ ${esc(String(lim.memory_mb))}MB จาก ${esc(String(lim.declared_mb))}MB ที่โจทย์ประกาศ — แรมของเซิร์ฟเวอร์มี ${esc(String(lim.host_memory_mb))}MB)</span>`;
+  }
+  return out;
+}
+
 function renderRunResult(d) {
   const box = $("run-result");
   box.classList.remove("dim");
@@ -1367,7 +1376,7 @@ function renderRunResult(d) {
     html += `<p class="dim">${esc(verdictHint(d))}</p>`;
   }
   if (d.limits) {
-    html += `<div class="meta">TL ${esc(String(d.limits.time_s))}s · MEM ${esc(String(d.limits.memory_mb))}MB</div>`;
+    html += `<div class="meta">${limitsMeta(d)}</div>`;
   }
   html += `<div class="io-grid">` +
     ioBlockHtml("stdout", d.stdout) + ioBlockHtml("stderr", d.stderr) + `</div>`;
