@@ -12,7 +12,7 @@ Newbiegrader = เว็บสนามสอบเขียนโปรแก�
 - DB: Supabase Postgres (ตาราง `submissions`, `profiles`, `reports`) — ดู `supabase/schema.sql`
 - Login: Google OAuth (บังคับก่อนส่ง) + session cookie
 - Deploy แยก 2 ที่:
-  - Frontend → Vercel (Root Directory = `static`, preset **Other**, auto-deploy ทุก push `main`)
+  - Frontend → Cloudflare Pages (output = `static/`, auto-deploy ทุก push `main`)
   - Backend → justrunmy (Docker, push `HEAD:deploy` ไป remote พิเศษ แล้วมัน restart เอง)
 
 ## 2. URLs / ports
@@ -30,7 +30,7 @@ Newbiegrader = เว็บสนามสอบเขียนโปรแก�
 ```
 grader.py            # engine: run_one/judge_test/checkers/CLI (stdlib ล้วน)
 server.py            # FastAPI: /api/* + serve static/ (โหลด .env local ถ้ามี)
-static/              # index.html styles.css app.js (?v=N กัน cache) config.js vercel.json
+static/              # index.html styles.css app.js (?v=N กัน cache) config.js (+ vercel.json legacy ไม่ใช้แล้ว)
 functions/api/[[proxy]].js  # Cloudflare Pages Function: proxy /api ไป backend
 problems/<id>/       # statement.pdf statement.md config.json tests/*.in|*.out
 examples/*_ref.py    # reference solution ประจำข้อ (single source of truth ตอน gen test)
@@ -62,7 +62,7 @@ checker ที่มี: `token` (default), `exact` (byte, ผ่อน newline 
 
 ## 5. Workflow: แก้ frontend (`static/`)
 
-- ไม่ต้อง build/restart (StaticFiles อ่านจาก disk ทุก request) — แต่ Vercel ต้อง redeploy (auto จาก push `main`)
+- ไม่ต้อง build/restart (StaticFiles อ่านจาก disk ทุก request) — แต่ Pages ต้อง redeploy (auto จาก push `main`)
 - **ทุกครั้งที่แก้ `app.js`/`styles.css` ให้ bump `?v=N` ใน `index.html`** (กัน browser cache ค้าง) — เลขปัจจุบันดูในไฟล์
 - ห้ามใช้ emoji ใน UI — icon ใช้ SVG sprite (`<symbol id="i-*">` ใน `index.html` + helper `icon()` ใน `app.js`)
 - หลังแก้: `node --check static/app.js` + สคริปต์เช็คว่า `$("...")` ทุกตัวมี id ใน HTML (ดูตัวอย่างในประวัติ commit "UI/UX polish")
@@ -80,7 +80,7 @@ c.post("/api/auth/register", json={"email": "test@example.com", "password": "tes
 ```
 (ห้าม forge cookie เอง: session ใช้ Starlette SessionMiddleware + one-time token ผ่าน `/api/auth/finish`)
 - Supabase local test: ตั้ง `SUPABASE_URL` + `SUPABASE_KEY` (service_role) ใน env แล้วเทส **ห้ามลืมลบข้อมูลเทส** (delete by id/email ทันทีหลังเทส, เช็ค count กลับเท่าเดิม)
-- Session ใช้ `ng_session` (HttpOnly, SameSite=None/Secure ใน prod) — flow เต็ม: `/api/auth/login` → Google → `/api/auth/callback` (ผ่าน Vercel proxy เพื่อให้ session อยู่ origin เดียวกัน) → mint one-time token → `/api/auth/finish` ตั้ง cookie first-party → redirect หน้าเว็บ
+- Session ใช้ `ng_session` (HttpOnly, SameSite=lax + Secure ใน prod — same-origin ผ่าน Pages proxy เลยไม่ต้องใช้ None) — flow เต็ม: `/api/auth/login` → Google → `/api/auth/callback` (ผ่าน Pages Function proxy เพื่อให้ session อยู่ origin เดียวกัน) → mint one-time token → `/api/auth/finish` ตั้ง cookie first-party → redirect หน้าเว็บ
 - CORS: `allow_methods` ต้องครอบคลุม method ที่ frontend ใช้ (เคยลืม PUT จนปุ่ม settings พัง) + `allow_credentials=True`
 - `ADMIN_EMAILS` default = เมลเจ้าของในโค้ด (override ผ่าน env ได้)
 
@@ -96,7 +96,7 @@ git push deploy HEAD:deploy
 ```
 - หลัง push backend รอ ~45วิ แล้ว verify: `curl https://grader.n.onjrnm.vip/api/health`
 - ถ้า push แล้ว error "image built on different server": รอ 1 นาที push ซ้ำ (empty commit ได้) ถ้ายังพังให้ user กด recreate ที่ panel
-- Vercel: ถ้าหน้าเว็บไม่อัปเดต ให้ user hard refresh (Ctrl+Shift+R)
+- Pages: ถ้าหน้าเว็บไม่อัปเดต ให้ user hard refresh (Ctrl+Shift+R)
 
 ## 8. Secrets (ชื่อเท่านั้น — ห้ามเขียนค่าลงไฟล์/chat/repo)
 
@@ -126,9 +126,9 @@ git push deploy HEAD:deploy
 5. Expected output ของ mana ต้องตรง format เป๊ะทั้ง 2 ภาษา (เคย cross-check Python `.2f` vs C++ `setprecision(2)` ครบ 10 ข้อ)
 6. Free-tier CPU (0.25) ทำให้ Python TLE ข้อใหญ่ที่เครื่องแรงผ่าน — C++ คือเกณฑ์ยุติธรรม (ยึด TL ตาม PDF)
 7. Browser cache JS เก่า → user บ่นช้า/เพี้ยนทั้งที่ deploy แล้ว — bump `?v=` + ให้ hard refresh
-8. Third-party cookie โดนบล็อกในเบราว์เซอร์ใหม่ → login ต้องผ่าน Vercel `/api` proxy + one-time token (ห้ามกลับไปใช้ cookie ข้าม origin)
+8. Third-party cookie โดนบล็อกในเบราว์เซอร์ใหม่ → login ต้องผ่าน Pages Function `/api` proxy + one-time token (ห้ามกลับไปใช้ cookie ข้าม origin)
 9. Google OAuth: redirect URI ต้องตรงตัวเป๊ะ + เพิ่มทุก origin ที่ใช้ (backend ตรง + ผ่าน proxy), consent screen ต้องมี test user หรือ publish ก่อน
-10. `vercel.json` อยู่ใน `static/` (เพราะ Root Directory = `static`), มีแค่ `rewrites` `/api/:path*` → backend
+10. `static/vercel.json` คือ legacy สมัย Vercel (ไม่ใช้แล้ว) — ปัจจุบัน proxy `/api/:path*` → backend คือ `functions/api/[[proxy]].js` บน Pages
 11. Push justrunmy ใช้ `HEAD:deploy` (branch แยกจาก `main`, ไม่มีผลกับ GitHub)
 
 ## 11. Definition of done (ทุกงาน)
