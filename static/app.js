@@ -1172,7 +1172,7 @@ async function init() {
   $("google-btn").onclick = () => {
     let next = "#/";
     try { next = sessionStorage.getItem("ng_next") || location.hash || "#/"; } catch (e) { /* ignore */ }
-    if (!next.startswith("#/")) next = "#/";
+    if (!next.startsWith("#/")) next = "#/";
     location.href = API + "/api/auth/login?" + new URLSearchParams({ next }).toString();
   };
   $("report-send").onclick = async () => {
