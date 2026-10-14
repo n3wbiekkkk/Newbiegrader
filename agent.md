@@ -103,6 +103,7 @@ git push deploy HEAD:deploy
 → อยู่บน justrunmy panel (env) เท่านั้น + local shell env ตอนเทส
 - ค่า local dev: ก็อป `.env.example` เป็น `.env` แล้วขอค่าจาก user (ดูจาก justrunmy panel) —
   `server.py` โหลด `.env` เองตอน start (env จริงชนะเสมอ), `.env` อยู่ใน `.gitignore` แล้ว
+  (เครื่อง dev นี้มี `.env` พร้อมค่าแล้ว — session ใหม่ใช้ได้เลยไม่ต้องขอซ้ำ)
 - ถ้า token/secret หลุดลง chat หรือ commit: ให้ user rotate ที่ต้นทางทันที (เช่น reset git
   credentials / สร้าง key ใหม่) เพราะลบออกจากประวัติไม่ได้ง่ายๆ
 
