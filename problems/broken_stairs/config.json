@@ -1,0 +1,1 @@
+{"title": "บันไดขั้นพัง (Broken Stairs)", "time_limit": 1.0, "memory_limit": 64, "checker": "token", "difficulty": "medium", "tags": ["DP", "Recursive"], "notice": "ข้อนี้ใช้วิธีใดก็ได้ ไม่บังคับฟังก์ชัน/recursion — ส่งโปรแกรมเต็มที่อ่าน input ตาม spec"}
