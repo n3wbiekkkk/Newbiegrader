@@ -172,6 +172,8 @@ python3 grader.py run aplusb examples/aplusb_correct.cpp   # C++ ก็ได้
 | `posn_server_passcode` | รหัสผ่านเซิร์ฟเวอร์ สอวน. | medium | 10 |
 | `warpz` | วาร์ปอวกาศ | easy | 10 |
 | `napprime` | Napprime นับจำนวนเฉพาะ (TL 0.5s / MEM 32MB) | easy | 10 |
+| `bake_a_cake` | อบเค้ก (TL 0.5s / MEM 32MB) | easy | 10 |
+| `min_distance` | ระยะทางรวมน้อยสุด (TL 1s / MEM 64MB) | medium | 10 |
 
 ## Verdicts
 `AC` ผ่าน / `WA` + diff (·=space) / `TLE` เกินเวลา / `MLE` หน่วยความจำ /
