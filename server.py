@@ -543,7 +543,8 @@ def problem_pdf(pid: str):
     f = grader.PROBLEMS_DIR / p.pid / "statement.pdf"
     if not f.is_file():
         raise HTTPException(status_code=404, detail="no PDF statement for this problem")
-    return FileResponse(str(f), media_type="application/pdf", filename=f"{p.pid}.pdf")
+    return FileResponse(str(f), media_type="application/pdf", filename=f"{p.pid}.pdf",
+                        content_disposition_type="inline")
 
 
 @app.post("/api/submit")
