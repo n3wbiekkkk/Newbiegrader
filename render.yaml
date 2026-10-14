@@ -1,12 +1,28 @@
-# Render Blueprint: one-click backend deploy (judge API + compiler toolchain).
-# Dashboard -> New -> Blueprint -> select repo. Then set GRADER_CORS_ORIGINS
-# to your Vercel frontend URL (e.g. https://gradernew.vercel.app).
+# Render Blueprint: backend deploy (judge API + compiler toolchain).
+# Dashboard -> New -> Blueprint -> select repo -> fill the secrets below.
+# Frontend (Cloudflare Pages) proxies same-origin /api to this service,
+# so GRADER_CORS_ORIGINS stays empty and SESSION_* keep code defaults
+# (SameSite=lax, Secure). Free plan spins down when idle (cold start ~1 min).
 services:
   - type: web
-    name: brutal-grader-api
+    name: newbiegrader-api
     runtime: docker
     plan: free
     healthCheckPath: /api/health
     envVars:
-      - key: GRADER_CORS_ORIGINS
+      - key: SUPABASE_URL
         sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_REDIRECT_URI
+        value: https://gradernew.pages.dev/api/auth/callback
+      - key: FRONTEND_URL
+        value: https://gradernew.pages.dev
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: ADMIN_EMAILS
+        value: sphetpitak@gmail.com
