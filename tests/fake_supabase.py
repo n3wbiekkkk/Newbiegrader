@@ -91,6 +91,8 @@ class _Query:
     def execute(self):
         rows = self._rows()
         if self._op == "select":
+            if self.table in ("leaderboard_scores", "problem_stats"):
+                self.db.check_view_columns(self.table, getattr(self, "_cols", "*"))
             out = [copy.deepcopy(r) for r in rows if self._match(r)]
             if self._order:
                 col, desc = self._order
@@ -144,11 +146,23 @@ class FakeSupabase:
     """
 
     def __init__(self, columns: dict | None = None, missing: set | None = None,
-                 views: bool = True):
+                 views: bool = True, view_columns: set | None = None):
         self.tables: dict = {}
         self.columns = columns or {}
         self.missing = missing or set()
         self.views = views
+        # Columns the aggregate views expose (prod had a leaderboard_scores
+        # without `name` for a while, so tests need to ask for a missing one).
+        self.view_columns = view_columns or {"user_email", "problem", "best",
+                                            "accepted", "last_at", "name"}
+
+    def check_view_columns(self, table: str, cols: object) -> None:
+        if not isinstance(cols, str) or cols.strip() in ("", "*"):
+            return
+        missing = [c.strip() for c in cols.split(",")
+                   if c.strip() and c.strip() not in self.view_columns]
+        if missing:
+            raise Exception(f'column "{missing[0]}" does not exist')
 
     def table(self, name):
         if name in self.missing:
@@ -171,16 +185,24 @@ class FakeSupabase:
         if not self.views:
             raise Exception('relation "public.leaderboard_scores" does not exist')
         agg: dict = {}
+        newest: dict = {}
         for r in self.tables.get("submissions", []):
             email = r.get("user_email") or ""
             if not email:
                 continue
             key = (email, r.get("problem") or "")
             cur = agg.setdefault(key, {"user_email": email, "problem": key[1],
-                                       "best": 0, "accepted": False, "last_at": ""})
+                                       "best": 0, "accepted": False, "last_at": "",
+                                       "name": ""})
             cur["best"] = max(cur["best"], r.get("score") or 0)
             cur["accepted"] = cur["accepted"] or bool(r.get("accepted"))
-            cur["last_at"] = max(cur["last_at"], str(r.get("created_at") or ""))
+            at = str(r.get("created_at") or "")
+            cur["last_at"] = max(cur["last_at"], at)
+            name = (r.get("name") or "").strip()
+            # mirror the SQL: newest non-empty name wins
+            if name and at >= newest.get(key, ""):
+                newest[key] = at
+                cur["name"] = name
         return list(agg.values())
 
     def problem_stats(self):

@@ -64,10 +64,12 @@ class ApiE2E(unittest.TestCase):
 
     # ---------- helpers ----------
     def setUp(self):
-        # The API rate-limits auth per client IP; the suite logs in many times
-        # from the same fake IP, so start each test with a clean window.
+        # The API rate-limits auth; the suite logs in many times from the same
+        # fake IP, so start each test with clean windows.
         server._login_tries.clear()
+        server._account_tries.clear()
         server._quota_hits.clear()
+        server._cache.clear()
 
     def login(self, email: str, name: str = "Tester") -> None:
         self.client.cookies.clear()
@@ -378,6 +380,92 @@ class ApiE2E(unittest.TestCase):
         self.assertGreater(mine[0]["matches"], 10)
         self.assertEqual(mine[0]["language"], "python")
 
+    def test_leaderboard_shows_names_not_question_marks(self):
+        # Regression: the all-time view carried no name, so everyone without a
+        # Settings display name showed up as "?".
+        old_subs = self.fake.tables.get("submissions")
+        old_profiles = self.fake.tables.get("profiles")
+        self.fake.tables["submissions"] = [
+            {"id": "s1", "user_email": "alice@example.com", "name": "Alice Wong",
+             "problem": "thai_time", "score": 100, "accepted": True,
+             "created_at": "2026-10-01T00:00:00+00:00"},
+            {"id": "s2", "user_email": "bob@example.com", "name": "",
+             "problem": "hanoi", "score": 40, "accepted": False,
+             "created_at": "2026-10-02T00:00:00+00:00"},
+            {"id": "s3", "user_email": "carol@example.com", "name": "Carol",
+             "problem": "hanoi", "score": 100, "accepted": True,
+             "created_at": "2026-10-03T00:00:00+00:00"},
+        ]
+        self.fake.tables["profiles"] = [
+            {"user_email": "carol@example.com", "display_name": "キャロル"}]
+        try:
+            top = self.client.get("/api/leaderboard").json()["top"]
+            by_name = {t["name"]: t for t in top}
+            self.assertIn("キャロル", by_name, top)        # Settings name wins over "Carol"
+            self.assertNotIn("Carol", by_name, top)
+            self.assertIn("Alice Wong", by_name, top)     # submission name survives
+            self.assertIn("bob", by_name, top)            # empty name -> email local part
+            self.assertNotIn("?", by_name, top)
+            self.assertEqual(by_name["キャロル"]["points"], 100)
+            self.assertEqual(by_name["bob"]["points"], 40)
+            self.assertEqual(by_name["bob"]["solved"], 0)
+        finally:
+            self.fake.tables["submissions"] = old_subs if old_subs is not None else []
+            self.fake.tables["profiles"] = old_profiles if old_profiles is not None else []
+
+    def test_leaderboard_names_survive_a_view_without_a_name_column(self):
+        # The deployed database may still have the older view: names must then
+        # come from the submissions scan instead of turning into "?".
+        original = self.fake.view_columns
+        self.fake.view_columns = {"user_email", "problem", "best", "accepted"}
+        old_subs = self.fake.tables.get("submissions")
+        self.fake.tables["submissions"] = [
+            {"id": "n1", "user_email": "legacy@example.com", "name": "Legacy Name",
+             "problem": "thai_time", "score": 100, "accepted": True,
+             "created_at": "2026-10-01T00:00:00+00:00"},
+        ]
+        try:
+            top = self.client.get("/api/leaderboard").json()["top"]
+            self.assertEqual([t["name"] for t in top], ["Legacy Name"], top)
+        finally:
+            self.fake.view_columns = original
+            self.fake.tables["submissions"] = old_subs if old_subs is not None else []
+
+    def test_login_limit_is_per_account_not_per_network(self):
+        # Through the proxy every visitor looks like one IP, so an IP-only limit
+        # locked out the whole site after 20 logins. Wrong passwords must only
+        # lock the account, and a success must clear that account's counter.
+        original = server.ACCOUNT_MAX_TRIES
+        server.ACCOUNT_MAX_TRIES = 2
+        try:
+            self.login("rate.limit.a@example.com")
+            self.client.cookies.clear()
+            server._account_tries.clear()   # registering consumed one slot
+            for _ in range(2):
+                r = self.client.post("/api/auth/password", json={
+                    "email": "rate.limit.a@example.com", "password": "wrongpass123"})
+                self.assertEqual(r.status_code, 401, r.text)
+            blocked = self.client.post("/api/auth/password", json={
+                "email": "rate.limit.a@example.com", "password": "testpass123"})
+            self.assertEqual(blocked.status_code, 429, blocked.text)
+            self.assertIn("account", blocked.json()["detail"])
+
+            # a different student on the same (shared) network is unaffected
+            other = self.client.post("/api/auth/register", json={
+                "email": "rate.limit.b@example.com", "password": "testpass123", "name": "B"})
+            self.assertEqual(other.status_code, 200, other.text)
+
+            # one wrong try then a success resets the counter for that account
+            server._account_tries.clear()
+            self.client.post("/api/auth/password", json={
+                "email": "rate.limit.a@example.com", "password": "wrongpass123"})
+            ok = self.client.post("/api/auth/password", json={
+                "email": "rate.limit.a@example.com", "password": "testpass123"})
+            self.assertEqual(ok.status_code, 200, ok.text)
+            self.assertNotIn("rate.limit.a@example.com", server._account_tries)
+        finally:
+            server.ACCOUNT_MAX_TRIES = original
+
     def test_admin_endpoints_forbidden_for_students(self):
         self.login(STUDENT_A)
         self.assertEqual(self.client.post("/api/admin/rejudge",
@@ -466,7 +554,9 @@ class PreMigrationFallback(unittest.TestCase):
 
     def setUp(self):
         server._login_tries.clear()
+        server._account_tries.clear()
         server._quota_hits.clear()
+        server._cache.clear()
 
     def _register(self, email: str, name: str) -> None:
         self.client.cookies.clear()

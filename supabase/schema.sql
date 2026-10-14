@@ -127,11 +127,15 @@ alter table contests enable row level security;
 -- A6: all-time aggregates. The API falls back to a bounded window when these
 -- views are missing, which silently drops old rows once data grows — so run
 -- this file.
+-- `name` = the newest non-empty display name that user used, so the leaderboard
+-- never shows "?" for someone who has submissions.
 create or replace view leaderboard_scores as
 select user_email, problem,
        max(score) as best,
        bool_or(accepted) as accepted,
-       max(created_at) as last_at
+       max(created_at) as last_at,
+       (array_agg(name order by created_at desc)
+        filter (where coalesce(name, '') <> ''))[1] as name
 from submissions
 where user_email <> ''
 group by user_email, problem;
