@@ -112,8 +112,12 @@ body {
 .report-row input[type="text"]:focus { outline: none; border-color: var(--text); }
 .report-item { padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
 .report-item:last-child { border-bottom: none; }
+.tagbar { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 16px; }
+#tag-chips { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; }
 .tag-click { cursor: pointer; font: inherit; }
 .tag-click:hover { border-color: var(--text); color: var(--text); }
+.tag-chip.on { border-color: var(--text); color: var(--text); font-weight: 700; }
+#tag-clear { flex: none; }
 #archive-tags { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
 .settings-row { margin: 14px 0; max-width: 420px; }
 .settings-row label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
