@@ -515,12 +515,15 @@ def languages() -> dict:
 
 @app.get("/api/problems")
 def list_problems() -> dict:
+    order = {"easy": 0, "medium": 1, "hard": 2}
+    ranked = sorted(PROBLEMS.values(),
+                    key=lambda p: (order.get((p.difficulty or "").lower(), 99), p.pid))
     return {"problems": [
         {"id": p.pid, "title": p.title, "time_limit": p.time_limit,
          "memory_limit": p.memory_limit, "checker": p.checker,
          "difficulty": p.difficulty, "tags": p.tags,
          "tests": len(p.tests)}
-        for p in PROBLEMS.values()
+        for p in ranked
     ]}
 
 
