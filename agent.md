@@ -13,14 +13,14 @@ Newbiegrader = เว็บสนามสอบเขียนโปรแก�
 - Login: Google OAuth (บังคับก่อนส่ง) + session cookie
 - Deploy แยก 2 ที่:
   - Frontend → Cloudflare Pages (output = `static/`, auto-deploy ทุก push `main`)
-  - Backend → justrunmy (Docker, push `HEAD:deploy` ไป remote พิเศษ แล้วมัน restart เอง)
+  - Backend → Render (Docker web service `newbiegrader-api`, auto-deploy ทุก push `main`)
 
 ## 2. URLs / ports
 
 | อะไร | ค่า |
 |---|---|
 | Production frontend | `https://gradernew.pages.dev` |
-| Production backend | `https://grader.n.onjrnm.vip` |
+| Production backend | `https://newbiegrader-api.onrender.com` |
 | Local dev | `http://127.0.0.1:8000` (`python3 server.py --port 8000`) |
 | GitHub | `sphetpitak-sudo/gradernew` branch `main` |
 | Supabase project | `synyixryyoytbdaxnmph.supabase.co` (region Tokyo) |
@@ -59,7 +59,7 @@ agent.md             # ไฟล์นี้
    - `examples/<id>_ref.py`: reference solution ที่ถูกต้อง
 3. Verify 3 ชั้น (บังคับ): (a) ตัวอย่างตรง PDF (b) gen logic กับ ref ตรงกัน byte-for-byte (c) cross-check อิสระ (เช่น greedy vs DP, Miller-Rabin + Pollard-Rho สำหรับ prime)
 4. Judge ref ผ่าน CLI ต้อง `ACCEPTED 10/10` + ลอง solution ผิดต้องได้ WA (กัน test หลวม)
-5. Restart local server (problems โหลดตอน boot) → เทสเว็บ → commit + push GitHub + push justrunmy (ข้อ 7)
+5. Restart local server (problems โหลดตอน boot) → เทสเว็บ → commit + push GitHub (Render auto-deploy)
 
 checker ที่มี: `token` (default), `exact` (byte, ผ่อน newline ท้ายไฟล์), `float` (tolerance 1e-6),
 `decimal2` (เฉพาะ mana: ทศนิยม 2 ตำแหน่งเท่านั้น แต่ไม่หัก space เกิน) — ดู `check_decimal2` ใน `grader.py`
@@ -91,29 +91,26 @@ c.post("/api/auth/register", json={"email": "test@example.com", "password": "tes
 ## 7. Workflow: deploy
 
 ```bash
-# 1) GitHub (frontend auto-redeploy)
+# GitHub เดียวจบ (Pages + Render auto-deploy คู่กัน)
 git add -A && git commit -m "..." && git push origin main
-# 2) Backend (เฉพาะเมื่อแก้ server.py/grader.py/requirements/Dockerfile/problems/)
-#    ใช้ remote ชื่อ deploy (ตั้งครั้งเดียวในเครื่องนี้ ไม่ถูก commit):
-#    git remote add deploy <git-url จาก justrunmy panel>
-git push deploy HEAD:deploy
 ```
-- หลัง push backend รอ ~45วิ แล้ว verify: `curl https://grader.n.onjrnm.vip/api/health`
-- ถ้า push แล้ว error "image built on different server": รอ 1 นาที push ซ้ำ (empty commit ได้) ถ้ายังพังให้ user กด recreate ที่ panel
-- Pages: ถ้าหน้าเว็บไม่อัปเดต ให้ user hard refresh (Ctrl+Shift+R)
+- หลัง push รอ Render build (~2-5 นาที, ดู status ที่ dashboard) แล้ว verify:
+  `curl https://gradernew.pages.dev/api/health` (ผ่าน Pages proxy)
+- Render free จะ spin down ตอน idle → request แรกช้า ~1 นาที ถือว่าปกติ
+- ถ้าเว็บไม่อัปเดต ให้ user hard refresh (Ctrl+Shift+R)
+- ถ้าแก้แค่ `functions/api/[[proxy]].js` (เปลี่ยน URL backend): push GitHub อย่างเดียว ไม่ต้องแตะ Render
 
 ## 8. Secrets (ชื่อเท่านั้น — ห้ามเขียนค่าลงไฟล์/chat/repo)
 
 `SUPABASE_URL`, `SUPABASE_KEY` (service_role), `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`,
 `GOOGLE_REDIRECT_URI`, `FRONTEND_URL`, `SESSION_SECRET`, `ADMIN_EMAILS`, `GRADER_CORS_ORIGINS`
-→ อยู่บน justrunmy panel (env) เท่านั้น + local shell env ตอนเทส
-- ค่า local dev: ก็อป `.env.example` เป็น `.env` แล้วขอค่าจาก user (ดูจาก justrunmy panel) —
+→ อยู่บน Render dashboard (Environment) เท่านั้น + local shell env ตอนเทส
+- ค่า local dev: ก็อป `.env.example` เป็น `.env` แล้วขอค่าจาก user (ดูจาก Render dashboard) —
   `server.py` โหลด `.env` เองตอน start (env จริงชนะเสมอ), `.env` อยู่ใน `.gitignore` แล้ว
   (เครื่อง dev นี้มี `.env` พร้อมค่าแล้ว — session ใหม่ใช้ได้เลยไม่ต้องขอซ้ำ)
 - ถ้า token/secret หลุดลง chat หรือ commit: ให้ user rotate ที่ต้นทางทันที (เช่น reset git
   credentials / สร้าง key ใหม่) เพราะลบออกจากประวัติไม่ได้ง่ายๆ
-- ด่วน: git credentials ของ justrunmy เคยหลุดในประวัติ (`9b66670..c7361bd`, ลบออกแล้วแต่ยังอยู่ใน history)
-  → ให้ user reset ที่ justrunmy panel แล้ว `git remote set-url deploy <url ใหม่>` ในเครื่องนี้
+- ประวัติ: เลิกใช้ justrunmy แล้ว (ย้ายมา Render) — remote `deploy` ในเครื่องนี้ลบแล้ว
 
 ## 9. Database
 
@@ -133,12 +130,12 @@ git push deploy HEAD:deploy
 8. Third-party cookie โดนบล็อกในเบราว์เซอร์ใหม่ → login ต้องผ่าน Pages Function `/api` proxy + one-time token (ห้ามกลับไปใช้ cookie ข้าม origin)
 9. Google OAuth: redirect URI ต้องตรงตัวเป๊ะ + เพิ่มทุก origin ที่ใช้ (backend ตรง + ผ่าน proxy), consent screen ต้องมี test user หรือ publish ก่อน
 10. `static/vercel.json` คือ legacy สมัย Vercel (ไม่ใช้แล้ว) — ปัจจุบัน proxy `/api/:path*` → backend คือ `functions/api/[[proxy]].js` บน Pages
-11. Push justrunmy ใช้ `HEAD:deploy` (branch แยกจาก `main`, ไม่มีผลกับ GitHub)
+11. Deploy ทั้งหมดผ่าน GitHub `main` (ไม่มี branch แยก): Pages (frontend+proxy) กับ Render (backend) auto-deploy คู่กัน
 
 ## 11. Definition of done (ทุกงาน)
 
 - [ ] รัน/เทสจริงผ่าน (ไม่ใช่แค่อ่านโค้ด): CLI judge / curl endpoint / สคริปต์ verify
 - [ ] ข้อมูลเทสใน production ลบเกลี้ยง (เช็ค count)
-- [ ] commit + push GitHub (และ justrunmy ถ้าแตะ backend/problems)
+- [ ] commit + push GitHub (Render + Pages auto-deploy เอง)
 - [ ] verify บน production หลัง deploy (health + ฟีเจอร์ที่แก้)
 - [ ] สรุปสั้นๆ ภาษาไทย ไม่มีอีโมจิ
