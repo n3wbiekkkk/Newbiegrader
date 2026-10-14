@@ -469,13 +469,20 @@ function fillTaskDetail(p) {
   $("task-meta").textContent =
     `TL ${p.time_limit}s | MEM ${p.memory_limit}MB | checker ${p.checker} | ${p.tests} tests` +
     (extra ? ` | ${extra}` : "");
-  $("task-body").innerHTML = renderMd(p.statement || "(no statement)");
-  const pl = $("pdf-link");
+  const pdfUrl = `${API}/api/problems/${encodeURIComponent(p.id)}/pdf`;
   if (p.has_pdf) {
-    pl.classList.remove("hidden");
-    $("pdf-anchor").href = `${API}/api/problems/${encodeURIComponent(p.id)}/pdf`;
+    const fr = $("pdf-frame");
+    fr.classList.remove("hidden");
+    if (fr.dataset.src !== pdfUrl) {
+      fr.dataset.src = pdfUrl;
+      fr.src = pdfUrl;
+    }
+    $("task-body").classList.add("hidden");
   } else {
-    pl.classList.add("hidden");
+    $("pdf-frame").classList.add("hidden");
+    const tb = $("task-body");
+    tb.classList.remove("hidden");
+    tb.innerHTML = renderMd(p.statement || "(no statement)");
   }
 }
 
