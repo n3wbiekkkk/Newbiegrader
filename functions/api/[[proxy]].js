@@ -3,7 +3,7 @@
 // Why proxy: keeps login cookies first-party, so auth works even when
 // browsers block third-party cookies. Query strings are forwarded as-is.
 // Redirects pass through untouched (Google login + finish flow need them).
-const BACKEND = "https://grader.n.onjrnm.vip";
+const BACKEND = "https://newbiegrader-api.onrender.com";
 
 export async function onRequest(context) {
   const url = new URL(context.request.url);
