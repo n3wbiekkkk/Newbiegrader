@@ -167,6 +167,11 @@ python3 grader.py run napprime examples/napprime_ref.cpp   # C++ ก็ได้
 | `bake_a_cake` | อบเค้ก (TL 0.5s / MEM 32MB) | easy | 10 |
 | `min_distance` | ระยะทางรวมน้อยสุด (TL 1s / MEM 64MB) | medium | 10 |
 | `largest_rectangle` | สี่เหลี่ยมใหญ่สุดในฮิสโตแกรม (TL 1s / MEM 64MB) | medium | 10 |
+| `blood_moon` | คืนพระจันทร์สีเลือด (ใช้อะไรก็ได้ ไม่บังคับ pointer) | easy | 10 |
+| `dna` | จำลอง DNA (ใช้อะไรก็ได้ ไม่บังคับ pointer) | easy | 10 |
+| `flashback` | ไม่ได้ลืมแค่ไม่ได้เจอ | medium | 10 |
+| `rotation` | เธอหมุนรอบฉัน ฉันหมุนรอบเธอ | easy | 10 |
+| `shadow` | Shadow เงาปะทะมังกร (TL 1s / MEM 64MB) | easy | 10 |
 
 ## Verdicts
 `AC` ผ่าน / `WA` + diff (·=space) / `TLE` เกินเวลา / `MLE` หน่วยความจำ /

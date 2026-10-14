@@ -514,6 +514,13 @@ const DETAIL_CACHE_TTL = 60 * 1000;
 
 function fillTaskDetail(p) {
   $("task-title").textContent = `${p.id} — ${p.title}`;
+  const nz = $("task-notice");
+  if (p.notice) {
+    nz.textContent = p.notice;
+    nz.classList.remove("hidden");
+  } else {
+    nz.classList.add("hidden");
+  }
   const extra = [p.difficulty, ...((p.tags || []))].filter(Boolean).join(" · ");
   $("task-meta").textContent =
     `TL ${p.time_limit}s | MEM ${p.memory_limit}MB | checker ${p.checker} | ${p.tests} tests` +

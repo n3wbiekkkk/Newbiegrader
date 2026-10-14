@@ -284,6 +284,11 @@ table.tasks-table tbody tr:hover td { background: var(--panel2); }
 .backlink:hover { text-decoration: underline; }
 .task-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 14px; flex-wrap: wrap; }
 .task-head h2 { margin: 0 0 4px; font-size: 24px; letter-spacing: -0.5px; }
+.notice {
+  margin-top: 10px; padding: 10px 14px; border-radius: 8px; font-size: 13.5px;
+  background: #fff8e6; border: 1px solid #f0dfae; color: #7a5b00;
+}
+[data-theme="dark"] .notice { background: #231a05; border-color: #6b5518; color: #f0d48a; }
 #pdf-frame { width: 100%; height: 88vh; min-height: 700px; border: 1px solid var(--border); border-radius: 10px; background: #fff; }
 .pane-h { margin: 20px 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); font-weight: 600; }
 .pane-h:first-of-type { margin-top: 4px; }
