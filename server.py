@@ -89,6 +89,22 @@ DETAIL_HEAD = 4000            # max chars of detail/diff sent to frontend
 
 app = FastAPI(title="Newbiegrader API", version="1.0.0")
 app.add_middleware(GZipMiddleware, minimum_size=500)
+
+
+@app.middleware("http")
+async def _security_headers(request: Request, call_next):
+    resp = await call_next(request)
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["X-Frame-Options"] = "SAMEORIGIN"
+    resp.headers["Referrer-Policy"] = "no-referrer"
+    resp.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    resp.headers["Content-Security-Policy"] = (
+        "default-src 'self'; script-src 'self'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src https://fonts.gstatic.com; img-src 'self' data: https:; "
+        "frame-src 'self'; frame-ancestors 'self'; "
+        "form-action 'self' https://accounts.google.com")
+    return resp
 submit_sem = asyncio.Semaphore(MAX_PARALLEL_SUBMITS)
 _active_submits: set = set()  # user emails with a judging currently running
 
@@ -112,8 +128,11 @@ def _bust_cache() -> None:
     _cache.pop("stats", None)
     _cache.pop("leaderboard", None)
 
-# Split deployment (frontend on Vercel etc.): allow the static origin, e.g.
-#   GRADER_CORS_ORIGINS=https://gradernew.vercel.app
+# Split deployment: same-origin via frontend /api proxy (Cloudflare Pages
+# Function or legacy vercel.json), so the browser never talks cross-origin.
+# GRADER_CORS_ORIGINS stays empty in prod (e.g. https://gradernew.pages.dev
+# needs no CORS). Set it only when serving the frontend from a host WITHOUT
+# the /api proxy, e.g. GRADER_CORS_ORIGINS=https://gradernew.pages.dev
 # Empty (default) = same-origin only, no CORS headers.
 _cors_origins = [o.strip() for o in
                  os.environ.get("GRADER_CORS_ORIGINS", "").split(",") if o.strip()]
@@ -123,7 +142,7 @@ if _cors_origins:
         allow_origins=_cors_origins,
         allow_methods=["GET", "POST", "PUT", "DELETE"],
         allow_headers=["*"],
-        allow_credentials=True,  # login session cookie is cross-origin (vercel -> backend)
+        allow_credentials=True,  # kept for non-proxied hosts; proxied prod is same-origin
     )
 
 # ---- Supabase (optional): submission history + stats ----
@@ -141,6 +160,12 @@ if _sb_url and _sb_key:
         except Exception as e:
             print(f"[web] supabase disabled: {e}", file=sys.stderr)
             _sb = None
+
+
+def _db_err(e: Exception) -> HTTPException:
+    """Log the real DB error server-side, return a generic 500 to clients."""
+    print(f"[web] database error: {e}", file=sys.stderr)
+    return HTTPException(status_code=500, detail="database error")
 
 
 async def _store_submission(row: dict) -> None:
@@ -162,15 +187,15 @@ async def _store_submission(row: dict) -> None:
 #   GOOGLE_REDIRECT_URI (must match the Authorised redirect URI exactly),
 #   FRONTEND_URL (where to send the user after login),
 #   SESSION_SECRET (random string; sessions reset on restart if unset),
-#   SESSION_SAMESITE (none for cross-origin prod, lax for local http),
+#   SESSION_SAMESITE (lax: same-origin proxy prod and local http),
 #   SESSION_SECURE (true in prod, false for local http).
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "").strip()
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "").strip()
 GOOGLE_REDIRECT_URI = os.environ.get(
     "GOOGLE_REDIRECT_URI",
-    "https://gradernew-static.vercel.app/api/auth/callback").strip()
+    "https://gradernew.pages.dev/api/auth/callback").strip()
 FRONTEND_URL = os.environ.get(
-    "FRONTEND_URL", "https://gradernew-static.vercel.app").rstrip("/")
+    "FRONTEND_URL", "https://gradernew.pages.dev").rstrip("/")
 
 ADMIN_EMAILS = {e.strip().lower() for e in os.environ.get(
     "ADMIN_EMAILS", "sphetpitak@gmail.com").split(",") if e.strip()}
@@ -193,7 +218,7 @@ app.add_middleware(
     secret_key=_session_secret,
     session_cookie="ng_session",
     max_age=30 * 24 * 3600,
-    same_site=os.environ.get("SESSION_SAMESITE", "none"),
+    same_site=os.environ.get("SESSION_SAMESITE", "lax"),
     https_only=os.environ.get("SESSION_SECURE", "true").lower() != "false",
 )
 
@@ -321,10 +346,18 @@ _login_tries: Dict[str, list] = {}
 
 
 def _client_ip(request: Request) -> str:
+    # Trust order: Cloudflare's overwritten header first, else the LAST
+    # X-Forwarded-For entry (trusted proxies append the real client IP at the
+    # end; attacker-supplied values are prepended and must be ignored), else
+    # the direct peer. Never use the FIRST XFF entry: it is spoofable and
+    # would let attackers bypass the login rate limit by rotating it.
+    cf = request.headers.get("cf-connecting-ip", "").strip()
+    if cf:
+        return cf[:64]
     fwd = request.headers.get("x-forwarded-for", "")
     if fwd:
-        return fwd.split(",")[0].strip()
-    return (request.client.host if request.client else "?") or "?"
+        return fwd.split(",")[-1].strip()[:64]
+    return ((request.client.host if request.client else "?") or "?")[:64]
 
 
 def _check_rate_limit(request: Request) -> None:
@@ -381,7 +414,7 @@ async def auth_register(request: Request) -> dict:
     try:
         exists = _sb.table("users").select("email").eq("email", email).limit(1).execute()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"supabase query failed: {e}")
+        raise _db_err(e)
     if exists.data:
         raise HTTPException(status_code=409, detail="email already registered")
     pw_hash = await asyncio.to_thread(_hash_password, password)
@@ -389,7 +422,7 @@ async def auth_register(request: Request) -> dict:
         _sb.table("users").insert(
             {"email": email, "name": name, "password_hash": pw_hash}).execute()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"supabase write failed: {e}")
+        raise _db_err(e)
     request.session["user"] = {"email": email, "name": name, "picture": "",
                                "provider": "password"}
     return {"ok": True, "user": request.session["user"]}
@@ -409,7 +442,7 @@ async def auth_password(request: Request) -> dict:
         res = _sb.table("users").select("email,name,password_hash").eq(
             "email", email).limit(1).execute()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"supabase query failed: {e}")
+        raise _db_err(e)
     rows = res.data or []
     user = rows[0] if rows else None
     ok = await asyncio.to_thread(_verify_password, password,
@@ -454,7 +487,7 @@ def get_profile(request: Request) -> dict:
             base["default_language"] = rows[0].get("default_language", "") or ""
         return {"configured": True, "profile": base}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"supabase query failed: {e}")
+        raise _db_err(e)
 
 
 @app.put("/api/profile")
@@ -477,7 +510,7 @@ async def update_profile(request: Request) -> dict:
     try:
         _sb.table("profiles").upsert(row, on_conflict="user_email").execute()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"supabase write failed: {e}")
+        raise _db_err(e)
     return {"ok": True, "profile": {"email": user["email"], **row}}
 
 # Preload problems at startup (fail fast on broken tests, skip with warning).
@@ -506,6 +539,11 @@ def run_submission(prob: grader.Problem, ext: str, source: str) -> dict:
         workdir = Path(tmp)
         src = workdir / ("solution" + ext)
         src.write_text(source, encoding="utf-8")
+        try:  # sandbox runs the child as `nobody`: it must traverse/read these
+            os.chmod(workdir, 0o755)
+            os.chmod(src, 0o644)
+        except OSError:
+            pass
         try:
             cmd, _disp, warnings = grader.prepare_command(src, workdir)
         except grader.CompileError as e:
@@ -715,18 +753,21 @@ def history(request: Request, problem: Optional[str] = None, limit: int = 20,
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"supabase query failed: {e}")
+        raise _db_err(e)
     return {"configured": True, "submissions": res.data or []}
 
 
 @app.get("/api/history/{sid}")
-def history_detail(sid: str) -> dict:
+def history_detail(request: Request, sid: str) -> dict:
+    user = request.session.get("user") or {}
+    if not user.get("email"):
+        raise HTTPException(status_code=401, detail="login required")
     if _sb is None:
         raise HTTPException(status_code=404, detail="history not configured")
     try:
         res = _sb.table("submissions").select("*").eq("id", sid).limit(1).execute()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"supabase query failed: {e}")
+        raise _db_err(e)
     rows = res.data or []
     if not rows:
         raise HTTPException(status_code=404, detail="submission not found")
@@ -764,7 +805,7 @@ async def create_report(request: Request) -> dict:
             "user_email": user["email"], "name": name, "status": "open",
         }).execute()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"supabase write failed: {e}")
+        raise _db_err(e)
     rows = res.data or []
     return {"ok": True, "id": rows[0]["id"] if rows else None}
 
@@ -794,7 +835,7 @@ def list_reports(request: Request, mine: bool = False, all: bool = False,
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"supabase query failed: {e}")
+        raise _db_err(e)
     return {"configured": True, "reports": res.data or []}
 
 
@@ -815,7 +856,7 @@ async def set_report_status(request: Request, rid: str) -> dict:
     try:
         _sb.table("reports").update({"status": status}).eq("id", rid).execute()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"supabase write failed: {e}")
+        raise _db_err(e)
     return {"ok": True}
 
 
@@ -839,7 +880,7 @@ def admin_overview(request: Request) -> dict:
         rep_open = _sb.table("reports").select("id", count="exact").eq(
             "status", "open").limit(1).execute().count or 0
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"supabase query failed: {e}")
+        raise _db_err(e)
     per_problem: dict = {}
     for r in subs:
         p = per_problem.setdefault(r["problem"],
@@ -879,7 +920,7 @@ def _build_leaderboard(limit: int) -> dict:
             "problem,user_email,name,accepted,score,created_at").order(
             "created_at", desc=True).limit(2000).execute()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"supabase query failed: {e}")
+        raise _db_err(e)
     users: dict = {}
     for r in res.data or []:
         u = users.setdefault(r["user_email"], {"name": r.get("name") or "?",
@@ -921,7 +962,7 @@ def _build_stats() -> dict:
             "problem,accepted,score,user_email").order(
             "created_at", desc=True).limit(500).execute()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"supabase query failed: {e}")
+        raise _db_err(e)
     agg: dict = {}
     for r in res.data or []:
         p = agg.setdefault(r["problem"], {"subs": 0, "accepted": 0, "best": 0,
