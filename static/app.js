@@ -383,6 +383,7 @@ async function fetchMyBest() {
     state.myBest = best;
   } catch (e) {
     state.myBest = state.myBest || {};
+    state.myBestLoaded = false;  // retry on next view render
   }
 }
 
@@ -1219,6 +1220,8 @@ async function init() {
     apiGet("/api/problems").catch(() => null),
     refreshMe(),
   ]);
+  // session may have arrived after first paint: refresh session-dependent views
+  if (state.user && (location.hash || "#/") === "#/tasks") renderTasksTable();
   if (data && JSON.stringify(data.problems) !== JSON.stringify(state.problems)) {
     state.problems = data.problems;
     saveProblemsCache();
