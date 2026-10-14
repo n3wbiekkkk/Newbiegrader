@@ -1,0 +1,4 @@
+# Cloudflare Pages: proxy API calls to the judge backend (same-origin for the
+# browser, so login cookies stay first-party). Query strings are forwarded.
+# NOTE: for Vercel the equivalent rule lives in vercel.json.
+/api/*  https://grader.n.onjrnm.vip/api/:splat  200
