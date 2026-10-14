@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600;700&display=swap">
-<link rel="stylesheet" href="/styles.css?v=8">
+<link rel="stylesheet" href="/styles.css?v=9">
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -36,6 +36,7 @@
     <symbol id="i-back" viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></symbol>
     <symbol id="i-external" viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6M10 14L21 3"/></symbol>
+    <symbol id="i-contest" viewBox="0 0 24 24"><path d="M7 2l5 7 5-7"/><circle cx="12" cy="15" r="6"/><path d="M12 12.2l.9 1.9 2.1.3-1.5 1.4.4 2.1-1.9-1-1.9 1 .4-2.1L9 14.4l2.1-.3z"/></symbol>
   </defs>
 </svg>
 <header class="topbar">
@@ -45,6 +46,7 @@
     <a class="nav-link" data-route="tasks" href="#/tasks"><svg class="ic"><use href="#i-tasks"/></svg><span>Tasks</span></a>
     <a class="nav-link" data-route="archive" href="#/archive"><svg class="ic"><use href="#i-archive"/></svg><span>Archive</span></a>
     <a class="nav-link" data-route="leaderboard" href="#/leaderboard"><svg class="ic"><use href="#i-trophy"/></svg><span>Leaderboard</span></a>
+    <a class="nav-link" data-route="contests" href="#/contests"><svg class="ic"><use href="#i-contest"/></svg><span>Contests</span></a>
     <a class="nav-link" data-route="history" href="#/history"><svg class="ic"><use href="#i-history"/></svg><span>History</span></a>
     <a class="nav-link" data-route="settings" href="#/settings"><svg class="ic"><use href="#i-settings"/></svg><span>Settings</span></a>
   </nav>
@@ -142,6 +144,35 @@
     </div>
   </section>
 
+  <!-- CONTESTS -->
+  <section id="view-contests" class="view">
+    <div class="page-head"><h2>Contests</h2><p class="dim">การแข่งที่มีช่วงเวลาเปิด-ปิดชัดเจน พร้อม scoreboard</p></div>
+    <div class="card table-card">
+      <div id="contests-body" class="dim" style="padding:16px">Loading...</div>
+    </div>
+  </section>
+
+  <!-- CONTEST DETAIL -->
+  <section id="view-contest" class="view">
+    <a class="backlink" href="#/contests"><svg class="ic"><use href="#i-back"/></svg> กลับไป Contests</a>
+    <div class="task-head">
+      <div>
+        <h2 id="contest-title">Loading...</h2>
+        <div id="contest-meta" class="meta"></div>
+        <div id="contest-freeze" class="notice hidden">คะแนนถูกแช่แข็ง — ผลการส่งใหม่จะแสดงหลังคอนเทสต์จบ</div>
+      </div>
+      <div id="contest-status-chip"></div>
+    </div>
+    <div class="card">
+      <h3 class="pane-h">โจทย์ในคอนเทสต์</h3>
+      <div id="contest-problems" class="dim">—</div>
+    </div>
+    <div class="card table-card" style="margin-top:16px">
+      <h3 class="pane-h" style="padding:16px 16px 0;margin:0">Scoreboard</h3>
+      <div id="contest-scoreboard" class="dim" style="padding:16px">—</div>
+    </div>
+  </section>
+
   <!-- TASK DETAIL -->
   <section id="view-task" class="view">
     <a class="backlink" href="#/tasks"><svg class="ic"><use href="#i-back"/></svg> กลับไป Tasks</a>
@@ -150,6 +181,7 @@
         <h2 id="task-title">Loading...</h2>
         <div id="task-meta" class="meta"></div>
         <div id="task-notice" class="notice hidden"></div>
+        <div id="contest-banner" class="notice hidden"></div>
       </div>
       <div id="your-score" class="score-box" title="คะแนนดีสุดของคุณข้อนี้">
         <span class="dim">Your Score</span><strong id="your-score-num">—</strong>
@@ -158,13 +190,24 @@
     <div class="tabbar" role="tablist">
       <button class="tab-btn active" data-tab="statement" type="button">Statement</button>
       <button class="tab-btn" data-tab="submit" type="button">Submit</button>
+      <button class="tab-btn" data-tab="run" type="button">Run</button>
       <button class="tab-btn" data-tab="subs" type="button">Submissions</button>
       <button class="tab-btn" data-tab="mine" type="button">My Submissions</button>
       <button class="tab-btn" data-tab="report" type="button">Report</button>
     </div>
     <div class="card tab-pane active" id="pane-statement">
+      <div class="card-head">
+        <h2>Statement</h2>
+        <div id="task-counts" class="meta"></div>
+      </div>
       <iframe id="pdf-frame" class="hidden" title="problem statement PDF"></iframe>
       <div id="task-body" class="md">Loading...</div>
+      <div id="sample-box" class="sample-box">
+        <h3 class="pane-h">ตัวอย่างทดสอบ (สาธารณะ)</h3>
+        <div id="sample-btns" class="chip-row"></div>
+        <div id="sample-view" class="dim">เลือกตัวอย่างด้านบนเพื่อดู input / output</div>
+        <p class="dim">เทสต์ลับจะไม่ถูกเปิดเผย — ระบบแสดงเฉพาะตัวอย่างสาธารณะเท่านั้น</p>
+      </div>
     </div>
     <div class="card tab-pane" id="pane-submit">
       <div class="card-head">
@@ -175,26 +218,51 @@
           <button data-lang="cpp" class="lang-btn active">C++</button>
         </div>
       </div>
-      <div id="dropzone" class="dropzone">
-        <p><svg class="ic ic-lg"><use href="#i-upload"/></svg></p>
-        <p><strong>แนบไฟล์</strong> (.py / .c / .cpp) — คลิกหรือลากไฟล์มาวาง</p>
-        <p class="dim">หรือวางโค้ดในช่องด้านล่าง</p>
-        <input type="file" id="file-input" accept=".py,.c,.cpp,.cc,.cxx" hidden>
+      <div id="submit-editor-slot">
+        <div id="code-shared">
+          <div id="dropzone" class="dropzone">
+            <p><svg class="ic ic-lg"><use href="#i-upload"/></svg></p>
+            <p><strong>แนบไฟล์</strong> (.py / .c / .cpp) — คลิกหรือลากไฟล์มาวาง</p>
+            <p class="dim">หรือวางโค้ดในช่องด้านล่าง</p>
+            <input type="file" id="file-input" accept=".py,.c,.cpp,.cc,.cxx" hidden>
+          </div>
+          <div id="file-chip" class="file-chip hidden">
+            <span id="file-name"></span>
+            <button id="file-load" type="button" title="load file text into editor">ใส่ใน editor</button>
+            <button id="file-clear" type="button" title="remove attached file">ลบออก</button>
+          </div>
+          <textarea id="editor" spellcheck="false" placeholder="// วางโค้ดที่นี่ หรือแนบไฟล์ด้านบน"></textarea>
+        </div>
       </div>
-      <div id="file-chip" class="file-chip hidden">
-        <span id="file-name"></span>
-        <button id="file-load" type="button" title="load file text into editor">ใส่ใน editor</button>
-        <button id="file-clear" type="button" title="remove attached file">ลบออก</button>
-      </div>
-      <textarea id="editor" spellcheck="false" placeholder="// วางโค้ดที่นี่ หรือแนบไฟล์ด้านบน"></textarea>
       <div class="submit-row">
         <button id="template-btn" type="button" class="ghost-btn"><svg class="ic"><use href="#i-copy"/></svg><span>starter template</span></button>
         <button id="submit-btn" type="button" class="submit-btn"><svg class="ic"><use href="#i-send"/></svg><span>ส่งคำตอบ</span></button>
       </div>
-      <div id="submit-status" class="status dim"></div>
+      <div id="submit-status" class="status dim" role="status" aria-live="polite"></div>
       <hr class="sep">
       <div class="card-head"><h2>ผลการตรวจ</h2><div id="score-line" class="meta"></div></div>
       <div id="result-body" class="dim">ส่งโค้ดแล้วผลจะขึ้นตรงนี้</div>
+    </div>
+    <div class="card tab-pane" id="pane-run">
+      <div class="card-head">
+        <h2>Run</h2>
+        <div class="lang-group" role="radiogroup" aria-label="language for playground">
+          <button data-lang="python" class="lang-btn">Python</button>
+          <button data-lang="c" class="lang-btn">C</button>
+          <button data-lang="cpp" class="lang-btn active">C++</button>
+        </div>
+      </div>
+      <p class="dim">โค้ดที่รันคือเนื้อหาใน editor ด้านล่าง (ใช้ editor ตัวเดียวกับแท็บ Submit) — ผลรันนี้<strong>ไม่ถูกบันทึก</strong> ไม่นับคะแนน และไม่ปรากฏใน History</p>
+      <div id="run-editor-slot"></div>
+      <h3 class="pane-h">stdin (ข้อมูลนำเข้า)</h3>
+      <textarea id="run-input" spellcheck="false" placeholder="พิมพ์ข้อมูลที่ป้อนให้โปรแกรม (เว้นว่างได้)"></textarea>
+      <div class="submit-row">
+        <button id="run-btn" type="button" class="submit-btn"><svg class="ic"><use href="#i-send"/></svg><span>Run</span></button>
+      </div>
+      <div id="run-status" class="status dim" role="status" aria-live="polite"></div>
+      <hr class="sep">
+      <div class="card-head"><h2>ผลการรัน</h2><span class="meta">playground — ไม่บันทึก</span></div>
+      <div id="run-result" class="dim">กด Run แล้วผลจะขึ้นตรงนี้</div>
     </div>
     <div class="card tab-pane" id="pane-subs">
       <p class="dim">ทุกคนที่ส่งข้อนี้ (ต้อง login เพื่อกดดูโค้ด)</p>
@@ -274,6 +342,71 @@
       <h3 class="pane-h">Reports ทั้งหมด (admin)</h3>
       <div id="admin-reports" class="dim">—</div>
     </div>
+    <div class="card hidden" id="admin-tools-card" style="margin-top:16px">
+      <h3 class="pane-h">ตรวจซ้ำ (rejudge)</h3>
+      <div class="settings-row">
+        <label for="rejudge-problem">ข้อที่จะตรวจซ้ำ</label>
+        <select id="rejudge-problem"></select>
+      </div>
+      <div class="settings-row">
+        <label for="rejudge-limit">จำนวนการส่งล่าสุด</label>
+        <input id="rejudge-limit" type="number" min="1" max="200" value="10">
+      </div>
+      <div class="submit-row">
+        <button id="rejudge-btn" type="button" class="ghost-btn"><svg class="ic"><use href="#i-refresh"/></svg><span>ตรวจซ้ำล่าสุด</span></button>
+      </div>
+      <div id="rejudge-status" class="status dim" role="status" aria-live="polite"></div>
+
+      <h3 class="pane-h">จับโค้ดคล้ายกัน (plagiarism)</h3>
+      <div class="settings-row">
+        <label for="plag-problem">ข้อที่จะสแกน</label>
+        <select id="plag-problem"></select>
+      </div>
+      <div class="settings-row">
+        <label for="plag-threshold">threshold ความคล้าย <span id="plag-threshold-val" class="mono-num">0.60</span></label>
+        <input id="plag-threshold" type="range" min="0.05" max="1" step="0.05" value="0.6">
+      </div>
+      <div class="submit-row">
+        <button id="plag-btn" type="button" class="ghost-btn"><svg class="ic"><use href="#i-search"/></svg><span>สแกนหาคู่ที่คล้ายกัน</span></button>
+      </div>
+      <div id="plag-status" class="status dim" role="status" aria-live="polite"></div>
+      <div id="plag-body" class="dim">—</div>
+
+      <h3 class="pane-h">จัดการคอนเทสต์ (admin)</h3>
+      <div class="settings-row">
+        <label for="ct-id">id (slug: a-z 0-9 _ -)</label>
+        <input id="ct-id" type="text" maxlength="40" placeholder="posn-2569-round1">
+      </div>
+      <div class="settings-row">
+        <label for="ct-title">ชื่อคอนเทสต์</label>
+        <input id="ct-title" type="text" maxlength="120">
+      </div>
+      <div class="settings-row">
+        <label for="ct-start">เริ่มแข่ง (เวลาท้องถิ่น)</label>
+        <input id="ct-start" type="datetime-local">
+      </div>
+      <div class="settings-row">
+        <label for="ct-end">จบแข่ง (เวลาท้องถิ่น)</label>
+        <input id="ct-end" type="datetime-local">
+      </div>
+      <div class="settings-row">
+        <label for="ct-freeze">แช่แข็งคะแนนช่วงท้าย (นาที)</label>
+        <input id="ct-freeze" type="number" min="0" max="1440" value="0">
+      </div>
+      <div class="settings-row">
+        <label class="check-row" for="ct-samples"><input id="ct-samples" type="checkbox" checked> เปิดตัวอย่างสาธารณะระหว่างแข่ง</label>
+      </div>
+      <div class="settings-row">
+        <label for="ct-problems">โจทย์ในคอนเทสต์ (เลือกได้หลายข้อ)</label>
+        <select id="ct-problems" multiple size="8"></select>
+      </div>
+      <div class="submit-row">
+        <button id="ct-save" type="button" class="submit-btn"><svg class="ic"><use href="#i-check"/></svg><span>บันทึกคอนเทสต์</span></button>
+      </div>
+      <div id="ct-status" class="status dim" role="status" aria-live="polite"></div>
+      <h3 class="pane-h">คอนเทสต์ทั้งหมด</h3>
+      <div id="ct-list" class="dim">—</div>
+    </div>
   </section>
 
   <!-- HISTORY -->
@@ -299,6 +432,6 @@
 </footer>
 
 <script src="/config.js?v=4"></script>
-<script src="/app.js?v=6"></script>
+<script src="/app.js?v=8"></script>
 </body>
 </html>

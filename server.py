@@ -11,7 +11,9 @@ Run:
 from __future__ import annotations
 
 import asyncio
+import collections
 import concurrent.futures
+import datetime as dt
 import hashlib
 import hmac
 import json
@@ -22,6 +24,8 @@ import sys
 import tempfile
 import time
 import traceback
+import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Dict, List, Optional
 from urllib.parse import urlencode
@@ -83,11 +87,57 @@ EXT2LANG = {".py": "python", ".c": "c", ".cpp": "cpp", ".cc": "cpp", ".cxx": "cp
 
 MAX_CODE_BYTES = 256 * 1024   # 256 KB source cap
 JUDGE_JOBS = 4                # parallel test workers per submission
-MAX_PARALLEL_SUBMITS = 4      # concurrent submissions cap
 OVERALL_TIMEOUT = 90.0        # seconds per submission (thread keeps cleaning up after)
 DETAIL_HEAD = 4000            # max chars of detail/diff sent to frontend
 
-app = FastAPI(title="Newbiegrader API", version="1.0.0")
+# ---- async judging (B9) ----
+# The HTTP path never judges inline: it queues a job and the client polls
+# /api/jobs/{id}. Workers live in the same process (one container deploy), each
+# running a job in a thread so uvicorn's loop stays responsive.
+# Default 1: on a 0.25-vCPU host two submissions judging at once steal CPU from
+# each other and turn wall-clock TLEs into noise. Raise it on a bigger box.
+JUDGE_WORKERS = max(1, int(os.environ.get("GRADER_JUDGE_WORKERS", "1")))
+JOB_TTL_S = 3600              # in-memory job records kept this long (no-DB mode)
+JOB_MAX_AGE_S = 24 * 3600     # queued jobs older than this are dropped, not run
+REJUDGE_MAX = 200             # cap per /api/admin/rejudge call
+
+# ---- /api/run (custom input playground) ----
+RUN_INPUT_MAX = 64 * 1024     # max bytes of user-supplied stdin
+RUN_OUTPUT_MAX = 64 * 1024    # max bytes echoed back
+RUN_TIMEOUT_MAX = 5.0         # hard cap for playground runs
+RUN_BUDGET = 30.0             # total CPU-seconds a single /api/run may spend
+
+# ---- per-user quotas (fair-use; "N/WINDOW_SECONDS", 0 = off) ----
+def _parse_quota(raw: str, default: tuple) -> tuple:
+    try:
+        n, w = raw.split("/", 1)
+        n_i, w_i = int(n), int(w)
+        if n_i <= 0 or w_i <= 0:
+            return (0, 0)  # disabled
+        return (n_i, w_i)
+    except ValueError:
+        return default
+
+SUBMIT_QUOTA = _parse_quota(os.environ.get("GRADER_SUBMIT_QUOTA", "60/600"), (60, 600))
+RUN_QUOTA = _parse_quota(os.environ.get("GRADER_RUN_QUOTA", "120/600"), (120, 600))
+
+@asynccontextmanager
+async def _lifespan(_app: "FastAPI"):
+    """Start judge workers and recover jobs left behind by a restart."""
+    workers = [asyncio.create_task(_judge_worker(i)) for i in range(JUDGE_WORKERS)]
+    try:
+        await _recover_jobs()
+    except Exception as e:  # never block startup on a DB hiccup
+        print(f"[web] job recovery failed: {e}", file=sys.stderr)
+    try:
+        yield
+    finally:
+        for w in workers:
+            w.cancel()
+        await asyncio.gather(*workers, return_exceptions=True)
+
+
+app = FastAPI(title="Newbiegrader API", version="2.0.0", lifespan=_lifespan)
 app.add_middleware(GZipMiddleware, minimum_size=500)
 
 
@@ -105,8 +155,7 @@ async def _security_headers(request: Request, call_next):
         "frame-src 'self'; frame-ancestors 'self'; "
         "form-action 'self' https://accounts.google.com")
     return resp
-submit_sem = asyncio.Semaphore(MAX_PARALLEL_SUBMITS)
-_active_submits: set = set()  # user emails with a judging currently running
+
 
 # Tiny in-memory cache for slow aggregate endpoints (Supabase RTT dominates).
 # Invalidated on every stored submission.
@@ -171,18 +220,379 @@ def _db_err(e: Exception) -> HTTPException:
     return HTTPException(status_code=500, detail="database error")
 
 
-async def _store_submission(row: dict) -> None:
-    """Persist one submission; never fails the judging response."""
+async def _store_submission(row: dict, target_id: Optional[str] = None) -> Optional[str]:
+    """Persist one submission (insert, or update when rejudging).
+
+    Never fails the judging response: returns the row id, or None when history is
+    disabled / the write failed.
+    """
+    if _sb is None:
+        return None
+
+    def _write():
+        if target_id:
+            return _sb.table("submissions").update(row).eq("id", target_id).execute()
+        try:
+            return _sb.table("submissions").insert(row).execute()
+        except Exception as first:
+            # Pre-2026-10 database: the extra traceability columns do not exist
+            # yet. Drop them rather than losing the submission.
+            slim = {k: v for k, v in row.items() if k not in _NEW_SUB_COLS}
+            if len(slim) == len(row):
+                raise
+            print(f"[web] submissions insert retried without {_NEW_SUB_COLS[0]}.. "
+                  f"({first}); run supabase/schema.sql to add them", file=sys.stderr)
+            return _sb.table("submissions").insert(slim).execute()
+
+    try:
+        res = await asyncio.wait_for(asyncio.to_thread(_write), timeout=15)
+        _bust_cache()  # aggregates changed: drop cached stats/leaderboard
+        data = getattr(res, "data", None) or []
+        if data:
+            return data[0].get("id") or target_id
+        return target_id
+    except Exception as e:
+        print(f"[web] supabase write failed: {e}", file=sys.stderr)
+        return None
+
+
+# ---- feedback policy: which test data may be shown to whom ----
+# Public samples (config.json `samples`) are the only test data a normal user
+# ever sees. Hidden test input/expected never leave the server: results are
+# redacted BEFORE they are returned and BEFORE they are stored, so a history row
+# can never leak them either.
+REVEAL_ALL = "all"          # admin: full detail
+REVEAL_SAMPLES = "samples"  # default for everyone: samples only
+REVEAL_NONE = "none"        # live contest with show_samples = false
+
+
+def _redact_results(results: List[dict], reveal: str) -> List[dict]:
+    """Strip test data from per-test results the caller is not allowed to see."""
+    out: List[dict] = []
+    for r in results:
+        item = dict(r)
+        public = bool(item.pop("public", False))
+        if reveal == REVEAL_ALL or (public and reveal != REVEAL_NONE):
+            out.append(item)
+            continue
+        for k in ("diff", "input", "expected", "actual"):
+            item.pop(k, None)
+        item["hidden"] = True
+        out.append(item)
+    return out
+
+
+def _iso_now() -> str:
+    return dt.datetime.now(dt.timezone.utc).isoformat()
+
+
+# ---- per-user fair-use quota (sliding window, in memory) ----
+_quota_hits: Dict[str, collections.deque] = {}
+
+
+def _quota_check(kind: str, key: str, quota: tuple) -> None:
+    limit, window = quota
+    if limit <= 0 or not key:
+        return  # disabled
+    now = time.monotonic()
+    key = f"{kind}:{key}"
+    dq = _quota_hits.get(key)
+    if dq is None:
+        dq = _quota_hits[key] = collections.deque()
+        if len(_quota_hits) > 20000:  # bound memory on a public host
+            _quota_hits.clear()
+            dq = _quota_hits[key] = collections.deque()
+    while dq and now - dq[0] > window:
+        dq.popleft()
+    if len(dq) >= limit:
+        retry = max(1, int(window - (now - dq[0])) + 1)
+        raise HTTPException(
+            status_code=429,
+            detail=f"quota exceeded ({limit} per {window}s) — retry in {retry}s",
+            headers={"Retry-After": str(retry)})
+    dq.append(now)
+
+
+# ---- judge job queue (B9) ----
+# Every submission/rejudge becomes a job: the HTTP handler only enqueues, a
+# worker thread-pool runs it, and the client polls /api/jobs/{id}. With Supabase
+# the jobs table is the durable queue (restart-safe); without it the queue is
+# in-memory and the API still behaves the same.
+_jobs: Dict[str, dict] = {}
+# The queue belongs to one event loop at a time. It is created on first use
+# inside the running loop (asyncio.Queue binds to a loop on Python 3.9), and if
+# we are later called from a different loop the pending job ids are carried over
+# into a fresh queue instead of being stranded (bites the test suite, where each
+# TestClient runs its own loop, and uvicorn's reloader).
+_job_queue: Optional["asyncio.Queue[str]"] = None
+_job_loop: Optional[object] = None
+_active_jobs: Dict[str, set] = {}       # user_email -> {job ids} queued/running
+
+
+def _queue() -> "asyncio.Queue[str]":
+    """The job queue, (re)bound to the running loop. Safe to call from a worker
+    thread (sync endpoints): with no running loop it returns the existing queue
+    instead of raising."""
+    global _job_queue, _job_loop
+    try:
+        loop: Optional[object] = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if _job_queue is None:
+        _job_queue = asyncio.Queue()
+        _job_loop = loop
+        return _job_queue
+    if loop is not None and _job_loop is not loop:
+        old = _job_queue
+        _job_queue = asyncio.Queue()
+        _job_loop = loop
+        while not old.empty():
+            try:
+                _job_queue.put_nowait(old.get_nowait())
+            except Exception:
+                break
+    return _job_queue
+
+
+def _queue_depth() -> int:
+    """Queued job count without needing an event loop (sync endpoints)."""
+    q = _job_queue
+    return q.qsize() if q is not None else 0
+
+
+# Columns added by the 2026-10 migration; if the migration was not run yet, the
+# insert is retried without them instead of losing the submission.
+_NEW_SUB_COLS = ("tests_hash", "grader_version", "kind", "contest_id", "job_id")
+
+
+def _prune_jobs() -> None:
+    cut = time.monotonic() - JOB_TTL_S
+    stale = [k for k, j in _jobs.items()
+             if j.get("created_monotonic", 0) < cut and j.get("status") in ("done", "error")]
+    for k in stale:
+        _jobs.pop(k, None)
+
+
+def _remember_job(row: dict) -> dict:
+    job = _jobs.get(row["id"]) or {}
+    job.update(row)
+    job.setdefault("created_monotonic", time.monotonic())
+    _jobs[row["id"]] = job
+    if len(_jobs) > 5000:
+        _prune_jobs()
+    return job
+
+
+async def _load_job(jid: str) -> Optional[dict]:
+    if _sb is None:
+        return None
+    try:
+        res = await asyncio.to_thread(
+            lambda: _sb.table("judge_jobs").select("*").eq("id", jid).limit(1).execute())
+    except Exception as e:
+        print(f"[web] job lookup failed: {e}", file=sys.stderr)
+        return None
+    rows = res.data or []
+    if not rows:
+        return None
+    row = dict(rows[0])
+    if row.get("status") == "done" and isinstance(row.get("result"), dict):
+        job = _remember_job(row)
+        job["result"] = row["result"]
+        return job
+    return _remember_job(row)
+
+
+async def _update_job_db(jid: str, patch: dict) -> None:
     if _sb is None:
         return
     try:
-        await asyncio.wait_for(
-            asyncio.to_thread(lambda: _sb.table("submissions").insert(row).execute()),
-            timeout=10,
-        )
-        _bust_cache()  # aggregates changed: drop cached stats/leaderboard
+        await asyncio.to_thread(
+            lambda: _sb.table("judge_jobs").update(patch).eq("id", jid).execute())
     except Exception as e:
-        print(f"[web] supabase insert failed: {e}", file=sys.stderr)
+        print(f"[web] judge_jobs update failed: {e}", file=sys.stderr)
+
+
+async def _create_job(row: dict, track_active: bool = True) -> dict:
+    """Insert the job (DB first for durability), then hand it to a worker."""
+    jid = str(uuid.uuid4())
+    row = {**row, "id": jid, "status": "queued", "result": None, "error": ""}
+    if _sb is not None:
+        try:
+            await asyncio.to_thread(lambda: _sb.table("judge_jobs").insert(row).execute())
+        except Exception as e:
+            # No judge_jobs table (migration not run) — degrade to memory-only
+            # queueing instead of refusing the submission.
+            print(f"[web] judge_jobs insert failed ({e}); queueing in memory", file=sys.stderr)
+    job = _remember_job(row)
+    if track_active and row.get("user_email"):
+        _active_jobs.setdefault(row["user_email"], set()).add(jid)
+    await _queue().put(jid)
+    return job
+
+
+async def _recover_jobs() -> None:
+    """On boot: requeue jobs orphaned by a crash, and remember queued ones."""
+    if _sb is None:
+        return
+    await asyncio.to_thread(
+        lambda: _sb.table("judge_jobs").update({"status": "queued"}).eq(
+            "status", "running").execute())
+    res = await asyncio.to_thread(
+        lambda: _sb.table("judge_jobs").select("*").eq("status", "queued")
+        .order("created_at").limit(REJUDGE_MAX).execute())
+    rows = res.data or []
+    dropped = 0
+    for row in rows:
+        try:
+            created = dt.datetime.fromisoformat(str(row.get("created_at")).replace("Z", "+00:00"))
+            age = (dt.datetime.now(dt.timezone.utc) - created).total_seconds()
+        except Exception:
+            age = 0
+        if age > JOB_MAX_AGE_S:
+            dropped += 1
+            await _update_job_db(row["id"], {"status": "error", "error": "stale job dropped",
+                                             "finished_at": _iso_now()})
+            continue
+        _remember_job(row)
+        if row.get("user_email"):
+            _active_jobs.setdefault(row["user_email"], set()).add(row["id"])
+        await _queue().put(row["id"])
+    if rows:
+        print(f"[web] recovered {len(rows) - dropped} queued job(s), dropped {dropped} stale",
+              file=sys.stderr)
+
+
+async def _finish_job(jid: str, *, result: Optional[dict] = None, stored: Optional[dict] = None,
+                      error: str = "") -> None:
+    job = _jobs.get(jid) or {"id": jid}
+    job["status"] = "error" if error else "done"
+    job["error"] = error
+    if result is not None:
+        job["result"] = result
+    job["finished_at"] = _iso_now()
+    _jobs[jid] = job
+    email = job.get("user_email") or ""
+    if email in _active_jobs:
+        _active_jobs[email].discard(jid)
+        if not _active_jobs[email]:
+            _active_jobs.pop(email, None)
+    await _update_job_db(jid, {"status": job["status"], "error": error,
+                               "finished_at": job["finished_at"],
+                               "result": stored if stored is not None else result})
+
+
+async def _judge_worker(idx: int) -> None:
+    while True:
+        jid = await _queue().get()
+        try:
+            job = _jobs.get(jid) or await _load_job(jid)
+            if job and job.get("status") != "done":
+                await _run_job(job)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            traceback.print_exc()
+            await _finish_job(jid, error="worker crashed")
+        finally:
+            _queue().task_done()
+
+
+async def _run_job(job: dict) -> None:
+    jid = job["id"]
+    prob = PROBLEMS.get(job.get("problem", ""))
+    if prob is None:
+        await _finish_job(jid, error=f"unknown problem: {job.get('problem')}")
+        return
+    ext = str(LANGS.get(job.get("language", ""), {}).get("ext") or ".py")
+    job["status"] = "running"
+    job["started_at"] = _iso_now()
+    _jobs[jid] = job
+    await _update_job_db(jid, {"status": "running", "started_at": job["started_at"]})
+    reveal = job.get("reveal") or REVEAL_SAMPLES
+    try:
+        result = await asyncio.wait_for(
+            asyncio.to_thread(run_submission, prob, ext, job.get("source", ""), reveal),
+            timeout=OVERALL_TIMEOUT)
+    except asyncio.TimeoutError:
+        await _finish_job(jid, error="judging timed out (server overloaded?)")
+        return
+    except Exception as e:
+        traceback.print_exc()
+        await _finish_job(jid, error=f"internal judging error: {e}")
+        return
+    if "error" in result:
+        await _finish_job(jid, error=str(result["error"]))
+        return
+    stored = dict(result)
+    sid = None
+    if _sb is not None:
+        row = _submission_row(job, result)
+        sid = await _store_submission(row, target_id=job.get("target_id"))
+    result["id"] = sid
+    result["job_id"] = jid
+    result["name"] = job.get("name", "")
+    stored["id"] = sid
+    await _finish_job(jid, result=result, stored=stored)
+
+
+def _submission_row(job: dict, result: dict) -> dict:
+    """DB row for one judged submission. Hidden test data is already stripped
+    from `result` by run_submission (stored at REVEAL_SAMPLES level)."""
+    prob = PROBLEMS.get(job.get("problem", ""))
+    return {
+        "problem": job.get("problem", ""), "language": job.get("language", ""),
+        "filename": job.get("filename"), "name": job.get("name", ""),
+        "user_email": job.get("user_email", ""),
+        "verdict": result.get("verdict", ""), "accepted": result.get("accepted", False),
+        "passed": result.get("passed", 0), "total": result.get("total", 0),
+        "score": result.get("score", 0), "counts": result.get("counts", {}),
+        "results": result.get("results", []),
+        "code": (job.get("source") or "")[:200000],
+        "detail": (result.get("compile_error", "") or "")[:4000],
+        "tests_hash": grader.tests_hash(prob) if prob else "",
+        "grader_version": grader.GRADER_VERSION,
+        "kind": job.get("kind", "submit"),
+        "contest_id": job.get("contest_id"),
+        "job_id": job.get("id"),
+    }
+
+
+# ---- contest policy (B7) ----
+def _contest_window(contest: dict) -> str:
+    """'upcoming' | 'running' | 'ended' (UTC now vs the contest window)."""
+    now = dt.datetime.now(dt.timezone.utc)
+    try:
+        start = dt.datetime.fromisoformat(str(contest.get("starts_at")).replace("Z", "+00:00"))
+        end = dt.datetime.fromisoformat(str(contest.get("ends_at")).replace("Z", "+00:00"))
+    except Exception:
+        return "ended"
+    if now < start:
+        return "upcoming"
+    if now > end:
+        return "ended"
+    return "running"
+
+
+def _contest_or_404(cid: str) -> dict:
+    if _sb is None:
+        raise HTTPException(status_code=404, detail="contests not configured")
+    try:
+        res = _sb.table("contests").select("*").eq("id", cid).limit(1).execute()
+    except Exception as e:
+        raise _db_err(e)
+    rows = res.data or []
+    if not rows:
+        raise HTTPException(status_code=404, detail="unknown contest")
+    return dict(rows[0])
+
+
+def _reveal_for(contest: Optional[dict], email: str) -> str:
+    if _is_admin(email):
+        return REVEAL_ALL
+    if contest and _contest_window(contest) == "running" and contest.get("show_samples") is False:
+        return REVEAL_NONE
+    return REVEAL_SAMPLES
 
 
 # ---- Google login (OAuth 2.0 code flow, session cookie) ----
@@ -536,8 +946,14 @@ def _problem_or_404(pid: str) -> grader.Problem:
     return p
 
 
-def run_submission(prob: grader.Problem, ext: str, source: str) -> dict:
-    """Judge one submission synchronously (runs inside a worker thread)."""
+def run_submission(prob: grader.Problem, ext: str, source: str,
+                   reveal: str = REVEAL_SAMPLES) -> dict:
+    """Judge one submission (runs inside a worker thread, never inline in the loop).
+
+    `reveal` decides how much test data the returned payload carries; the result
+    that gets persisted is always reduced to REVEAL_SAMPLES by the caller.
+    """
+    samples = grader.sample_names(prob)
     with tempfile.TemporaryDirectory(prefix="websub_") as tmp:
         workdir = Path(tmp)
         src = workdir / ("solution" + ext)
@@ -556,7 +972,9 @@ def run_submission(prob: grader.Problem, ext: str, source: str) -> dict:
                 "counts": {"CE": len(prob.tests)},
                 "build_warnings": "", "compile_error": str(e)[:4000],
                 "limits": {"time_s": prob.time_limit, "memory_mb": prob.memory_limit},
-                "checker": prob.checker, "results": [],
+                "checker": prob.checker, "results": [], "samples": len(samples),
+                "tests_hash": grader.tests_hash(prob),
+                "grader_version": grader.GRADER_VERSION,
             }
         except SystemExit as e:
             return {"error": str(e)}
@@ -571,6 +989,7 @@ def run_submission(prob: grader.Problem, ext: str, source: str) -> dict:
                     "test": tc.name, "verdict": v,
                     "wall_s": round(wall, 4), "cpu_s": round(cpu, 4),
                     "peak_mb": round(mem, 2),
+                    "public": tc.name in samples,
                 }
                 if v == "WA":
                     item["diff"] = grader.show_diff(tc.expected, actual)[:DETAIL_HEAD]
@@ -594,7 +1013,62 @@ def run_submission(prob: grader.Problem, ext: str, source: str) -> dict:
             "counts": counts, "build_warnings": (warnings or "")[:2000],
             "compile_error": "",
             "limits": {"time_s": prob.time_limit, "memory_mb": prob.memory_limit},
-            "checker": prob.checker, "results": results,
+            "checker": prob.checker,
+            "results": _redact_results(results, reveal),
+            "samples": len(samples), "hidden_tests": total - len(samples),
+            "tests_hash": grader.tests_hash(prob),
+            "grader_version": grader.GRADER_VERSION,
+        }
+
+
+def _run_playground(prob: Optional[grader.Problem], ext: str, source: str,
+                    stdin_data: str, time_limit: float, memory_mb: int) -> dict:
+    """One-shot run with user-supplied stdin. Never touches history."""
+    with tempfile.TemporaryDirectory(prefix="webrun_") as tmp:
+        workdir = Path(tmp)
+        src = workdir / ("solution" + ext)
+        src.write_text(source, encoding="utf-8")
+        try:
+            os.chmod(workdir, 0o755)
+            os.chmod(src, 0o644)
+        except OSError:
+            pass
+        started = time.perf_counter()
+        try:
+            cmd, _disp, warnings = grader.prepare_command(src, workdir)
+        except grader.CompileError as e:
+            return {"verdict": "CE", "stdout": "", "stderr": str(e)[:4000],
+                    "wall_s": round(time.perf_counter() - started, 4),
+                    "cpu_s": 0.0, "peak_mb": 0.0, "reason": "compile-error",
+                    "build_warnings": "", "limits": {"time_s": time_limit,
+                                                     "memory_mb": memory_mb}}
+        except SystemExit as e:
+            return {"error": str(e)}
+        res = grader.run_one(cmd, stdin_data, time_limit, memory_mb)
+        reason = res.get("reason", "")
+        if reason == "timeout":
+            verdict = "TLE"
+        elif reason == "ole":
+            verdict = "OLE"
+        elif reason in ("oom", "sigkill"):
+            verdict = "MLE"
+        elif reason.startswith("signal:") or reason == "spawn-fail":
+            verdict = "RE"
+        elif res.get("returncode"):
+            verdict = "RE"
+        else:
+            verdict = "OK"
+        out = res.get("stdout") or ""
+        err = res.get("stderr") or ""
+        truncated = len(out.encode("utf-8", "ignore")) > RUN_OUTPUT_MAX
+        return {
+            "verdict": verdict, "reason": reason,
+            "stdout": out[:RUN_OUTPUT_MAX], "stderr": err[:RUN_OUTPUT_MAX],
+            "truncated": truncated,
+            "wall_s": round(res.get("wall", 0.0), 4), "cpu_s": round(res.get("cpu", 0.0), 4),
+            "peak_mb": round(res.get("peak_mb", 0.0), 2),
+            "build_warnings": (warnings or "")[:2000],
+            "limits": {"time_s": time_limit, "memory_mb": memory_mb},
         }
 
 
@@ -620,7 +1094,7 @@ def list_problems() -> dict:
         {"id": p.pid, "title": p.title, "time_limit": p.time_limit,
          "memory_limit": p.memory_limit, "checker": p.checker,
          "difficulty": p.difficulty, "tags": p.tags,
-         "tests": len(p.tests)}
+         "tests": len(p.tests), "samples": len(p.samples)}
         for p in ranked
     ]}
 
@@ -633,7 +1107,24 @@ def problem_detail(pid: str) -> dict:
             "difficulty": p.difficulty, "tags": p.tags,
             "notice": p.notice,
             "tests": len(p.tests), "statement": p.description,
+            "samples": list(p.samples),
+            "hidden_tests": len(p.tests) - len(p.samples),
+            "tests_hash": grader.tests_hash(p),
             "has_pdf": (grader.PROBLEMS_DIR / p.pid / "statement.pdf").is_file()}
+
+
+@app.get("/api/problems/{pid}/sample/{name}")
+def problem_sample(pid: str, name: str) -> dict:
+    """Public sample test data (statement examples) — hidden tests are never served."""
+    p = _problem_or_404(pid)
+    if name not in grader.sample_names(p):
+        raise HTTPException(status_code=404,
+                            detail="not a public sample (hidden tests are not served)")
+    for tc in p.tests:
+        if tc.name == name:
+            return {"problem": p.pid, "test": tc.name,
+                    "input": tc.input, "output": tc.expected}
+    raise HTTPException(status_code=404, detail="sample not found")
 
 
 @app.get("/api/problems/{pid}/pdf")
@@ -646,29 +1137,12 @@ def problem_pdf(pid: str):
                         content_disposition_type="inline")
 
 
-@app.post("/api/submit")
-async def submit(
-    request: Request,
-    problem: str = Form(...),
-    language: str = Form(...),
-    code: str = Form(""),
-    file: Optional[UploadFile] = File(None),
-    name: str = Form(""),
-):
-    prob = _problem_or_404(problem)
+async def _read_source(language: str, code: str,
+                       file: Optional[UploadFile]) -> tuple[str, Optional[str]]:
+    """Validate language + code/file input. Returns (source, filename)."""
     if language not in LANGS:
         raise HTTPException(status_code=400,
                             detail=f"unsupported language: {language} (choose python/c/cpp)")
-    name = (name or "").strip()
-    if len(name) > 50:
-        raise HTTPException(status_code=400, detail="name too long (max 50 characters)")
-    user = request.session.get("user") or {}
-    if not user.get("email"):
-        raise HTTPException(status_code=401, detail="login with Google first")
-    name = await asyncio.to_thread(
-        _profile_display_name, user.get("email", ""),
-        user.get("name") or user.get("email", ""))
-
     source: Optional[str] = None
     filename: Optional[str] = None
     if file is not None and file.filename:
@@ -697,41 +1171,128 @@ async def submit(
     else:
         raise HTTPException(status_code=400,
                             detail="submit code as text (code field) or attach a file (file field)")
+    return source, filename
 
-    assert source is not None
-    ext = str(LANGS[language]["ext"])
 
-    if user["email"] in _active_submits:
+@app.post("/api/submit", status_code=202)
+async def submit(
+    request: Request,
+    problem: str = Form(...),
+    language: str = Form(...),
+    code: str = Form(""),
+    file: Optional[UploadFile] = File(None),
+    name: str = Form(""),
+    contest: str = Form(""),
+):
+    prob = _problem_or_404(problem)
+    user = request.session.get("user") or {}
+    if not user.get("email"):
+        raise HTTPException(status_code=401, detail="login first")
+    email = user["email"]
+
+    contest_obj: Optional[dict] = None
+    if contest:
+        contest_obj = _contest_or_404(contest)
+        listed = [str(x) for x in (contest_obj.get("problems") or [])]
+        if prob.pid not in listed:
+            raise HTTPException(status_code=400, detail="problem is not part of this contest")
+        if _contest_window(contest_obj) != "running" and not _is_admin(email):
+            raise HTTPException(status_code=403, detail="contest is not running")
+
+    _quota_check("submit", email, SUBMIT_QUOTA)
+    if _active_jobs.get(email):
         raise HTTPException(status_code=409,
                             detail="you already have a submission judging, please wait")
-    _active_submits.add(user["email"])
+
+    source, filename = await _read_source(language, code, file)
+    display = await asyncio.to_thread(
+        _profile_display_name, email, user.get("name") or email)
+
+    job = await _create_job({
+        "kind": "submit", "user_email": email, "name": display[:50],
+        "problem": prob.pid, "language": language, "filename": filename,
+        "contest_id": contest_obj["id"] if contest_obj else None,
+        "source": source, "reveal": _reveal_for(contest_obj, email),
+        "tests_hash": grader.tests_hash(prob),
+        "grader_version": grader.GRADER_VERSION,
+    })
+    return {
+        "job_id": job["id"], "status": "queued", "problem": prob.pid,
+        "samples": len(prob.samples),
+        "hidden_tests": len(prob.tests) - len(prob.samples),
+        "queued_ahead": _queue().qsize(),
+    }
+
+
+@app.get("/api/jobs/{jid}")
+async def job_status(request: Request, jid: str) -> dict:
+    user = request.session.get("user") or {}
+    if not user.get("email"):
+        raise HTTPException(status_code=401, detail="login required")
+    job = _jobs.get(jid) or await _load_job(jid)
+    if job is None:
+        raise HTTPException(status_code=404, detail="unknown job")
+    if job.get("user_email") != user["email"] and not _is_admin(user["email"]):
+        raise HTTPException(status_code=403, detail="not your job")
+    status = job.get("status", "queued")
+    return {
+        "id": jid, "status": status, "problem": job.get("problem", ""),
+        "kind": job.get("kind", "submit"), "error": job.get("error", "") or "",
+        "queued_ahead": _queue().qsize() if status == "queued" else 0,
+        "result": job.get("result") if status == "done" else None,
+    }
+
+
+@app.get("/api/version")
+def version() -> dict:
+    """Which judging semantics + test set a verdict comes from."""
+    return {
+        "version": grader.GRADER_VERSION,
+        "problems": len(PROBLEMS),
+        "languages": sorted(LANGS.keys()),
+        "tests": {pid: {"hash": grader.tests_hash(p), "tests": len(p.tests),
+                        "samples": list(p.samples)}
+                  for pid, p in sorted(PROBLEMS.items())},
+    }
+
+
+@app.post("/api/run")
+async def run_custom(
+    request: Request,
+    language: str = Form(...),
+    code: str = Form(""),
+    file: Optional[UploadFile] = File(None),
+    input: str = Form(""),
+    problem: str = Form(""),
+    time_limit: float = Form(0.0),
+):
+    """Playground: run the code once against user-supplied stdin. Not recorded."""
+    user = request.session.get("user") or {}
+    if not user.get("email"):
+        raise HTTPException(status_code=401, detail="login first")
+    _quota_check("run", user["email"], RUN_QUOTA)
+    prob = PROBLEMS.get(problem) if problem else None
+    if problem and prob is None:
+        raise HTTPException(status_code=404, detail=f"unknown problem: {problem}")
+    source, _filename = await _read_source(language, code, file)
+    if len(input.encode("utf-8")) > RUN_INPUT_MAX:
+        raise HTTPException(status_code=413,
+                            detail=f"input too large (max {RUN_INPUT_MAX} bytes)")
+    tl = time_limit if 0 < time_limit <= RUN_TIMEOUT_MAX else (
+        min(prob.time_limit, RUN_TIMEOUT_MAX) if prob else min(2.0, RUN_TIMEOUT_MAX))
+    mem = prob.memory_limit if prob else 256
+    ext = str(LANGS[language]["ext"])
     try:
-        async with submit_sem:
-            try:
-                result = await asyncio.wait_for(
-                    asyncio.to_thread(run_submission, prob, ext, source),
-                    timeout=OVERALL_TIMEOUT,
-                )
-            except asyncio.TimeoutError:
-                raise HTTPException(status_code=504, detail="judging timed out (server overloaded?)")
-            except Exception:
-                traceback.print_exc()
-                raise HTTPException(status_code=500, detail="internal judging error")
-    finally:
-        _active_submits.discard(user["email"])
+        result = await asyncio.wait_for(
+            asyncio.to_thread(_run_playground, prob, ext, source, input, tl, mem),
+            timeout=tl + RUN_BUDGET)
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="run timed out")
+    except Exception:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="internal run error")
     if "error" in result:
         raise HTTPException(status_code=500, detail=result["error"])
-    result["filename"] = filename
-    result["name"] = name
-    await _store_submission({
-        "problem": prob.pid, "language": language, "filename": filename,
-        "name": name, "user_email": user.get("email", ""),
-        "verdict": result.get("verdict", ""), "accepted": result.get("accepted", False),
-        "passed": result.get("passed", 0), "total": result.get("total", 0),
-        "score": result.get("score", 0), "counts": result.get("counts", {}),
-        "results": result.get("results", []), "code": source[:200000],
-        "detail": (result.get("compile_error", "") or "")[:4000],
-    })
     return result
 
 
@@ -763,7 +1324,8 @@ def history(request: Request, problem: Optional[str] = None, limit: int = 20,
 @app.get("/api/history/{sid}")
 def history_detail(request: Request, sid: str) -> dict:
     user = request.session.get("user") or {}
-    if not user.get("email"):
+    email = user.get("email") or ""
+    if not email:
         raise HTTPException(status_code=401, detail="login required")
     if _sb is None:
         raise HTTPException(status_code=404, detail="history not configured")
@@ -775,6 +1337,10 @@ def history_detail(request: Request, sid: str) -> dict:
     if not rows:
         raise HTTPException(status_code=404, detail="submission not found")
     row = dict(rows[0])
+    # Your own submissions, or any submission if you are an admin. Nobody else:
+    # a row carries the author's source code.
+    if row.get("user_email") != email and not _is_admin(email):
+        raise HTTPException(status_code=403, detail="not your submission")
     row.pop("user_email", None)  # never expose login emails publicly
     return row
 
@@ -899,6 +1465,12 @@ def admin_overview(request: Request) -> dict:
         "accepted": sum(1 for r in subs if r.get("accepted")),
         "reports_open": rep_open,
         "reports_total": (reps.count if reps else 0) or 0,
+        "jobs": {
+            "queued": sum(1 for j in _jobs.values() if j.get("status") == "queued"),
+            "running": sum(1 for j in _jobs.values() if j.get("status") == "running"),
+            "queue_depth": _queue_depth(),
+            "workers": JUDGE_WORKERS,
+        },
         "per_problem": per_problem,
         "recent": [{k: r.get(k) for k in
                     ("id", "created_at", "problem", "name", "language",
@@ -918,38 +1490,59 @@ def leaderboard(limit: int = 50) -> dict:
 
 
 def _build_leaderboard(limit: int) -> dict:
+    """All-time best score per user per problem. Uses the `leaderboard_scores`
+    view (supabase/schema.sql) so no submission ever falls out of the window;
+    falls back to a bounded row scan if the view is missing."""
+    best: Dict[str, Dict[str, int]] = {}
+    acc: Dict[str, set] = {}
+    names: Dict[str, str] = {}
     try:
-        res = _sb.table("submissions").select(
-            "problem,user_email,name,accepted,score,created_at").order(
-            "created_at", desc=True).limit(2000).execute()
+        res = _sb.table("leaderboard_scores").select(
+            "user_email,problem,best,accepted").limit(20000).execute()
+        for r in res.data or []:
+            u = r.get("user_email") or ""
+            if not u:
+                continue
+            best.setdefault(u, {})[r["problem"]] = int(r.get("best") or 0)
+            if r.get("accepted"):
+                acc.setdefault(u, set()).add(r["problem"])
     except Exception as e:
-        raise _db_err(e)
-    users: dict = {}
-    for r in res.data or []:
-        u = users.setdefault(r["user_email"], {"name": r.get("name") or "?",
-                                               "best": {}, "acc": set()})
-        u["name"] = r.get("name") or u["name"]  # latest name wins (rows are desc)
-        p = r["problem"]
-        u["best"][p] = max(u["best"].get(p, 0), r.get("score") or 0)
-        if r.get("accepted"):
-            u["acc"].add(p)
-    if _sb is not None and users:
-        # display names from Settings override historical submission names
+        print(f"[web] leaderboard_scores view unavailable ({e}); "
+              "falling back to a 2000-row scan — run supabase/schema.sql", file=sys.stderr)
         try:
-            pres = _sb.table("profiles").select(
-                "user_email,display_name").in_(
-                "user_email", list(users.keys())).execute()
-            for p in pres.data or []:
-                dn = (p.get("display_name") or "").strip()
-                if dn and p["user_email"] in users:
-                    users[p["user_email"]]["name"] = dn
+            res = _sb.table("submissions").select(
+                "problem,user_email,name,accepted,score,created_at").order(
+                "created_at", desc=True).limit(2000).execute()
+        except Exception as e2:
+            raise _db_err(e2)
+        for r in res.data or []:
+            u = r.get("user_email") or ""
+            if not u:
+                continue
+            names[u] = r.get("name") or names.get(u, "?")  # newest row first
+            best.setdefault(u, {})[r["problem"]] = max(
+                best.setdefault(u, {}).get(r["problem"], 0), r.get("score") or 0)
+            if r.get("accepted"):
+                acc.setdefault(u, set()).add(r["problem"])
+    if _sb is not None and best:
+        # display names from Settings override historical submission names
+        keys = list(best.keys())
+        try:
+            for i in range(0, len(keys), 200):
+                chunk = keys[i:i + 200]
+                pres = _sb.table("profiles").select(
+                    "user_email,display_name").in_("user_email", chunk).execute()
+                for p in pres.data or []:
+                    dn = (p.get("display_name") or "").strip()
+                    if dn:
+                        names[p["user_email"]] = dn[:50]
         except Exception as e:
             print(f"[web] leaderboard profile lookup failed: {e}", file=sys.stderr)
     top = sorted(
-        ({"name": u["name"], "solved": len(u["acc"]),
-          "points": sum(u["best"].values())} for u in users.values()),
+        ({"name": names.get(u) or "?", "solved": len(acc.get(u, ())),
+          "points": sum(v.values())} for u, v in best.items()),
         key=lambda t: (-t["points"], -t["solved"], t["name"]))
-    return {"configured": True, "top": top[:limit]}
+    return {"configured": True, "top": top[:limit]} 
 
 
 @app.get("/api/stats")
@@ -960,29 +1553,314 @@ def stats() -> dict:
 
 
 def _build_stats() -> dict:
+    """Per-problem aggregates from the `problem_stats` view (all-time), with a
+    bounded fallback scan when the view has not been created yet."""
     try:
-        res = _sb.table("submissions").select(
-            "problem,accepted,score,user_email").order(
-            "created_at", desc=True).limit(500).execute()
+        res = _sb.table("problem_stats").select(
+            "problem,subs,accepted,best,total_score,solvers").limit(1000).execute()
+        rows = res.data or []
+    except Exception as e:
+        print(f"[web] problem_stats view unavailable ({e}); falling back to a 500-row "
+              "scan — run supabase/schema.sql", file=sys.stderr)
+        try:
+            res = _sb.table("submissions").select(
+                "problem,accepted,score,user_email").order(
+                "created_at", desc=True).limit(500).execute()
+        except Exception as e2:
+            raise _db_err(e2)
+        agg: dict = {}
+        for r in res.data or []:
+            p = agg.setdefault(r["problem"], {"subs": 0, "accepted": 0, "best": 0,
+                                              "total_score": 0, "solvers": set()})
+            p["subs"] += 1
+            if r["accepted"]:
+                p["accepted"] += 1
+                if r.get("user_email"):
+                    p["solvers"].add(r["user_email"])
+            p["best"] = max(p["best"], r["score"] or 0)
+            p["total_score"] += r["score"] or 0
+        rows = [{"problem": k, "subs": v["subs"], "accepted": v["accepted"],
+                 "best": v["best"], "total_score": v["total_score"],
+                 "solvers": len(v["solvers"])} for k, v in agg.items()]
+    out = {}
+    for r in rows:
+        subs = r.get("subs") or 0
+        out[r["problem"]] = {
+            "subs": subs, "accepted": r.get("accepted") or 0,
+            "best": r.get("best") or 0, "solvers": r.get("solvers") or 0,
+            "avg": round((r.get("total_score") or 0) / subs, 1) if subs else 0.0,
+        }
+    return {"configured": True, "stats": out}
+
+
+# ---- contests (B7) ----
+CONTEST_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{1,39}$")
+
+
+def _norm_ts(value: str, field: str) -> str:
+    try:
+        parsed = dt.datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+    except Exception:
+        raise HTTPException(status_code=400, detail=f"{field} must be ISO-8601 (e.g. 2026-11-01T09:00:00Z)")
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed.astimezone(dt.timezone.utc).isoformat()
+
+
+def _contest_public(row: dict) -> dict:
+    return {
+        "id": row.get("id", ""), "title": row.get("title", ""),
+        "starts_at": row.get("starts_at"), "ends_at": row.get("ends_at"),
+        "freeze_minutes": row.get("freeze_minutes") or 0,
+        "show_samples": row.get("show_samples", True),
+        "status": _contest_window(row),
+        "problems": [str(x) for x in (row.get("problems") or [])],
+    }
+
+
+def _contest_rows() -> List[dict]:
+    res = _sb.table("contests").select("*").order("starts_at", desc=True).limit(200).execute()
+    return res.data or []
+
+
+@app.get("/api/contests")
+def list_contests() -> dict:
+    if _sb is None:
+        return {"configured": False, "contests": []}
+    try:
+        return {"configured": True, "contests": [_contest_public(r) for r in _contest_rows()]}
+    except Exception as e:
+        # Read-only listing: degrade instead of 500 while the contests table is
+        # missing (schema migration not run yet).
+        print(f"[web] contests listing failed: {e}", file=sys.stderr)
+        return {"configured": False, "contests": [],
+                "hint": "contests table missing - run supabase/schema.sql"}
+
+
+@app.post("/api/contests")
+async def upsert_contest(request: Request) -> dict:
+    user = request.session.get("user") or {}
+    if not _is_admin(user.get("email", "")):
+        raise HTTPException(status_code=403, detail="admin only")
+    if _sb is None:
+        raise HTTPException(status_code=404, detail="contests not configured")
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid JSON")
+    cid = str(body.get("id", "")).strip().lower()
+    if not CONTEST_ID_RE.match(cid):
+        raise HTTPException(status_code=400,
+                            detail="id must be 2-40 chars: a-z 0-9 _ -")
+    title = str(body.get("title", "")).strip()[:120] or cid
+    starts = _norm_ts(body.get("starts_at", ""), "starts_at")
+    ends = _norm_ts(body.get("ends_at", ""), "ends_at")
+    if ends <= starts:
+        raise HTTPException(status_code=400, detail="ends_at must be after starts_at")
+    problems = [str(p) for p in (body.get("problems") or [])]
+    unknown = [p for p in problems if p not in PROBLEMS]
+    if not problems or unknown:
+        raise HTTPException(status_code=400,
+                            detail=f"problems must be a non-empty list of problem ids (unknown: {unknown})")
+    try:
+        freeze = max(0, min(int(body.get("freeze_minutes") or 0), 24 * 60))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="freeze_minutes must be a number")
+    row = {
+        "id": cid, "title": title, "starts_at": starts, "ends_at": ends,
+        "problems": problems, "freeze_minutes": freeze,
+        "show_samples": bool(body.get("show_samples", True)),
+        "created_by": user["email"],
+    }
+    try:
+        _sb.table("contests").upsert(row, on_conflict="id").execute()
     except Exception as e:
         raise _db_err(e)
-    agg: dict = {}
+    return {"ok": True, "contest": _contest_public(row)}
+
+
+@app.delete("/api/contests/{cid}")
+def delete_contest(request: Request, cid: str) -> dict:
+    user = request.session.get("user") or {}
+    if not _is_admin(user.get("email", "")):
+        raise HTTPException(status_code=403, detail="admin only")
+    if _sb is None:
+        raise HTTPException(status_code=404, detail="contests not configured")
+    try:
+        _sb.table("contests").delete().eq("id", cid).execute()
+    except Exception as e:
+        raise _db_err(e)
+    return {"ok": True}
+
+
+def _contest_scoreboard(contest: dict, live: bool) -> List[dict]:
+    """Best score per problem per user inside one contest.
+
+    Non-admins see a frozen board while the contest runs: submissions newer than
+    ends_at - freeze_minutes are hidden until the contest is over.
+    """
+    if _sb is None:
+        return []
+    try:
+        end = dt.datetime.fromisoformat(str(contest.get("ends_at")).replace("Z", "+00:00"))
+    except Exception:
+        end = None
+    freeze_at = None
+    if not live and end and (contest.get("freeze_minutes") or 0) > 0:
+        freeze_at = end - dt.timedelta(minutes=int(contest["freeze_minutes"]))
+    try:
+        res = _sb.table("submissions").select(
+            "user_email,name,problem,score,accepted,created_at").eq(
+            "contest_id", contest.get("id", "")).order("created_at").limit(5000).execute()
+    except Exception as e:
+        raise _db_err(e)
+    users: Dict[str, dict] = {}
     for r in res.data or []:
-        p = agg.setdefault(r["problem"], {"subs": 0, "accepted": 0, "best": 0,
-                                          "total_score": 0, "solvers": set()})
-        p["subs"] += 1
-        if r["accepted"]:
-            p["accepted"] += 1
-            if r.get("user_email"):
-                p["solvers"].add(r["user_email"])
-        p["best"] = max(p["best"], r["score"] or 0)
-        p["total_score"] += r["score"] or 0
-    return {"configured": True, "stats": {
-        k: {"subs": v["subs"], "accepted": v["accepted"], "best": v["best"],
-            "solvers": len(v["solvers"]),
-            "avg": round(v["total_score"] / v["subs"], 1)}
-        for k, v in agg.items()
-    }}
+        if freeze_at and dt.datetime.now(dt.timezone.utc) < end:
+            try:
+                created = dt.datetime.fromisoformat(
+                    str(r.get("created_at")).replace("Z", "+00:00"))
+            except Exception:
+                created = None
+            if created and created > freeze_at:
+                continue
+        u = r.get("user_email") or ""
+        if not u:
+            continue
+        agg = users.setdefault(u, {"name": r.get("name") or "?", "best": {}, "solved": set()})
+        agg["name"] = r.get("name") or agg["name"]
+        p = r.get("problem") or ""
+        agg["best"][p] = max(agg["best"].get(p, 0), r.get("score") or 0)
+        if r.get("accepted"):
+            agg["solved"].add(p)
+    board = [{"name": a["name"], "points": sum(a["best"].values()),
+              "solved": len(a["solved"]), "per_problem": a["best"]}
+             for a in users.values()]
+    board.sort(key=lambda t: (-t["points"], -t["solved"], t["name"]))
+    return board
+
+
+@app.get("/api/contests/{cid}")
+def contest_detail(request: Request, cid: str) -> dict:
+    contest = _contest_or_404(cid)
+    user = request.session.get("user") or {}
+    email = user.get("email", "")
+    listed = [str(x) for x in (contest.get("problems") or [])]
+    status = _contest_window(contest)
+    live = _is_admin(email) or status != "running"
+    problems = []
+    for pid in listed:
+        p = PROBLEMS.get(pid)
+        if p is None:
+            continue
+        problems.append({"id": p.pid, "title": p.title, "difficulty": p.difficulty,
+                         "tags": p.tags, "tests": len(p.tests), "samples": len(p.samples),
+                         "time_limit": p.time_limit, "memory_limit": p.memory_limit})
+    return {
+        **_contest_public(contest), "problem_details": problems,
+        "frozen": not live and (contest.get("freeze_minutes") or 0) > 0,
+        "scoreboard": _contest_scoreboard(contest, live),
+    }
+
+
+# ---- admin: rejudge (A4) + plagiarism (B8) ----
+@app.post("/api/admin/rejudge")
+async def admin_rejudge(request: Request) -> dict:
+    """Re-run stored submissions against the current tests.
+
+    Body: {"ids": [...]} or {"problem": "count_islands", "limit": 50}.
+    """
+    user = request.session.get("user") or {}
+    if not _is_admin(user.get("email", "")):
+        raise HTTPException(status_code=403, detail="admin only")
+    if _sb is None:
+        raise HTTPException(status_code=404, detail="history not configured")
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid JSON")
+    ids = [str(i) for i in (body.get("ids") or [])][:REJUDGE_MAX]
+    problem = str(body.get("problem", "")).strip()
+    try:
+        limit = max(1, min(int(body.get("limit") or 50), REJUDGE_MAX))
+    except (TypeError, ValueError):
+        limit = 50
+    cols = "id,problem,language,filename,name,user_email,code"
+    try:
+        if ids:
+            res = _sb.table("submissions").select(cols).in_("id", ids).execute()
+        else:
+            if not problem:
+                raise HTTPException(status_code=400, detail="give ids[] or problem")
+            res = _sb.table("submissions").select(cols).eq("problem", problem).order(
+                "created_at", desc=True).limit(limit).execute()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise _db_err(e)
+    queued: List[str] = []
+    skipped: List[str] = []
+    for row in res.data or []:
+        pid = row.get("problem", "")
+        lang = row.get("language", "")
+        code = row.get("code") or ""
+        if not code.strip() or pid not in PROBLEMS or lang not in LANGS:
+            skipped.append(str(row.get("id")))
+            continue
+        job = await _create_job({
+            "kind": "rejudge", "user_email": row.get("user_email") or "",
+            "name": row.get("name") or "", "problem": pid, "language": lang,
+            "filename": row.get("filename"), "source": code,
+            "target_id": row.get("id"), "reveal": REVEAL_SAMPLES,
+            "tests_hash": grader.tests_hash(PROBLEMS[pid]),
+            "grader_version": grader.GRADER_VERSION,
+        }, track_active=False)
+        queued.append(job["id"])
+    return {"queued": len(queued), "skipped": len(skipped), "jobs": queued}
+
+
+def _plagiarism_module():
+    """tools/plagiarism.py is a standalone script: load it without packaging."""
+    path = ROOT / "tools" / "plagiarism.py"
+    if not path.is_file():
+        return None
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("ng_plagiarism", path)
+    if spec is None or spec.loader is None:
+        return None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@app.get("/api/admin/plagiarism")
+def admin_plagiarism(request: Request, problem: str = "",
+                     threshold: float = 0.6, limit: int = 300) -> dict:
+    """Similar-code pairs among the most recent submissions of one problem."""
+    user = request.session.get("user") or {}
+    if not _is_admin(user.get("email", "")):
+        raise HTTPException(status_code=403, detail="admin only")
+    if problem not in PROBLEMS:
+        raise HTTPException(status_code=400, detail="unknown problem")
+    if _sb is None:
+        raise HTTPException(status_code=404, detail="history not configured")
+    mod = _plagiarism_module()
+    if mod is None:
+        raise HTTPException(status_code=501, detail="tools/plagiarism.py not available")
+    threshold = min(max(float(threshold), 0.05), 1.0)
+    limit = max(2, min(int(limit), 600))
+    try:
+        res = _sb.table("submissions").select(
+            "id,name,user_email,language,code,created_at").eq(
+            "problem", problem).order("created_at", desc=True).limit(limit).execute()
+    except Exception as e:
+        raise _db_err(e)
+    rows = [{"id": r["id"], "name": r.get("name") or "?", "problem": problem,
+             "language": r.get("language") or "", "code": r.get("code") or ""}
+            for r in (res.data or []) if (r.get("code") or "").strip()]
+    pairs = mod.similar_pairs(rows, threshold=threshold)
+    return {"problem": problem, "threshold": threshold, "scanned": len(rows),
+            "pairs": pairs[:200]}
 
 
 app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
