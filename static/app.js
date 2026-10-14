@@ -635,12 +635,10 @@ async function refreshMe() {
 }
 
 $("login-btn").onclick = () => {
-  try { sessionStorage.setItem("ng_next", location.hash || "#/"); } catch (e) { /* ignore */ }
   location.hash = "#/login";
 };
 
 $("signup-btn").onclick = () => {
-  try { sessionStorage.setItem("ng_next", location.hash || "#/"); } catch (e) { /* ignore */ }
   location.hash = "#/login/register";
 };
 
@@ -741,12 +739,7 @@ async function doPasswordAuth() {
     const d = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
     await refreshMe();
-    let next = "#/";
-    try {
-      next = sessionStorage.getItem("ng_next") || "#/";
-      sessionStorage.removeItem("ng_next");
-    } catch (e) { /* ignore */ }
-    location.hash = next;
+    location.hash = "#/tasks";
   } catch (e) {
     err.textContent = e.message;
   }
@@ -806,7 +799,6 @@ $("submit-btn").onclick = async () => {
   const code = $("editor").value;
   if (!state.user) {
     $("submit-status").textContent = "login ก่อนส่ง";
-    try { sessionStorage.setItem("ng_next", location.hash || "#/"); } catch (e) { /* ignore */ }
     location.hash = "#/login";
     return;
   }
@@ -1170,10 +1162,7 @@ async function init() {
   $("auth-go").onclick = doPasswordAuth;
   $("auth-pass").onkeydown = (e) => { if (e.key === "Enter") doPasswordAuth(); };
   $("google-btn").onclick = () => {
-    let next = "#/";
-    try { next = sessionStorage.getItem("ng_next") || location.hash || "#/"; } catch (e) { /* ignore */ }
-    if (!next.startsWith("#/")) next = "#/";
-    location.href = API + "/api/auth/login?" + new URLSearchParams({ next }).toString();
+    location.href = API + "/api/auth/login?" + new URLSearchParams({ next: "#/tasks" }).toString();
   };
   $("report-send").onclick = async () => {
     if (!state.user) {
