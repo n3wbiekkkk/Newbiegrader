@@ -974,26 +974,36 @@ async function renderSettings() {
   }
 }
 
-/* ---------------- init ---------------- */
-async function init() {
-  try {
-    const h = await apiGet("/api/health");
-    $("health").textContent = `online - ${h.problems.length} ข้อ`;
-    $("health").classList.add("ok");
-  } catch (e) {
-    $("health").textContent = "offline";
-    show("home");
-    document.querySelector("#view-home .hero .lede").textContent =
-      "เชื่อมต่อ server ไม่ได้: " + e.message + " — ตั้งค่า config.js ให้ชี้ไป backend";
-    return;
-  }
-  const data = await apiGet("/api/problems");
-  state.problems = data.problems;
-  await fetchStats();
+/* ---------------- init (cache-first, parallel, non-blocking) ---------------- */
+const PROBLEMS_CACHE_KEY = "ng_problems_v1";
+const PROBLEMS_CACHE_TTL = 3600 * 1000;
 
+function loadProblemsCache() {
+  try {
+    const raw = localStorage.getItem(PROBLEMS_CACHE_KEY);
+    if (!raw) return false;
+    const c = JSON.parse(raw);
+    if (!c || !Array.isArray(c.data) || Date.now() - c.t > PROBLEMS_CACHE_TTL) return false;
+    state.problems = c.data;
+    return state.problems.length > 0;
+  } catch (e) { return false; }
+}
+
+function saveProblemsCache() {
+  try {
+    localStorage.setItem(PROBLEMS_CACHE_KEY,
+      JSON.stringify({ t: Date.now(), data: state.problems }));
+  } catch (e) { /* ignore */ }
+}
+
+function buildFilterOptions() {
   const diffs = [...new Set(state.problems.map((p) => p.difficulty).filter(Boolean))].sort();
   const tags = [...new Set(state.problems.flatMap((p) => p.tags || []))].sort();
-  const fd = $("f-diff"), ft = $("f-tag");
+  const fd = $("f-diff"), ft = $("f-tag"), hf = $("hist-filter");
+  const keep = [fd.value, ft.value, hf.value];
+  fd.querySelectorAll("option:not([value=''])").forEach((o) => o.remove());
+  ft.querySelectorAll("option:not([value=''])").forEach((o) => o.remove());
+  hf.querySelectorAll("option:not([value=''])").forEach((o) => o.remove());
   diffs.forEach((d) => {
     const o = document.createElement("option");
     o.value = d; o.textContent = d;
@@ -1004,17 +1014,23 @@ async function init() {
     o.value = t; o.textContent = t;
     ft.appendChild(o);
   });
-  $("q").oninput = (e) => { state.filter.q = e.target.value; renderTasksTable(); };
-  fd.onchange = (e) => { state.filter.diff = e.target.value; renderTasksTable(); };
-  ft.onchange = (e) => { state.filter.tag = e.target.value; renderTasksTable(); };
-
-  const hf = $("hist-filter");
   state.problems.forEach((p) => {
     const o = document.createElement("option");
     o.value = p.id;
     o.textContent = `${p.id} — ${p.title}`;
     hf.appendChild(o);
   });
+  [fd, ft, hf].forEach((sel, i) => {
+    if ([...sel.options].some((o) => o.value === keep[i])) sel.value = keep[i];
+  });
+}
+
+/* ---------------- init ---------------- */
+async function init() {
+  const fd = $("f-diff"), ft = $("f-tag"), hf = $("hist-filter");
+  $("q").oninput = (e) => { state.filter.q = e.target.value; renderTasksTable(); };
+  fd.onchange = (e) => { state.filter.diff = e.target.value; renderTasksTable(); };
+  ft.onchange = (e) => { state.filter.tag = e.target.value; renderTasksTable(); };
   hf.onchange = loadHistory;
   $("hist-refresh").onclick = loadHistory;
   $("report-send").onclick = async () => {
@@ -1045,13 +1061,49 @@ async function init() {
       $("report-status").textContent = "ส่งไม่สำเร็จ: " + e.message;
     }
   };
-  await refreshMe();
+  // 1. paint instantly from cache (no network wait)
+  if (loadProblemsCache()) buildFilterOptions();
+  router();
+
+  // 2. health gates everything else
+  try {
+    const h = await apiGet("/api/health");
+    $("health").textContent = `online - ${h.problems.length} ข้อ`;
+    $("health").classList.add("ok");
+  } catch (e) {
+    $("health").textContent = "offline";
+    if (!state.problems.length) {
+      show("home");
+      document.querySelector("#view-home .hero .lede").textContent =
+        "เชื่อมต่อ server ไม่ได้: " + e.message + " — ตั้งค่า config.js ให้ชี้ไป backend";
+    }
+    return;
+  }
+
+  // 3. one parallel batch instead of sequential round trips
+  const [data] = await Promise.all([
+    apiGet("/api/problems").catch(() => null),
+    refreshMe(),
+  ]);
+  if (data && JSON.stringify(data.problems) !== JSON.stringify(state.problems)) {
+    state.problems = data.problems;
+    saveProblemsCache();
+    buildFilterOptions();
+    const h = location.hash || "#/";
+    if (h === "#/tasks") renderTasksTable();
+    else if (h === "#/") renderHome();
+    else if (h === "#/archive") renderArchive();
+  }
+
+  // 4. stats never block rendering
+  fetchStats().then(() => {
+    if (document.querySelector("#view-home.active")) renderHome();
+  });
+
   if ((location.hash || "").includes("login=failed")) {
     $("health").textContent = "login failed";
     location.hash = "#/";
   }
-
-  router();
 }
 
 init();
