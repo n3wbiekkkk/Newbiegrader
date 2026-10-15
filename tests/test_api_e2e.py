@@ -326,6 +326,22 @@ class ApiE2E(unittest.TestCase):
         self.assertEqual(bad.status_code, 200)
         self.assertEqual(len(bad.json()["stdout"].strip()), 1)
 
+    def test_sanitize_compile_error_redacts_host_paths(self):
+        """_sanitize_compile_error must never return raw host paths to clients."""
+        from server import _sanitize_compile_error
+        raw = ("clang++: /tmp/workdir/solution.cpp:5:10: error: expected ';' after expression\n"
+               "    return ;\n"
+               "           ^\n"
+               "/usr/include/c++/14/ostream: note: candidate function\n"
+               "gcc version 14.2.0\n")
+        clean = _sanitize_compile_error(raw)
+        for prefix in ("/tmp", "/app", "/root", "/home", "/usr", "/var", "/etc"):
+            self.assertNotIn(prefix, clean,
+                             f"raw host path prefix leaked: {prefix!r}")
+        self.assertIn("[path]", clean)
+        self.assertIn("clang++: [path]", clean)
+        self.assertIn("(compiler)", clean)
+
     def test_history_detail_is_owner_or_admin_only(self):
         self.login(STUDENT_A)
         job = self.judged("thai_time", THAI_REF)
