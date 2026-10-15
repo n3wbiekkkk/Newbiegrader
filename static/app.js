@@ -417,6 +417,7 @@ function currentRouteRender() {
   }
   if (h === "#/history") return () => loadHistory();
   if (h === "#/settings") return () => renderSettings();
+  if (h === "#/admin") return () => renderAdmin();
   return null;
 }
 
@@ -438,6 +439,12 @@ function router() {
   }
   if (h === "#/history") { show("history"); loadHistory(); return; }
   if (h === "#/settings") { show("settings"); renderSettings(); return; }
+  if (h === "#/admin") {
+    if (!state.is_admin) { location.hash = "#/"; return; }
+    show("admin");
+    renderAdmin();
+    return;
+  }
   if (h === "#/login") { show("login"); setAuthMode("login"); return; }
   if (h === "#/login/register") { show("login"); setAuthMode("register"); return; }
   show("home");
@@ -560,6 +567,7 @@ async function fetchMyBest() {
     const h = await apiGet("/api/history?limit=100&mine=1");
     const best = {};
     ((h.configured && h.submissions) || []).forEach((r) => {
+      if (r.contest_id) return;   // contest scores belong to the contest board
       best[r.problem] = Math.max(best[r.problem] || 0, r.score || 0);
     });
     state.myBest = best;
@@ -938,6 +946,9 @@ async function refreshMe() {
   $("login-btn").classList.toggle("hidden", !!state.user);
   $("signup-btn").classList.toggle("hidden", !!state.user);
   $("logout-btn").classList.toggle("hidden", !state.user);
+  const navAdmin = $("nav-admin");
+  if (navAdmin) navAdmin.classList.toggle("hidden", !state.is_admin);
+  if (!state.is_admin && (location.hash || "") === "#/admin") location.hash = "#/";
   const chip = $("user-chip");
   chip.classList.toggle("hidden", !state.user);
   if (state.user) {
@@ -1636,14 +1647,15 @@ async function renderContests() {
     }
     body.classList.remove("dim");
     body.innerHTML = `<table class="tests"><thead><tr>
-      <th>#</th><th>คอนเทสต์</th><th>สถานะ</th><th>ช่วงเวลา (เวลาไทย)</th><th>โจทย์</th>
+      <th>#</th><th>คอนเทสต์</th><th>สถานะ</th><th>ช่วงเวลา (เวลาไทย)</th><th>โจทย์</th><th>ผู้ลงทะเบียน</th>
     </tr></thead><tbody>` + rows.map((c, i) =>
       `<tr class="test-row" data-contest="${esc(c.id)}">
         <td>${String(i + 1).padStart(2, "0")}</td>
         <td><strong>${esc(c.title || c.id)}</strong> <span class="dim">${esc(c.id)}</span></td>
-        <td>${contestStatusBadge(c.status)}</td>
+        <td>${contestStatusBadge(c.status)}${c.registered ? ` ${badge("ลงทะเบียนแล้ว", "OK")}` : ""}</td>
         <td>${esc(contestWindowText(c))}</td>
         <td>${(c.problems || []).length} ข้อ</td>
+        <td>${c.participants || 0} คน</td>
       </tr>`).join("") + `</tbody></table>`;
     body.querySelectorAll("tr[data-contest]").forEach((tr) => {
       tr.onclick = () => {
@@ -1673,6 +1685,7 @@ async function renderContest(cid) {
       (d.hide_from_tasks ? " · โจทย์ชุดนี้ไม่โชว์ในหน้า Task" : "");
     $("contest-status-chip").innerHTML = contestStatusBadge(d.status);
     if (d.frozen) $("contest-freeze").classList.remove("hidden");
+    renderContestJoin(d);
     renderContestProblems(d);
     renderContestScoreboard(d);
   } catch (e) {
@@ -1681,6 +1694,62 @@ async function renderContest(cid) {
     meta.textContent = "";
     $("contest-problems").innerHTML = `<span class="dim">${esc(msg)}</span>`;
     $("contest-scoreboard").innerHTML = `<span class="dim">—</span>`;
+  }
+}
+
+function renderContestJoin(d) {
+  const box = $("contest-join");
+  if (!box) return;
+  box.classList.remove("dim");
+  const n = d.participants || 0;
+  const parts = [`<span class="meta">ผู้ลงทะเบียน ${n} คน</span>`];
+  if (d.starts_in_s != null && d.starts_in_s > 0) {
+    parts.push(`<span class="badge b-upcoming">เริ่มในอีก ${durationText(d.starts_in_s)}</span>`);
+  } else if (d.ends_in_s != null && d.ends_in_s > 0 && d.status === "running") {
+    parts.push(`<span class="badge b-running">เหลืออีก ${durationText(d.ends_in_s)}</span>`);
+  }
+  if (!d.registrations_supported) {
+    parts.push(`<span class="dim">ระบบลงทะเบียนยังไม่พร้อม (รัน supabase/schema.sql)</span>`);
+  } else if (d.registered) {
+    parts.push(`<span class="badge b-OK">ลงทะเบียนแล้ว</span>`);
+    if (d.status !== "running") {
+      parts.push(`<button class="ghost-btn" type="button" id="contest-unregister">ยกเลิกลงทะเบียน</button>`);
+    }
+  } else {
+    parts.push(`<button class="submit-btn" type="button" id="contest-register">${icon("send")}<span>Register</span></button>`);
+  }
+  if (!d.problems_open) {
+    parts.push(`<span class="dim">โจทย์จะเปิดให้อ่านตอนเริ่มแข่ง</span>`);
+  } else if (d.status === "running" && !d.can_submit && d.registrations_supported) {
+    parts.push(`<span class="dim">ต้องลงทะเบียนก่อนจึงส่งได้</span>`);
+  }
+  box.innerHTML = parts.join(" ");
+  const reg = $("contest-register");
+  if (reg) reg.onclick = () => contestRegister(d.id, true);
+  const unreg = $("contest-unregister");
+  if (unreg) unreg.onclick = () => contestRegister(d.id, false);
+}
+
+function durationText(seconds) {
+  const s = Math.max(0, Math.floor(seconds));
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60), sec = s % 60;
+  if (d) return `${d} วัน ${h} ชม.`;
+  if (h) return `${h} ชม. ${m} นาที`;
+  if (m) return `${m} นาที ${sec} วิ`;
+  return `${sec} วิ`;
+}
+
+async function contestRegister(cid, register) {
+  const box = $("contest-join");
+  if (box) box.innerHTML = `<span class="dim">${register ? "กำลังลงทะเบียน..." : "กำลังยกเลิก..."}</span>`;
+  try {
+    if (register) await apiPostJson(`/api/contests/${encodeURIComponent(cid)}/register`, {});
+    else await apiDelete(`/api/contests/${encodeURIComponent(cid)}/register`);
+    await renderContest(cid);
+    if (document.querySelector("#view-contests.active")) renderContests();
+  } catch (e) {
+    if (box) box.innerHTML = `<span class="dim">${esc(e.message)}</span>`;
   }
 }
 
@@ -1698,8 +1767,13 @@ function renderContestProblems(d) {
   </tr></thead><tbody>` + list.map((p, i) => {
     const nS = p.samples || 0;
     const nH = Math.max(0, (p.tests || 0) - nS);
-    const link = `<a class="tlink contest-open" href="#/task/${encodeURIComponent(p.id)}">${esc((p.no ? "#" + p.no + " " : "") + p.id)}</a>`;
-    const action = running
+    const label = esc((p.no ? "#" + p.no + " " : "") + p.id);
+    const link = d.problems_open
+      ? `<a class="tlink contest-open" href="#/task/${encodeURIComponent(p.id)}">${label}</a>`
+      : `<span class="dim" title="โจทย์จะเปิดตอนเริ่มแข่ง">${label} <span class="badge b-hidden">ล็อก</span></span>`;
+    const action = !d.problems_open
+      ? `<span class="dim">รอเริ่มแข่ง</span>`
+      : running && d.can_submit
       ? `<button class="ghost-btn" type="button" data-enter="${esc(p.id)}">${icon("send")}<span>ส่งข้อนี้เข้าคอนเทสต์</span></button>`
       : `<a class="ghost-btn contest-open" href="#/task/${encodeURIComponent(p.id)}">${icon("eye")}<span>ดูโจทย์</span></a>`;
     return `<tr>
@@ -1786,18 +1860,6 @@ function setLang(lang) {  if (!["python", "c", "cpp"].includes(lang)) return;
 
 async function renderSettings() {
   const body = $("settings-body");
-  const ac = $("admin-card");
-  const oc = $("overview-card");
-  const tc = $("admin-tools-card");
-  const showAdmin = state.is_admin;
-  ac.classList.toggle("hidden", !showAdmin);
-  oc.classList.toggle("hidden", !showAdmin);
-  tc.classList.toggle("hidden", !showAdmin);
-  if (showAdmin) {
-    loadAdminReports();
-    loadOverview();
-    renderAdminTools();
-  }
   if (!state.user) {
     body.innerHTML = `<span class="dim">login ด้วย Google ก่อนตั้งค่า</span>`;
     return;
@@ -1871,6 +1933,21 @@ function buildProblemSelect(sel, multiple) {
     return `<option value="${esc(p.id)}">${esc(num + p.id)} — ${esc(p.title)}${esc(tag)}</option>`;
   }).join("");
   if (!multiple && prev && [...sel.options].some((o) => o.value === prev)) sel.value = prev;
+}
+
+/* ---------------- admin page (แยกจาก Settings, เห็นเฉพาะ admin) ---------------- */
+function renderAdmin() {
+  if (!state.is_admin) {
+    location.hash = "#/";
+    return;
+  }
+  ["overview-card", "admin-card", "admin-tools-card"].forEach((id) => {
+    const el = $(id);
+    if (el) el.classList.remove("hidden");
+  });
+  loadAdminReports();
+  loadOverview();
+  renderAdminTools();
 }
 
 function renderAdminTools() {

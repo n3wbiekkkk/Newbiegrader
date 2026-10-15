@@ -160,3 +160,43 @@ group by problem;
 -- contest page and in the admin panel. Problems with "hidden": true in their
 -- config.json are always kept out of the public list.
 alter table contests add column if not exists hide_from_tasks boolean not null default true;
+
+-- ============================================================================
+-- Migration 2026-10c: Codeforces-style contests
+--   * contest_registrations: who signed up for a contest (Register button)
+--   * contest submissions stop counting in the global leaderboard/stats
+-- Append-only: safe to re-run.
+-- ============================================================================
+
+create table if not exists contest_registrations (
+  contest_id text not null,
+  user_email text not null,
+  name text not null default '',
+  registered_at timestamptz not null default now(),
+  primary key (contest_id, user_email)
+);
+alter table contest_registrations enable row level security;
+
+-- Scores earned inside a contest belong to that contest only: keep them out of
+-- the all-time views (the contest scoreboard reads submissions directly).
+create or replace view leaderboard_scores as
+select user_email, problem,
+       max(score) as best,
+       bool_or(accepted) as accepted,
+       max(created_at) as last_at,
+       (array_agg(name order by created_at desc)
+        filter (where coalesce(name, '') <> ''))[1] as name
+from submissions
+where user_email <> '' and contest_id is null
+group by user_email, problem;
+
+create or replace view problem_stats as
+select problem,
+       count(*) as subs,
+       count(*) filter (where accepted) as accepted,
+       max(score) as best,
+       sum(score) as total_score,
+       count(distinct user_email) filter (where accepted) as solvers
+from submissions
+where contest_id is null
+group by problem;

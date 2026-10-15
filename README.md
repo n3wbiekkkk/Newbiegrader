@@ -99,7 +99,25 @@ alter table reports enable row level security;
 ```
 - env เพิ่มที่ backend: `ADMIN_EMAILS=a@x.com,b@y.com` (ดู + ปิดรีพอร์ตได้ในหน้า Settings)
 
-## คอนเทสต์ / ตรวจซ้ำ / ตรวจการก็อป (admin)
+## คอนเทสต์ (แบบ Codeforces) / ตรวจซ้ำ / ตรวจการก็อป — อยู่หน้า **Admin** แยกจาก Settings
+
+หน้า **Admin** (`#/admin`) เห็นเฉพาะอีเมลใน `ADMIN_EMAILS` — รวมภาพรวมระบบ, รีพอร์ต, rejudge, ตรวจการก็อป และจัดการคอนเทสต์
+(หน้า Settings เหลือแค่โปรไฟล์ส่วนตัว)
+
+วงจรคอนเทสต์:
+
+| เฟส | ผู้ใช้ทั่วไป | ผู้ลงทะเบียน | admin |
+|---|---|---|---|
+| ก่อนเริ่ม | กด **Register** ได้, อ่านโจทย์ไม่ได้ (ล็อก) | ยังอ่านโจทย์ไม่ได้ | เห็น/แก้อะไรก็ได้ + ดูรายชื่อผู้ลงทะเบียน |
+| ระหว่างแข่ง | ส่งไม่ได้ (ขึ้นให้ลงทะเบียนก่อน) | อ่านโจทย์ + ส่งได้, ยกเลิกลงทะเบียนไม่ได้ | ทุกอย่าง |
+| จบแล้ว | อ่านโจทย์ได้ (ฝึกต่อ) แต่ส่งไม่ได้ | เหมือนผู้ใช้ทั่วไป | ทุกอย่าง |
+
+- **คะแนนที่ได้ในคอนเทสต์ไม่ขึ้น leaderboard กลาง/สถิติ** — ไปอยู่ที่ scoreboard ของคอนเทสต์เท่านั้น (`GET /api/contests/{id}`)
+  และหน้า Tasks (Solved/points) ก็นับเฉพาะการส่งนอกคอนเทสต์
+- API: `POST /api/contests/{cid}/register` · `DELETE /api/contests/{cid}/register` · ส่งงานด้วยฟิลด์ `contest=<id>` ใน `/api/submit`
+- ต้องรัน SQL ใหม่ (migration 2026-10c): ตาราง `contest_registrations` + view ที่กรอง `contest_id is null`
+  ถ้ายังไม่รัน ระบบจะ **ไม่บังคับลงทะเบียน** (ทุกคนส่งได้เหมือนเดิม) และคะแนนคอนเทสต์จะยังขึ้นบอร์ดกลาง
+
 
 - **Contest mode**: `GET /api/contests`, `GET /api/contests/{id}` (มี scoreboard), `POST /api/contests`
   (admin, upsert), `DELETE /api/contests/{id}` — ตาราง `contests` เก็บ `starts_at/ends_at`,

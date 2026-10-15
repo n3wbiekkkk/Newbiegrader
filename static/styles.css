@@ -521,3 +521,6 @@ tr.test-row:hover td { background: var(--panel2); }
   font-weight: 600;
   font-size: 0.85em;
 }
+
+/* contest join bar (Register / countdown / participants) */
+.join-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 6px 0 2px; }

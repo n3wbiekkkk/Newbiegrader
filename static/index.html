@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600;700&display=swap">
-<link rel="stylesheet" href="/styles.css?v=10">
+<link rel="stylesheet" href="/styles.css?v=11">
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -48,6 +48,7 @@
     <a class="nav-link" data-route="leaderboard" href="#/leaderboard"><svg class="ic"><use href="#i-trophy"/></svg><span>Leaderboard</span></a>
     <a class="nav-link" data-route="contests" href="#/contests"><svg class="ic"><use href="#i-contest"/></svg><span>Contests</span></a>
     <a class="nav-link" data-route="history" href="#/history"><svg class="ic"><use href="#i-history"/></svg><span>History</span></a>
+    <a class="nav-link hidden" id="nav-admin" data-route="admin" href="#/admin"><svg class="ic"><use href="#i-settings"/></svg><span>Admin</span></a>
     <a class="nav-link" data-route="settings" href="#/settings"><svg class="ic"><use href="#i-settings"/></svg><span>Settings</span></a>
   </nav>
   <div id="health" class="health" title="server status">...</div>
@@ -164,6 +165,7 @@
       <div>
         <h2 id="contest-title">Loading...</h2>
         <div id="contest-meta" class="meta"></div>
+        <div id="contest-join" class="join-bar dim">—</div>
         <div id="contest-freeze" class="notice hidden">คะแนนถูกแช่แข็ง — ผลการส่งใหม่จะแสดงหลังคอนเทสต์จบ</div>
       </div>
       <div id="contest-status-chip"></div>
@@ -335,6 +337,13 @@
     <div class="card">
       <div id="settings-body" class="dim">Loading...</div>
     </div>
+  </section>
+
+  <!-- ADMIN (เฉพาะ admin) -->
+  <section id="view-admin" class="view">
+    <div class="page-head"><h2>Admin</h2>
+      <p class="dim">เครื่องมือสำหรับผู้ดูแลระบบ (เห็นเฉพาะอีเมลใน ADMIN_EMAILS)</p>
+    </div>
     <div class="card hidden" id="overview-card" style="margin-top:16px">
       <h3 class="pane-h">ภาพรวมระบบ (admin)</h3>
       <div id="overview-stats" class="stat-strip"></div>
@@ -443,6 +452,6 @@
 </footer>
 
 <script src="/config.js?v=4"></script>
-<script src="/app.js?v=13"></script>
+<script src="/app.js?v=14"></script>
 </body>
 </html>
