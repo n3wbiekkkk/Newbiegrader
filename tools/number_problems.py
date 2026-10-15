@@ -185,6 +185,12 @@ def main(argv=None) -> int:
     clash = [p.pid for p in probs if p.no == args.no and p.pid != args.id]
     if args.no > 0 and clash and not args.force:
         ap.error(f"เลข {args.no} ถูกใช้โดย {clash[0]} (ใส่ --force ถ้าต้องการสลับ)")
+    if args.no > 0 and clash:
+        # --force: remove the clashing problem's number so the target can take it
+        # without creating a duplicate. The clashing problem can be re-assigned
+        # with --assign afterward.
+        set_no(clash[0], 0)
+        print(f"{clash[0]}: เลข {args.no} ถูกยกเลิก (ถูกยึดโดย {args.id})")
     set_no(args.id, args.no)
     print(f"{args.id}: เลข {args.no if args.no else '(ลบออก)'}")
     if args.no > 0 and not clash:

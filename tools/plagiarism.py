@@ -284,6 +284,19 @@ def similar_pairs(rows: list[dict], threshold: float = 0.5, k: int = K_DEFAULT,
             if same_language_only and key_a != key_b:
                 continue
             if not fp_a or not fp_b:
+                if not fp_a and not fp_b and len_a == 0 and len_b == 0:
+                    # both truly empty: identical normalized text => perfect match
+                    out.append({
+                        "a_id": id_a,
+                        "a_name": name_a,
+                        "b_id": id_b,
+                        "b_name": name_b,
+                        "language": lang_a if key_a == key_b else f"{lang_a}/{lang_b}",
+                        "similarity": 1.0,
+                        "normalized_len_a": 0,
+                        "normalized_len_b": 0,
+                        "matches": 0,
+                    })
                 continue
             inter = len(fp_a & fp_b)
             union = len(fp_a) + len(fp_b) - inter
