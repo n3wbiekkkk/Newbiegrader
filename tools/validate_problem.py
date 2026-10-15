@@ -242,6 +242,12 @@ def validate_problem(pid: str) -> dict:
         if len(stems) < MIN_TESTS:
             fail(f"only {len(stems)} tests, need at least {MIN_TESTS}")
 
+        # At least one hidden test is required so hidden-test protection
+        # is meaningful.
+        hidden_tests = [s for s in stems if len(s) == 4 and s.startswith("10")]
+        if not hidden_tests:
+            fail(f"problem {pid}: at least one hidden test (numbered 1001+) is required")
+
         # samples key: canonical form is a list of test-name strings; an int
         # (first N tests public) is also accepted because grader.load_problem
         # supports it, but the repo does not use it.
