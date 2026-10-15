@@ -127,6 +127,70 @@ class OutputCollectionTests(unittest.TestCase):
                                "", 3, 128)
         self.assertEqual(result["reason"], "sigkill")
 
+    def test_strict_refusal_marker_maps_to_sandbox_unavailable(self):
+        # Fail-closed plumbing, platform-independent: a wrapper that exits
+        # 126 with the marker (strict netns refusal) must surface as
+        # reason "sandbox-unavailable", never as a verdict.
+        from judge_runner import BoundedResult
+        fake = BoundedResult(stdout="", stderr="[grader] FATAL: boom (GRADER_REQUIRE_NETNS=1); refusing",
+                             returncode=126, reason="")
+        with patch("judge_runner.run_bounded", return_value=fake):
+            result = grader.run_one([sys.executable, "-c", "print(1)"], "", 3, 128)
+        self.assertEqual(result["reason"], "sandbox-unavailable")
+        # ...and judge_test must raise instead of scoring it.
+        prob = grader.load_problem("hanoi")
+        with patch("judge_runner.run_bounded", return_value=fake):
+            with self.assertRaises(grader.SandboxUnavailable):
+                grader.judge_test([sys.executable, "-c", "print(1)"],
+                                  prob.tests[0], prob, False, False, None)
+        # An ordinary exit-126 WITHOUT the marker stays a plain RE, not refusal.
+        plain = BoundedResult(stdout="", stderr="oops", returncode=126, reason="")
+        with patch("judge_runner.run_bounded", return_value=plain):
+            result = grader.run_one([sys.executable, "-c", "print(1)"], "", 3, 128)
+        self.assertNotEqual(result["reason"], "sandbox-unavailable")
+
+    @unittest.skipUnless(sys.platform.startswith("linux") and os.geteuid() == 0,
+                         "needs Linux + root for the real namespace path")
+    def test_strict_netns_refuses_without_namespace(self):
+        # End-to-end security invariant under GRADER_REQUIRE_NETNS=1: either
+        # execution is refused before user code starts (hosts where unshare
+        # fails, e.g. stock Docker), or the namespace exists and the socket
+        # is denied. Unrestricted egress must never happen.
+        with tempfile.TemporaryDirectory() as tmp:
+            os.chmod(tmp, 0o777)  # judged child runs as nobody: needs write access
+            canary = Path(tmp) / "ran"
+            code = (f"open({str(canary)!r}, 'w').write('x')\n"
+                    "import socket\n"
+                    "try:\n"
+                    " socket.create_connection(('8.8.8.8', 53), timeout=5).close()\n"
+                    " print('EGRESS-OPEN')\n"
+                    "except Exception:\n"
+                    " print('EGRESS-DENIED')\n")
+            prob = grader.load_problem("hanoi")
+            tc = prob.tests[0]
+            with patch.dict(os.environ, {"GRADER_REQUIRE_NETNS": "1"}):
+                try:
+                    verdict, _w, _c, _m, _e, actual = grader.judge_test(
+                        [sys.executable, "-c", code], tc, prob,
+                        False, False, None)
+                except grader.SandboxUnavailable:
+                    verdict, actual = "REFUSED", ""
+            if verdict == "REFUSED":
+                self.assertFalse(canary.exists(), "user code ran despite refusal")
+            else:
+                # Namespace was created (e.g. caps/userns host): the connect
+                # attempt must then fail fast, so the verdict is WA with the
+                # denial printed — never AC, never EGRESS-OPEN.
+                self.assertNotEqual(verdict, "AC")
+                self.assertIn("EGRESS-DENIED", actual,
+                              "namespace exists but egress was allowed")
+        # Default mode is unchanged: same program executes (and fails open,
+        # which is why strict mode exists for public hosts).
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("GRADER_REQUIRE_NETNS", None)
+            result = grader.run_one([sys.executable, "-c", "print('hi')"], "", 3, 128)
+        self.assertEqual(result["stdout"].strip(), "hi")
+
 
 class RunnerTests(unittest.IsolatedAsyncioTestCase):
     def runner(self):

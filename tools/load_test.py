@@ -149,7 +149,11 @@ class Client:
             urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
 
     def request(self, kind: str, path: str, *, fields=None, body=None, timeout=None) -> Response:
-        headers = {"Accept": "application/json"}
+        # The server's CSRF check requires unsafe browser-cookie requests to
+        # carry Origin; this harness authenticates with session cookies, so it
+        # sends the target's own origin (validate_target guarantees target is
+        # a bare origin, never a URL with path/query/credentials).
+        headers = {"Accept": "application/json", "Origin": self.target}
         data = None
         if fields is not None:
             headers["Content-Type"] = "application/x-www-form-urlencoded"

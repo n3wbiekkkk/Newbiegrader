@@ -121,6 +121,42 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def netns_available(timeout: float = 10.0) -> bool:
+    """True iff this host can create a network namespace for judged code.
+
+    Probed in a throwaway subprocess, so this process' own network stack is
+    never disturbed. False on non-Linux, on any failure, and when the probe
+    lacks privilege (the sandbox needs root regardless, so an unprivileged
+    False is the correct fail-closed answer, not a separate case).
+    """
+    if not sys.platform.startswith("linux"):
+        return False
+    try:
+        probe = [sys.executable, "-c",
+                 "import ctypes, os\n"
+                 "try:\n"
+                 "    libc = ctypes.CDLL('libc.so.6', use_errno=True)\n"
+                 "except OSError:\n"
+                 "    libc = ctypes.CDLL('libc.musl-x86_64.so.1', use_errno=True)\n"
+                 "os._exit(0 if libc.unshare(0x40000000) == 0 else 1)"]
+        return subprocess.run(probe, timeout=timeout,
+                              capture_output=True).returncode == 0
+    except Exception:
+        return False
+
+
+# Exit code + marker used when strict network isolation refuses execution.
+# 125 = setuid drop failed; 126 = netns required but unavailable. run_one maps
+# rc 126 + marker to reason "sandbox-unavailable", which judge_test turns
+# into SandboxUnavailable (a job-level error, never a verdict).
+SANDBOX_REFUSED_RC = 126
+SANDBOX_REFUSED_MARKER = "GRADER_REQUIRE_NETNS"
+
+
 SAMPLE_INTERVAL = _env_float("GRADER_SAMPLE_INTERVAL",
                              0.005 if CPU_QUOTA > 1 else 0.02)
 # Compiling C++ with -O2 can take tens of seconds on a fractional core.
@@ -397,6 +433,14 @@ def prepare_command(src: Path, workdir: Path) -> tuple[list[str], str, str]:
 
 class CompileError(Exception):
     pass
+
+
+class SandboxUnavailable(Exception):
+    """The execution environment cannot satisfy mandatory isolation.
+
+    Raised instead of returning a verdict: the submission was NOT judged and
+    must surface as a job-level error, never AC/WA/RE.
+    """
 
 
 def _compile(command: list[str], workdir: Path):
@@ -709,6 +753,17 @@ def build_limits(memory_mb: int, time_limit: float, sandbox: bool = True):
                 pass
         try:
             if sandbox and sys.platform.startswith("linux") and os.geteuid() == 0:
+                # Strict network isolation (public-production mode): the operator
+                # sets GRADER_REQUIRE_NETNS=1 to guarantee judged code has no
+                # egress. If the namespace cannot be created, REFUSE to run
+                # instead of silently continuing with network. Default off, so
+                # dev/CI/self-hosted behaviour is unchanged. Requires a host
+                # where unshare(CLONE_NEWNET) works (userns-enabled kernel or
+                # equivalent container network controls) — verified with
+                # disposable probes, never assumed. Do NOT "fix" this by
+                # granting CAP_SYS_ADMIN: that capability is root-equivalent.
+                strict_netns = _env_flag("GRADER_REQUIRE_NETNS")
+                netns_ok = False
                 try:  # detached net namespace ก่อน drop root (ต้องใช้ CAP_SYS_ADMIN)
                     import ctypes
                     try:
@@ -721,9 +776,17 @@ def build_limits(memory_mb: int, time_limit: float, sandbox: bool = True):
                         print(f"[grader] WARNING: unshare(CLONE_NEWNET) failed "
                               f"(ret={ret}, errno={errno}); continuing with rlimits",
                               file=sys.stderr)
+                    else:
+                        netns_ok = True
                 except Exception as e:
                     print(f"[grader] WARNING: network namespace unavailable ({e}); "
                           f"continuing with rlimits", file=sys.stderr)
+                if not netns_ok and strict_netns:
+                    # Fail closed BEFORE setuid/exec: user code never starts.
+                    print("[grader] FATAL: network namespace unavailable "
+                          "(GRADER_REQUIRE_NETNS=1); refusing to run",
+                          file=sys.stderr)
+                    os._exit(SANDBOX_REFUSED_RC)
                 try:
                     import grp
                     gid = grp.getgrnam("nogroup").gr_gid
@@ -769,6 +832,11 @@ def judge_env(tmpdir: str | None = None) -> dict:
            "GOCACHE": tmp, "GOPATH": tmp, "GOMODCACHE": tmp,
            "CARGO_HOME": tmp, "RUSTUP_HOME": tmp,
            "GRADLE_USER_HOME": tmp, "MAVEN_OPTS": f"-Djava.io.tmpdir={tmp}"}
+    if _env_flag("GRADER_REQUIRE_NETNS"):
+        # Passthrough so the --sandbox wrapper (spawned with this env) sees
+        # the operator's strict-isolation demand; run_one scrubs everything
+        # else. Operator config, never a secret.
+        env["GRADER_REQUIRE_NETNS"] = "1"
     if os.name == "nt":
         # Windows runtimes need SystemRoot; MinGW otherwise chooses Windows/ as
         # its temp directory, which ordinary users cannot write.
@@ -861,6 +929,10 @@ def run_one(cmd: list[str], stdin_data: str, time_limit: float, memory_mb: int,
                 "reason": "spawn-fail"}
     out, err, rc = result.stdout, result.stderr, result.returncode
     reason = result.reason
+    if rc == SANDBOX_REFUSED_RC and SANDBOX_REFUSED_MARKER in (err or ""):
+        # Strict-mode refusal: the wrapper exited before exec, so NO user
+        # code ran. (A user program exiting 126 would lack the marker.)
+        reason = "sandbox-unavailable"
     if not reason and rc is not None and rc < 0:
         try:
             sig = -rc
@@ -896,11 +968,19 @@ def run_one(cmd: list[str], stdin_data: str, time_limit: float, memory_mb: int,
 
 def judge_test(cmd, tc: TestCase, prob: Problem, strict: bool,
                verbose: bool, lang: Optional[str] = None) -> tuple[str, float, float, float, str, str]:
-    """Returns (verdict, wall_s, cpu_s, peak_mb, detail, actual_stdout)."""
+    """Returns (verdict, wall_s, cpu_s, peak_mb, detail, actual_stdout).
+
+    Raises SandboxUnavailable when mandatory isolation cannot be provided:
+    the submission was not judged and must not receive any verdict.
+    """
     res = run_one(cmd, tc.input, prob.time_limit, prob.memory_limit, lang)
     wall, cpu, mem = res["wall"], res["cpu"], res["peak_mb"]
     checker = "exact" if strict else prob.checker
     reason = res.get("reason", "")
+
+    if reason == "sandbox-unavailable":
+        raise SandboxUnavailable(
+            "network isolation unavailable; refusing to run (not a verdict)")
 
     if reason == "timeout":
         return "TLE", wall, cpu, mem, "", ""
@@ -1038,15 +1118,27 @@ def cmd_run(args) -> int:
                     results.append({"name": tc.name, "verdict": "SKIP", "wall": 0.0,
                                     "cpu": 0.0, "mem": 0.0, "extra": "", "actual": "", "tc": tc})
                     continue
-                r = execute(tc)
+                try:
+                    r = execute(tc)
+                except SandboxUnavailable as e:
+                    print(c(f"[ENV] {e}", C.RED))
+                    print(c("No verdict recorded: fix the execution environment, not the solution.",
+                            C.YELLOW))
+                    return 2
                 results.append(r)
                 report(i, r)
                 if r["verdict"] != "AC" and args.stop_on_fail:
                     print(c("  (stopping on first failure: --stop-on-fail)", C.DIM))
                     stop = True
         else:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as ex:
-                ordered = list(ex.map(execute, prob.tests))
+            try:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as ex:
+                    ordered = list(ex.map(execute, prob.tests))
+            except SandboxUnavailable as e:
+                print(c(f"[ENV] {e}", C.RED))
+                print(c("No verdict recorded: fix the execution environment, not the solution.",
+                        C.YELLOW))
+                return 2
             for i, r in enumerate(ordered, 1):
                 results.append(r)
                 report(i, r)
