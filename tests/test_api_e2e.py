@@ -67,6 +67,13 @@ class ApiE2E(unittest.TestCase):
         cls.client = cls._ctx.__enter__()
         cls.fake = FakeSupabase()
         server._sb = cls.fake
+        cls._defaults = {
+            "MEMORY_CAP_MB": server.MEMORY_CAP_MB,
+            "QUEUE_MAX": server.QUEUE_MAX,
+            "SUBMIT_QUOTA": server.SUBMIT_QUOTA,
+            "ACCOUNT_MAX_TRIES": server.ACCOUNT_MAX_TRIES,
+            "LOGIN_MAX_TRIES": server.LOGIN_MAX_TRIES,
+        }
 
     @classmethod
     def tearDownClass(cls):
@@ -93,6 +100,14 @@ class ApiE2E(unittest.TestCase):
         # some tests assert on the running totals)
         self.fake.tables["contests"] = []
         self.fake.tables["contest_registrations"] = []
+        # Restore module-level state mutated by individual tests
+        server.MEMORY_CAP_MB = type(self)._defaults["MEMORY_CAP_MB"]
+        server.QUEUE_MAX = type(self)._defaults["QUEUE_MAX"]
+        server.SUBMIT_QUOTA = type(self)._defaults["SUBMIT_QUOTA"]
+        server.ACCOUNT_MAX_TRIES = type(self)._defaults["ACCOUNT_MAX_TRIES"]
+        server.LOGIN_MAX_TRIES = type(self)._defaults["LOGIN_MAX_TRIES"]
+        for p in server.PROBLEMS.values():
+            p.hidden = False
 
     def login(self, email: str, name: str = "Tester") -> None:
         self.client.cookies.clear()
