@@ -36,3 +36,36 @@ Status: **pending**. The user deferred Linux execution on 2026-10-15 because WSL
 ## Results
 
 Pending user-run Linux validation.
+
+### Disposable-container results 2026-10-15 (not a substitute for prod-host run)
+
+Env: Docker `python:3.11-slim` (+gcc, procps, FastAPI deps), Linux 6.8
+aarch64, root; prod `Dockerfile` also built and probed. No secrets mounted.
+Engine files identical to working tree (P0-6 touches only
+server.py/tests/test_api_e2e.py/tools/load_test.py).
+
+- `test_judge_runner` (14 tests incl. 2 new strict-mode tests): 14/14 OK,
+  both with stock caps and with `--cap-add=SYS_ADMIN`.
+- Probes: uid/gid drop to 65534 + empty groups OK; protected files
+  (`0700`/`0600`, prod image layout) unreadable as `nobody` OK; TLE/MLE/
+  rlimits/descendant-reaping/env-scrub/cleanup OK; AC/WA/TLE/MLE/OLE/RE
+  verdict matrix OK under strict mode with working netns.
+- Network: `unshare(CLONE_NEWNET)` fails EPERM on stock Docker and judged
+  code keeps egress (DNS + TCP OPEN) — see F-1. Fixed by code: strict
+  mode (`GRADER_REQUIRE_NETNS=1`) refuses before exec (exit 126, canary
+  absent); with caps, egress is denied and verdicts stay correct.
+- Same-uid tmpdirs: sibling read of 0644-in-0755 by absolute path
+  succeeds — isolation rests on unguessable tmp names (see F-2).
+- Pre-existing macOS-only failures (RLIMIT_AS, subreaper supervision)
+  do not occur on Linux; they are platform artifacts, not regressions.
+
+### Strict boot-contract results 2026-10-15 (same disposable env)
+
+- `validate_runtime` on Linux+root refuses boot with `GRADER_REQUIRE_NETNS`
+  missing, `=0`, and `=1`-without-namespace (explicit RuntimeError, no
+  workers spawned); boots with `GRADER_ALLOW_UNISOLATED_JUDGE=1`, with
+  `GRADER_ROLE=api` (exempt, never executes), and with `=1` where the
+  namespace probe passes.
+- Committed `IsolationPosture` matrix (7 tests) pins the contract on all
+  platforms; the namespace probe itself is covered by real runs, never
+  mocked green.

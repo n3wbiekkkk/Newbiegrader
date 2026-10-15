@@ -298,3 +298,194 @@ class HostAdmission(unittest.TestCase):
         self.assertEqual(blocked.stdout.strip(), "busy")
         self.assertEqual(allowed.returncode, 0, allowed.stderr)
         self.assertEqual(allowed.stdout.strip(), "acquired")
+
+
+class IsolationPosture(unittest.TestCase):
+    """Fail-closed boot contract: judge roles must declare their isolation
+    posture; silence is never consent to judge without guaranteed isolation."""
+
+    def posture(self, **kw):
+        base = dict(role="combined", strict=False, acknowledged=False,
+                    can_sandbox=False, netns_ok=False)
+        base.update(kw)
+        return server._judge_isolation_posture(**base)
+
+    def test_api_role_never_judges_so_never_blocked(self):
+        for strict in (False, True):
+            self.assertEqual(
+                self.posture(role="api", strict=strict, can_sandbox=True),
+                "api")
+
+    def test_strict_with_working_namespace_boots(self):
+        self.assertEqual(
+            self.posture(role="combined", strict=True,
+                         can_sandbox=True, netns_ok=True), "strict")
+        self.assertEqual(
+            self.posture(role="worker", strict=True, acknowledged=True,
+                         can_sandbox=True, netns_ok=True), "strict")
+
+    def test_strict_on_incapable_runtime_refuses(self):
+        with self.assertRaises(RuntimeError):
+            self.posture(role="combined", strict=True, can_sandbox=False)
+        with self.assertRaises(RuntimeError):
+            self.posture(role="worker", strict=True,
+                         can_sandbox=True, netns_ok=False)
+
+    def test_missing_and_disabled_strict_refuse_on_sandbox_host(self):
+        # Absent and explicitly-0 are indistinguishable — and equally refused.
+        with self.assertRaises(RuntimeError):
+            self.posture(role="combined", can_sandbox=True)
+        with self.assertRaises(RuntimeError):
+            self.posture(role="worker", strict=False,
+                         can_sandbox=True, netns_ok=True)
+
+    def test_explicit_acknowledgement_boots_anywhere(self):
+        self.assertEqual(
+            self.posture(role="combined", acknowledged=True,
+                         can_sandbox=True), "acknowledged")
+        self.assertEqual(self.posture(role="worker", acknowledged=True),
+                         "acknowledged")
+
+    def test_dev_runtime_warns_instead_of_refusing(self):
+        self.assertEqual(self.posture(role="combined"), "dev")
+
+    def test_netns_probe_is_negative_off_linux(self):
+        import grader
+        if sys.platform.startswith("linux"):
+            self.skipTest("probe behaviour verified in disposable Linux runs")
+        self.assertFalse(grader.netns_available())
+
+
+def _http_request(peer, headers=None):
+    raw = [(k.lower().encode(), v.encode()) for k, v in (headers or {}).items()]
+    scope = {"type": "http", "headers": raw, "client": (peer, 12345)}
+    return Request(scope)
+
+
+class TrustedProxyIp(unittest.TestCase):
+    """_client_ip: peer-first trust, chain walked only from trusted peers."""
+
+    def test_direct_request_uses_peer_ip(self):
+        r = _http_request("203.0.113.7")
+        self.assertEqual(server._client_ip(r), "203.0.113.7")
+
+    def test_direct_forged_xff_is_ignored(self):
+        r = _http_request("203.0.113.7",
+                          {"x-forwarded-for": "198.51.100.9, 192.0.2.1"})
+        self.assertEqual(server._client_ip(r), "203.0.113.7")
+
+    def test_direct_forged_cf_connecting_ip_is_ignored(self):
+        r = _http_request("203.0.113.7",
+                          {"cf-connecting-ip": "198.51.100.9"})
+        self.assertEqual(server._client_ip(r), "203.0.113.7")
+
+    def test_trusted_peer_honors_client_ip(self):
+        with unittest.mock.patch.dict(os.environ,
+                                      {"GRADER_TRUSTED_PROXY_CIDRS": "10.0.0.0/8"}):
+            r = _http_request("10.1.2.3",
+                              {"x-forwarded-for": "203.0.113.7"})
+            self.assertEqual(server._client_ip(r), "203.0.113.7")
+
+    def test_spoofed_chain_cannot_pick_attacker_address(self):
+        with unittest.mock.patch.dict(os.environ,
+                                      {"GRADER_TRUSTED_PROXY_CIDRS": "10.0.0.0/8"}):
+            # Rightmost untrusted entry wins; forged prepends are never used.
+            r = _http_request("10.1.2.3", {"x-forwarded-for":
+                                           "6.6.6.6, 203.0.113.7"})
+            self.assertEqual(server._client_ip(r), "203.0.113.7")
+            # Trusted hops are skipped leftwards to the real client.
+            r = _http_request("10.1.2.3", {"x-forwarded-for":
+                                           "203.0.113.7, 10.9.9.9"})
+            self.assertEqual(server._client_ip(r), "203.0.113.7")
+            # CF header agrees with the chain walk.
+            r = _http_request("10.1.2.3",
+                              {"cf-connecting-ip": "203.0.113.7",
+                               "x-forwarded-for": "203.0.113.7"})
+            self.assertEqual(server._client_ip(r), "203.0.113.7")
+
+    def test_conflicting_cf_cannot_override_usable_xff(self):
+        # M-1: a non-sanitizing proxy may forward a client-forged
+        # CF-Connecting-IP alongside a correct XFF chain. XFF wins.
+        with unittest.mock.patch.dict(os.environ,
+                                      {"GRADER_TRUSTED_PROXY_CIDRS": "10.0.0.0/8"}):
+            r = _http_request("10.1.2.3",
+                              {"cf-connecting-ip": "198.51.100.9",
+                               "x-forwarded-for": "203.0.113.7"})
+            self.assertEqual(server._client_ip(r), "203.0.113.7")
+            # Stability: varying only CF never moves the identity.
+            for cf in ("198.51.100.9", "192.0.2.1", "203.0.113.7"):
+                r = _http_request("10.1.2.3",
+                                  {"cf-connecting-ip": cf,
+                                   "x-forwarded-for": "203.0.113.7"})
+                self.assertEqual(server._client_ip(r), "203.0.113.7", cf)
+            # Even when every XFF hop is trusted, a conflicting CF is
+            # ignored (resolves to the peer, never to the forged value).
+            r = _http_request("10.1.2.3",
+                              {"cf-connecting-ip": "198.51.100.9",
+                               "x-forwarded-for": "10.9.9.9"})
+            self.assertEqual(server._client_ip(r), "10.1.2.3")
+            # A malformed XFF chain cannot fall back to a conflicting CF.
+            r = _http_request("10.1.2.3",
+                              {"cf-connecting-ip": "198.51.100.9",
+                               "x-forwarded-for": "203.0.113.7, garbage!!!"})
+            self.assertEqual(server._client_ip(r), "10.1.2.3")
+
+    def test_cf_fallback_only_without_xff(self):
+        with unittest.mock.patch.dict(os.environ,
+                                      {"GRADER_TRUSTED_PROXY_CIDRS": "10.0.0.0/8"}):
+            r = _http_request("10.1.2.3",
+                              {"cf-connecting-ip": "203.0.113.7"})
+            self.assertEqual(server._client_ip(r), "203.0.113.7")
+            # ...but never from an untrusted direct caller.
+            r = _http_request("203.0.113.99",
+                              {"cf-connecting-ip": "203.0.113.7",
+                               "x-forwarded-for": "203.0.113.7"})
+            self.assertEqual(server._client_ip(r), "203.0.113.99")
+
+    def test_unconfigured_proxy_peer_is_untrusted(self):
+        with unittest.mock.patch.dict(os.environ,
+                                      {"GRADER_TRUSTED_PROXY_CIDRS": "10.0.0.0/8"}):
+            r = _http_request("192.0.2.99",
+                              {"x-forwarded-for": "203.0.113.7"})
+            self.assertEqual(server._client_ip(r), "192.0.2.99")
+
+    def test_malformed_headers_never_500(self):
+        with unittest.mock.patch.dict(os.environ,
+                                      {"GRADER_TRUSTED_PROXY_CIDRS": "10.0.0.0/8"}):
+            for headers in ({"x-forwarded-for": "garbage!!!"},
+                            {"cf-connecting-ip": "999.999.999.999"},
+                            {"x-forwarded-for": "203.0.113.7, garbage!!!"},
+                            {"x-forwarded-for": ""}):
+                r = _http_request("10.1.2.3", headers)
+                self.assertEqual(server._client_ip(r), "10.1.2.3", headers)
+
+    def test_ipv6_peer_and_chain(self):
+        with unittest.mock.patch.dict(os.environ,
+                                      {"GRADER_TRUSTED_PROXY_CIDRS": "::1/128"}):
+            r = _http_request("::1", {"x-forwarded-for": "2001:db8::5"})
+            self.assertEqual(server._client_ip(r), "2001:db8::5")
+        with unittest.mock.patch.dict(os.environ,
+                                      {"GRADER_TRUSTED_PROXY_CIDRS": "2001:db8::/32"}):
+            r = _http_request("2001:db8::1",
+                              {"x-forwarded-for": "2001:db9::7, 2001:db8::9"})
+            self.assertEqual(server._client_ip(r), "2001:db9::7")
+            r = _http_request("2001:db8::1")
+            self.assertEqual(server._client_ip(r), "2001:db8::1")
+
+    def test_malformed_config_rejected(self):
+        for bad in ("bogus", "1.2.3.4/33", "10.0.0.0/8, nope"):
+            with unittest.mock.patch.dict(os.environ,
+                                          {"GRADER_TRUSTED_PROXY_CIDRS": bad}):
+                with self.assertRaises(ValueError):
+                    server._trusted_proxy_nets()
+
+    def test_malformed_config_refuses_to_boot(self):
+        async def go():
+            with unittest.mock.patch.dict(
+                    os.environ, {"GRADER_TRUSTED_PROXY_CIDRS": "bogus"}), \
+                 unittest.mock.patch.object(server, "GRADER_ROLE", "combined"), \
+                 unittest.mock.patch.object(server, "QUEUE_MODE", "local"):
+                with self.assertRaises(RuntimeError):
+                    await server.validate_runtime()
+        import asyncio
+        asyncio.run(go())
