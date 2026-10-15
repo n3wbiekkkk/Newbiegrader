@@ -7,3 +7,4 @@ venv/
 .env
 .tmp_fmt*
 graphify-out/
+agent.md

@@ -1,1 +1,1 @@
-{"title": "ระบบบอกเวลาภาษาไทย (Thai Time)", "time_limit": 1.0, "memory_limit": 256, "checker": "token", "difficulty": "easy", "tags": ["Implementation", "String"], "notice": "", "samples": ["02"], "no": 34}
+{"title": "ระบบบอกเวลาภาษาไทย (Thai Time)", "time_limit": 1.0, "memory_limit": 256, "checker": "token", "difficulty": "easy", "tags": ["Implementation", "String"], "notice": "", "samples": ["02"], "no": 14}

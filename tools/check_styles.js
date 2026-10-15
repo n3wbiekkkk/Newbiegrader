@@ -18,7 +18,7 @@ const css = fs.readFileSync(FILE, "utf8");
 const lines = css.split("\n");
 
 /* Tokens that are deliberately identical in both themes: opaque chips whose
- * foreground/background pair is already contrast-checked (see agent.md §8). */
+ * foreground/background pair is already contrast-checked by hand. */
 const THEME_INDEPENDENT = new Set([
   "--green-solid", "--yellow-solid", "--magenta-solid", "--red-solid",
   "--neutral-solid", "--badge-fg",
