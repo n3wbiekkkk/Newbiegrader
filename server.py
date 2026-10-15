@@ -220,9 +220,9 @@ def _bust_cache() -> None:
 
 # Split deployment: same-origin via frontend /api proxy (Cloudflare Pages
 # Function or legacy vercel.json), so the browser never talks cross-origin.
-# GRADER_CORS_ORIGINS stays empty in prod (e.g. https://gradernew.pages.dev
+# GRADER_CORS_ORIGINS stays empty in prod (e.g. https://newbiegrader.pages.dev
 # needs no CORS). Set it only when serving the frontend from a host WITHOUT
-# the /api proxy, e.g. GRADER_CORS_ORIGINS=https://gradernew.pages.dev
+# the /api proxy, e.g. GRADER_CORS_ORIGINS=https://newbiegrader.pages.dev
 # Empty (default) = same-origin only, no CORS headers.
 _cors_origins = [o.strip() for o in
                  os.environ.get("GRADER_CORS_ORIGINS", "").split(",") if o.strip()]
@@ -729,9 +729,9 @@ GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "").strip()
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "").strip()
 GOOGLE_REDIRECT_URI = os.environ.get(
     "GOOGLE_REDIRECT_URI",
-    "https://gradernew.pages.dev/api/auth/callback").strip()
+    "https://newbiegrader.pages.dev/api/auth/callback").strip()
 FRONTEND_URL = os.environ.get(
-    "FRONTEND_URL", "https://gradernew.pages.dev").rstrip("/")
+    "FRONTEND_URL", "https://newbiegrader.pages.dev").rstrip("/")
 
 ADMIN_EMAILS = {e.strip().lower() for e in os.environ.get(
     "ADMIN_EMAILS", "sphetpitak@gmail.com").split(",") if e.strip()}
