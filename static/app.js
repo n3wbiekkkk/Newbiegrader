@@ -2069,6 +2069,16 @@ function localToUtcIso(v) {
   return d.toISOString();  // ISO-8601 UTC, e.g. 2026-11-01T02:00:00.000Z
 }
 
+/* Reverse of localToUtcIso: fill a datetime-local input from a UTC ISO string
+ * (used when pre-filling the contest form for mid-round edits). */
+function utcToLocalInput(iso) {
+  const d = new Date(iso || "");
+  if (isNaN(d.getTime())) return "";
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}` +
+    `T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 const CONTESTS_UNCONFIGURED = "ยังไม่ได้ตั้งค่าคอนเทสต์";
 
 function isUnconfiguredMessage(msg) {
@@ -2101,7 +2111,7 @@ async function renderContests() {
         <td><strong>${esc(c.title || c.id)}</strong> <span class="dim">${esc(c.id)}</span></td>
         <td>${contestStatusBadge(c.status)}${c.registered ? ` ${badge("ลงทะเบียนแล้ว", "OK")}` : ""}</td>
         <td>${esc(contestWindowText(c))}</td>
-        <td>${(c.problems || []).length} ข้อ</td>
+        <td>${c.status === "upcoming" && !state.is_admin ? "ยังไม่เปิดเผย" : `${(c.problems || []).length} ข้อ`}</td>
         <td>${c.participants || 0} คน</td>
       </tr>`).join("") + `</tbody></table>`;
     body.querySelectorAll("tr[data-contest]").forEach((tr) => {
@@ -2138,6 +2148,7 @@ async function renderContest(cid) {
     if (d.frozen) $("contest-freeze").classList.remove("hidden");
     renderContestJoin(d);
     renderContestProblems(d);
+    renderContestAnnc(d);
     renderContestScoreboard(d);
   } catch (e) {
     const msg = isUnconfiguredMessage(e.message) ? CONTESTS_UNCONFIGURED : e.message;
@@ -2208,7 +2219,9 @@ function renderContestProblems(d) {
   const box = $("contest-problems");
   const list = d.problem_details || [];
   if (!list.length) {
-    box.innerHTML = `<span class="dim">ยังไม่มีโจทย์ในคอนเทสต์นี้</span>`;
+    box.innerHTML = d.problems_open
+      ? `<span class="dim">ยังไม่มีโจทย์ในคอนเทสต์นี้</span>`
+      : `<span class="dim">ยังไม่เปิดเผยโจทย์ — จะแสดงเมื่อเริ่มแข่ง</span>`;
     return;
   }
   const running = d.status === "running";
@@ -2244,6 +2257,45 @@ function renderContestProblems(d) {
       location.hash = "#/task/" + encodeURIComponent(b.dataset.enter);
     };
   });
+}
+
+async function renderContestAnnc(d) {
+  const box = $("contest-annc");
+  const form = $("contest-annc-form");
+  box.classList.add("dim");
+  box.textContent = "กำลังโหลด...";
+  form.classList.add("hidden");
+  try {
+    const a = await apiGet(`/api/contests/${encodeURIComponent(d.id)}/announcements`);
+    const list = a.announcements || [];
+    box.classList.remove("dim");
+    box.innerHTML = list.length
+      ? list.map((m) =>
+          `<div class="report-item"><div>${esc(m.body)}</div>` +
+          `<div class="dim">${esc(shortTime(m.created_at))}</div></div>`).join("")
+      : (a.locked
+        ? `<span class="dim">ประกาศจะแสดงเมื่อเริ่มแข่ง</span>`
+        : `<span class="dim">ยังไม่มีประกาศ</span>`);
+  } catch (e) {
+    box.innerHTML = `<span class="dim">โหลดประกาศไม่ได้: ${esc(e.message)}</span>`;
+  }
+  if (state.is_admin) {
+    form.classList.remove("hidden");
+    $("annc-status").textContent = "";
+    $("annc-post").onclick = async () => {
+      const st = $("annc-status"), body = $("annc-body").value.trim();
+      if (!body) { st.textContent = "พิมพ์ข้อความก่อน"; return; }
+      st.textContent = "กำลังโพสต์...";
+      try {
+        await apiPostJson(`/api/contests/${encodeURIComponent(d.id)}/announcements`, { body });
+        $("annc-body").value = "";
+        st.textContent = "โพสต์แล้ว";
+        renderContestAnnc(d);
+      } catch (e) {
+        st.textContent = "โพสต์ไม่สำเร็จ: " + e.message;
+      }
+    };
+  }
 }
 
 function renderContestScoreboard(d) {
@@ -2436,8 +2488,26 @@ async function loadAdminContests() {
       `<span class="dim">${esc(c.id)} · ${esc(contestWindowText(c))} · ${(c.problems || []).length} ข้อ` +
       `${c.hide_from_tasks ? " · ซ่อนจาก Task" : ""}</span> ` +
       `${contestStatusBadge(c.status)} ` +
+      `<button class="ghost-btn" type="button" data-edit-contest="${esc(c.id)}">แก้ไข</button> ` +
       `<button class="ghost-btn" type="button" data-del-contest="${esc(c.id)}">ลบ</button></div>`
     ).join("");
+    box.querySelectorAll("[data-edit-contest]").forEach((b) => {
+      b.onclick = () => {
+        const c = (state.contests || []).find((x) => x.id === b.dataset.editContest);
+        if (!c) return;
+        $("ct-id").value = c.id || "";
+        $("ct-title").value = c.title || "";
+        $("ct-start").value = utcToLocalInput(c.starts_at);
+        $("ct-end").value = utcToLocalInput(c.ends_at);
+        $("ct-freeze").value = c.freeze_minutes || 0;
+        $("ct-samples").checked = c.show_samples !== false;
+        $("ct-hide").checked = c.hide_from_tasks !== false;
+        const want = new Set(c.problems || []);
+        [...$("ct-problems").options].forEach((o) => { o.selected = want.has(o.value); });
+        $("ct-status").textContent = `กำลังแก้ไข ${c.id} — บันทึกเพื่อเพิ่ม/ลดโจทย์กลางคันได้`;
+        $("contest-card").scrollIntoView({ behavior: "smooth", block: "start" });
+      };
+    });
     box.querySelectorAll("[data-del-contest]").forEach((b) => {
       b.onclick = async () => {
         const cid = b.dataset.delContest;
