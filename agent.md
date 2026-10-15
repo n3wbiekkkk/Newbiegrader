@@ -40,7 +40,7 @@
 | โจทย์ทั้งหมด | 47 (`problems/*/config.json`) — ทุกข้อสาธารณะตอนนี้ (ระบบรองรับข้อชุดคอนเทสต์ที่ `"hidden": true`) |
 | เทสต์ทั้งหมด | 681 ไฟล์ `.in/.out` (ข้อละ 10-18) |
 | Reference solution | `examples/<id>_ref.py` (+ `_ref.cpp` บางข้อ) รวม 59 ไฟล์ |
-| เทสต์อัตโนมัติ | 39 เทสต์ ใน `tests/` (E2E 31 + cgroup 8) |
+| เทสต์อัตโนมัติ | 46 เทสต์ ใน `tests/` (E2E 31 + cgroup 8 + memory semantics 7) |
 | checker | `token` (default) / `exact` / `float` / `decimal2` |
 | เลขโจทย์ | ทุกข้อมี `config.json → "no"` เลข 1..47 ไม่ซ้ำ — เรียง/ค้นหา/เปิดด้วยเลขได้ |
 | engine version | `grader.GRADER_VERSION = "2.0.0"` (เก็บทุก submission) |
@@ -149,11 +149,27 @@ graph LR
 ### 4.4 Sandbox (ตายยาก อย่าถอด)
 
 `grader.build_limits()` (preexec ของ child):
-- `RLIMIT_AS`/`RLIMIT_DATA` = memory limit ที่ใช้จริง (ถูก cap ที่ `MEMORY_CAP_MB`)
+- `RLIMIT_AS`/`RLIMIT_DATA` = **เพดานกันโฮสต์ตาย** ไม่ใช่ limit ที่ตัดสินคำตอบ: `mem_limit_mb(declared, lang) + LANG_MEM_HEADROOM_MB[lang]` (ดู 4.4.1)
 - `RLIMIT_CPU` = `int(TL)+2` (กัน loop อนันต์ไม่ให้กิน CPU เกิน), `RLIMIT_NPROC=64` (fork bomb), `RLIMIT_FSIZE=64MB`, `RLIMIT_CORE=0`, `RLIMIT_NOFILE=64`
 - บน Linux ที่รันเป็น root (prod Docker): `unshare(CLONE_NEWNET)` ก่อน แล้ว `setgroups([])` + `setgid/setuid(nobody)` — **best effort** ทั้งหมด (ล้มเหลวแล้วใช้ rlimits ต่อ ไม่ throw)
 - env ของ child = `judge_env()` (PATH, LANG, HOME/TMPDIR=/tmp) — **ความลับไม่รั่วเข้า child**
 - workdir/binary ถูก `chmod 0755` ก่อนรัน และ image ทำ `chmod -R go-rwx problems` เพื่อไม่ให้ child อ่านเทสต์ได้
+
+#### 4.4.1 Memory limit: 2 ตัวเลข (บทเรียนที่ทำ CI แดงทั้ง 14 รัน)
+
+`RLIMIT_AS` นับ **virtual address space** ไม่ใช่ RSS และ **macOS ไม่บังคับกับ mmap** → บังคับ limit ที่โจทย์ประกาศลงบน `RLIMIT_AS` ตรง ๆ ทำให้ CPython ที่จอง arena เกิน 64MB ได้ MLE บน Linux (CI + prod) ขณะที่โค้ดเดียวกัน AC บนเครื่อง dev
+
+กติกาปัจจุบัน (`grader.py`):
+| | ค่า | ใช้ทำอะไร |
+|---|---|---|
+| **threshold** | `declared × LANG_MEM_MULTIPLIER[lang]` (python/node 2.5, java 3.0, c/cpp/go/rust 1.0) | ตัดสิน MLE จาก **peak RSS ที่วัดได้** และเป็นตัวเลขที่โชว์ให้ผู้ใช้ |
+| **ceiling** | `threshold + LANG_MEM_HEADROOM_MB[lang]` (python 64, node 96, java 512, อื่น ๆ 0) | `RLIMIT_AS` — กันโฮสต์ตายเท่านั้น |
+
+- `judge_test(..., lang=...)` เท่านั้นที่รู้ภาษา → **ทุก call site ต้องส่ง lang** (`server.run_submission` จาก `ext`, `_run_playground`, `grader.cmd_run`, `validate_problem`)
+- เหตุผลของ allowance: int ของ CPython = 28 byte + pointer 8 byte → อัลกอริทึมเดียวกันกิน memory มากกว่า C หลายเท่า; limit ของโจทย์ตั้งไว้สำหรับภาษากะทัดรัด
+- macOS วัด peak ผ่าน `ps -o rss` ได้สูงกว่า VmHWM ของ Linux ~45% (วัดจริง: 131MB vs 90.6MB สำหรับโค้ดเดียวกัน) → allowance ต้องมี margin พอทั้งสองแพลตฟอร์ม (เทสต์ `tests/test_judge_limits.py` ล็อกไว้)
+- **อย่าถอด allowance เพื่อให้ MLE ง่ายขึ้น** — จะได้เคสเดิมกลับมา (เด็กเขียน Python ถูกต้องแต่โดน MLE)
+
 
 ### 4.5 Capacity: อ่านจาก cgroup เอง (ห้าม hardcode)
 
@@ -418,7 +434,7 @@ node --check static/app.js && node tools/check_frontend.js && node tools/check_s
 python3 tools/number_problems.py --check                     # เลขโจทย์ไม่ซ้ำ/ต่อเนื่อง
 python3 tools/validate_problem.py                            # 47 ข้อ: config/เทสต์/ตัวอย่าง/ref ต้อง AC (16-25 วิ)
 python3 tools/plagiarism.py                                  # self-test ของตัวตรวจการก็อป
-python3 -m unittest discover -s tests -v                      # 39 เทสต์ E2E + cgroup (~9 วิ)
+python3 -m unittest discover -s tests -v                      # 46 เทสต์: E2E + cgroup + memory semantics (~10 วิ)
 python3 grader.py run <id> examples/<id>_ref.py               # ถ้าแตะข้อนั้นโดยตรง
 ```
 **หมายเหตุ**: `validate_problem.py --jobs >1` จะได้ TLE ปลอมจากการแย่ง CPU — รัน default (jobs=1) เท่านั้น
@@ -430,6 +446,7 @@ python3 grader.py run <id> examples/<id>_ref.py               # ถ้าแต�
 | `test_api_e2e.ApiE2E` (31) | คิวงาน (202/409/503), redaction (AC/WA), โควตา 429, playground, history สิทธิ์, คอนเทสต์ (window/freeze/hide), rejudge, plagiarism, leaderboard (ชื่อ/fallback view), rate limit รายบัญชี, admin 403, overview, visibility matrix, เลขโจทย์ (ต่อเนื่อง/เรียง/เปิดด้วยเลข/ส่งด้วยเลข/คอนเทสต์รับเลข), **วงจรคอนเทสต์แบบ Codeforces** (ล็อกก่อนเริ่ม/register/ต้องลงทะเบียนก่อนส่ง/จบแล้วเปิดให้ทำต่อ) + **คะแนนคอนเทสต์ไม่ขึ้นบอร์ดกลาง** |
 | `test_api_e2e.PreMigrationFallback` (4) | DB ที่ยังไม่รัน migration: insert ตัดคอลัมน์, คิว in-memory, aggregate fallback, contests unconfigured |
 | `test_host_limits.CgroupDetection` (8) | อ่าน cgroup v2/v1/unlimited/เศษเสี้ยว + สูตรที่ server ใช้ |
+| `test_judge_limits.MemoryLimitPolicy` (7) | semantics ของ memory limit: c/cpp เข้มตามที่ประกาศ, ภาษาตีความได้ allowance, ceiling > threshold, Python ที่ถูกต้องต้องไม่ MLE (เคสที่ทำ CI แดง), โปรแกรมที่เกิน allowance ต้อง MLE |
 | `fake_supabase.FakeSupabase` | จำลอง PostgREST (`select/insert/update/delete/upsert` + `eq/in_/order/limit` + views + column whitelist) |
 
 **กติกาเขียนเทสต์**: ใช้ `self.login(email)` (cookie ต่อ client เดียว, สลับ identity ด้วย `cookies.clear()`) · `setUp` ล้าง `_login_tries/_account_tries/_quota_hits/_cache/_contest_pid_cache` เสมอ (ไม่งั้น state รั่วข้ามเทสต์) · ห้ามให้เทสต์เขียน production · ทดสอบพฤติกรรมที่ผู้ใช้เห็น (verdict/คะแนน/สิทธิ์) ไม่ใช่รายละเอียดภายใน
@@ -548,6 +565,9 @@ uvicorn.run(server.app, host="127.0.0.1", port=8094, log_level="warning")
 32. **คอนเทสต์**: ส่งเข้าคอนเทสต์ต้องลงทะเบียนก่อน (ยกเว้น admin) และโจทย์ที่ซ่อนจะอ่านได้เมื่อคอนเทสต์เริ่มแล้วเท่านั้น — เทสต์เก่าที่ส่งเข้าคอนเทสต์โดยไม่ register จะได้ 403/404 (ต้องเรียก `register_contest()` ก่อน)
 33. aggregate (`/api/stats`, `/api/leaderboard`) ถูก cache 30-60 วิ → เทสต์ที่ seed ข้อมูลแล้วอ่านทันทีต้อง `server._cache.clear()` ก่อน
 34. อย่าแก้ `?v=` ด้วยการ "เดา" — ค่าปัจจุบันอยู่ใน `static/index.html` (`styles.css`, `config.js`, `app.js`) และ `tools/check_frontend.js` จะฟ้องถ้าลืม id ใหม่
+35. **`RLIMIT_AS` ≠ memory limit ของผู้ใช้** และ **macOS ไม่บังคับ `RLIMIT_AS`** → บังคับ limit ตรง ๆ ทำให้ Python ถูก MLE บน Linux แต่ AC บน Mac (อาการ: CI แดงทุก commit ที่ step "Validate problems" แต่รันในเครื่องผ่าน; หรือเด็กได้ MLE ทั้งที่โค้ดถูก) — ใช้ `mem_limit_mb()` (threshold จาก peak RSS) + `enforced_memory_mb()` (ceiling) และ **ส่ง `lang` ทุกครั้งที่เรียก `judge_test`/`run_one`** (ดู §4.4.1)
+36. **peak RSS วัดไม่เท่ากันข้ามแพลตฟอร์ม**: Linux ใช้ `VmHWM` (แม่น), macOS poll `ps -o rss` ได้สูงกว่า ~45% (131MB vs 90.6MB วัดจากโค้ดเดียวกัน) → เวลาตั้ง allowance/limit ต้องเผื่อ margin ให้ทั้งสองฝั่ง ไม่งั้น validator จะผ่านใน CI แต่ FAIL ในเครื่อง dev
+37. **CI แดงหลัง push ให้ดู step ก่อน**: `gh`/API ของ GitHub ให้รายชื่อ step ที่ fail ได้โดยไม่ต้องมี log (`/actions/runs/<id>/jobs` → `steps[].conclusion`); และ reproduce ได้ด้วย `docker run -v "$PWD":/w -w /w python:3.11` แล้วรันคำสั่งเดียวกับ CI — ต่างจาก macOS จริง (เคส 35 คือตัวอย่าง)
 
 ---
 
