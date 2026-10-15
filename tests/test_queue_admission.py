@@ -48,6 +48,11 @@ class QueueAdmission(unittest.IsolatedAsyncioTestCase):
                                    return_exceptions=True)
         self.assertEqual(sum(isinstance(x, dict) for x in out), 1)
         self.assertEqual([x.status_code for x in out if not isinstance(x, dict)], [409] * 7)
+        for x in out:
+            if not isinstance(x, dict):
+                self.assertEqual(x.status_code, 409)
+                self.assertIn("Retry-After", x.headers)
+                self.assertTrue(x.headers["Retry-After"].isdigit())
 
     async def test_local_same_user_admission_is_atomic_across_database_yield(self):
         with patch.object(server, "QUEUE_MODE", "local"):
@@ -55,12 +60,22 @@ class QueueAdmission(unittest.IsolatedAsyncioTestCase):
                                        return_exceptions=True)
         self.assertEqual(sum(isinstance(x, dict) for x in out), 1)
         self.assertTrue(all(x.status_code == 409 for x in out if not isinstance(x, dict)))
+        for x in out:
+            if not isinstance(x, dict):
+                self.assertEqual(x.status_code, 409)
+                self.assertIn("Retry-After", x.headers)
+                self.assertTrue(x.headers["Retry-After"].isdigit())
 
     async def test_queue_capacity_is_atomic(self):
         out = await asyncio.gather(*(server._create_job(job(f"s{i}@example.com"))
                                      for i in range(8)), return_exceptions=True)
         self.assertEqual(sum(isinstance(x, dict) for x in out), 2)
         self.assertTrue(all(x.status_code == 503 for x in out if not isinstance(x, dict)))
+        for x in out:
+            if not isinstance(x, dict):
+                self.assertEqual(x.status_code, 503)
+                self.assertIn("Retry-After", x.headers)
+                self.assertTrue(x.headers["Retry-After"].isdigit())
 
     async def test_database_failure_does_not_accept_local_work(self):
         self.fake.missing.add("judge_jobs")
