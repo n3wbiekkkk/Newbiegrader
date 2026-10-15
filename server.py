@@ -1164,11 +1164,12 @@ def _effective_reveal(contest: Optional[dict], email: str, pid: str) -> str:
         return REVEAL_ALL
     if contest is not None:
         return _reveal_for(contest, email)
-    try:
-        if pid and pid in _live_hidden_pids():
+    if pid:
+        try:
+            if pid in _live_hidden_pids():
+                return REVEAL_NONE
+        except Exception:
             return REVEAL_NONE
-    except Exception:
-        pass
     return REVEAL_SAMPLES
 
 
@@ -2834,7 +2835,7 @@ def _contest_public(row: dict, email: str = "", counts: Dict[str, int] | None = 
     show_problems = _is_admin(email) or not upcoming
     return {
         "participants": (counts or {}).get(cid, 0),
-        "registered": _is_registered(cid, email) if _registrations_supported() else True,
+        "registered": _is_registered(cid, email) if _registrations_supported() else False,
         "id": cid, "title": row.get("title", ""),
         "starts_at": row.get("starts_at"), "ends_at": row.get("ends_at"),
         "freeze_minutes": row.get("freeze_minutes") or 0,
