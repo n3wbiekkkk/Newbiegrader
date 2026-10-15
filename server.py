@@ -1202,7 +1202,11 @@ def _host_limits() -> dict:
             "memory_cap_mb": MEMORY_CAP_MB, "queue_max": QUEUE_MAX,
             "overall_timeout_s": OVERALL_TIMEOUT,
             "sample_interval_ms": round(grader.SAMPLE_INTERVAL * 1000, 2),
-            "compile_timeout_s": grader.COMPILE_TIMEOUT}
+            "compile_timeout_s": grader.COMPILE_TIMEOUT,
+            # memory policy: peak-RSS threshold = declared x allowance, enforced
+            # RLIMIT_AS ceiling = threshold + virtual headroom (see agent.md §4.4.1)
+            "mem_allowance": grader.LANG_MEM_MULTIPLIER,
+            "mem_headroom_mb": grader.LANG_MEM_HEADROOM_MB}
 
 
 def _effective(prob: Optional[grader.Problem], time_limit: float,
