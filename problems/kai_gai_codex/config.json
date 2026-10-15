@@ -1,0 +1,1 @@
+{"title": "ถอดรหัสคัมภีร์ (The KAI-GAI Codex)", "time_limit": 1.0, "memory_limit": 256, "checker": "token", "difficulty": "medium", "tags": ["String", "Data Structure"], "notice": "ข้อนี้ใช้วิธีใดก็ได้ ไม่บังคับฟังก์ชัน/recursion — ส่งโปรแกรมเต็มที่อ่าน input ตาม spec", "samples": ["01", "02", "03", "04", "05"], "hidden": false, "no": 51}
