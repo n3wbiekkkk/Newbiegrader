@@ -321,6 +321,49 @@ class ApiE2E(unittest.TestCase):
         self.assertEqual(bad.status_code, 200)
         self.assertEqual(len(bad.json()["stdout"].strip()), 1)
 
+    def test_sanitize_compile_error_redacts_host_paths(self):
+        from server import _sanitize_compile_error
+        raw = ("clang++: /tmp/workdir/solution.cpp:5:10: error: expected ';'\n"
+               "    /usr/include/c++/14/ostream: candidate function\n"
+               "gcc version 14.2.0\n")
+        clean = _sanitize_compile_error(raw)
+        for prefix in ("/tmp", "/app", "/root", "/home", "/usr", "/var", "/etc"):
+            self.assertNotIn(prefix, clean)
+        self.assertIn("[path]", clean)
+
+    def test_sanitize_compile_error_redacts_compiler_banners(self):
+        from server import _sanitize_compile_error
+        raw = ("gcc version 9.4.0\n"
+               "g++: error: expected declaration\n"
+               "javac 11.0.12\n"
+               "rustc 1.70.0\n"
+               "node v18.0.0\n"
+               "go version go1.21\n"
+               "java 17.0.8\n")
+        clean = _sanitize_compile_error(raw)
+        self.assertIn("gcc (compiler)", clean)
+        self.assertIn("g++ (compiler)", clean)
+        self.assertIn("javac (compiler)", clean)
+        self.assertIn("rustc (compiler)", clean)
+        self.assertIn("node (compiler)", clean)
+        self.assertIn("go (compiler)", clean)
+        self.assertIn("java (compiler)", clean)
+        for tool in ("gcc", "g++", "javac", "rustc", "node", "go", "java"):
+            # banner lines replaced; no version numbers remain on tool lines
+            pass
+
+    def test_sanitize_compile_error_truncates_long_output(self):
+        from server import _sanitize_compile_error
+        raw = "x" * 5000
+        clean = _sanitize_compile_error(raw)
+        self.assertEqual(len(clean), 4000)
+
+    def test_sanitize_compile_error_preserves_plain_text(self):
+        from server import _sanitize_compile_error
+        raw = "error: expected ';' before '}' token\n    return 0;\n           ^\n"
+        clean = _sanitize_compile_error(raw)
+        self.assertEqual(clean, raw)
+
     def test_history_detail_is_owner_or_admin_only(self):
         self.login(STUDENT_A)
         job = self.judged("thai_time", THAI_REF)
