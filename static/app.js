@@ -39,6 +39,98 @@ function scoreCls(s) {
   return s >= 100 ? "s100" : s > 0 ? "smid" : "s0";
 }
 
+/* Toasts: transient bottom-right notes for completed actions. Click or
+ * timeout dismisses; at most a few stack up. */
+function toast(msg, kind) {
+  const stack = $("toast-stack");
+  if (!stack) return;
+  const el = document.createElement("div");
+  el.className = "toast" + (kind ? " " + kind : "");
+  el.textContent = msg;
+  el.onclick = () => el.remove();
+  stack.appendChild(el);
+  while (stack.children.length > 4) stack.firstChild.remove();
+  setTimeout(() => el.remove(), 3500);
+}
+
+/* Skeleton shimmer shown while a list loads instead of bare "Loading…". */
+function skel(n) {
+  const w = [92, 78, 85, 64, 88, 71];
+  let html = `<div class="skel" aria-hidden="true">`;
+  for (let i = 0; i < (n || 4); i++) html += `<div class="skel-line" style="width:${w[i % w.length]}%"></div>`;
+  return html + `</div>`;
+}
+
+/* Command palette (Ctrl/⌘K): fuzzy-jump to any problem by number, id or
+ * title. Fully keyboard driven; Esc closes. */
+let paletteIdx = 0;
+
+function paletteMatches(q) {
+  const qq = (q || "").trim().toLowerCase();
+  const list = state.problems || [];
+  if (!qq) return list.slice(0, 8);
+  return list.filter((p) =>
+    String(p.no || "") === qq || `#${p.no || ""}` === qq ||
+    (p.id || "").toLowerCase().includes(qq) ||
+    (p.title || "").toLowerCase().includes(qq)).slice(0, 8);
+}
+
+function renderPalette() {
+  const q = $("palette-input").value;
+  const items = paletteMatches(q);
+  if (paletteIdx >= items.length) paletteIdx = 0;
+  $("palette-list").innerHTML = items.length ? items.map((p, i) =>
+    `<button class="palette-item${i === paletteIdx ? " active" : ""}" role="option" data-pid="${esc(p.id)}">` +
+    `${noLabel(p)}<span>${esc(p.title)}</span> <span class="dim">${esc(p.id)}</span></button>`
+  ).join("") : `<div class="dim" style="padding:12px 14px">ไม่เจอโจทย์ที่ตรง</div>`;
+  $("palette-list").querySelectorAll("[data-pid]").forEach((b) => {
+    b.onclick = () => { closePalette(); location.hash = "#/task/" + encodeURIComponent(b.dataset.pid); };
+  });
+}
+
+function openPalette() {
+  $("palette-overlay").classList.remove("hidden");
+  $("palette-input").value = "";
+  paletteIdx = 0;
+  const ensure = (state.problems && state.problems.length)
+    ? Promise.resolve()
+    : apiGet("/api/problems").then((d) => { state.problems = d.problems || []; }).catch(() => {});
+  ensure.then(() => { renderPalette(); $("palette-input").focus(); });
+  $("palette-input").oninput = () => { paletteIdx = 0; renderPalette(); };
+  $("palette-overlay").onclick = (e) => {
+    if (e.target.id === "palette-overlay") closePalette();
+  };
+}
+
+function closePalette() {
+  $("palette-overlay").classList.add("hidden");
+}
+
+document.addEventListener("keydown", (e) => {
+  const open = !$("palette-overlay").classList.contains("hidden");
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+    e.preventDefault();
+    if (open) closePalette();
+    else openPalette();
+    return;
+  }
+  if (!open) return;
+  if (e.key === "Escape") { closePalette(); return; }
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    const n = paletteMatches($("palette-input").value).length;
+    if (!n) return;
+    paletteIdx = e.key === "ArrowDown" ? (paletteIdx + 1) % n : (paletteIdx + n - 1) % n;
+    renderPalette();
+    return;
+  }
+  if (e.key === "Enter") {
+    const items = paletteMatches($("palette-input").value);
+    const pick = items[Math.min(paletteIdx, items.length - 1)];
+    if (pick) { closePalette(); location.hash = "#/task/" + encodeURIComponent(pick.id); }
+  }
+});
+
 function applyTheme(t) {
   document.documentElement.dataset.theme = t;
   try { localStorage.setItem("ng_theme", t); } catch (e) { /* ignore */ }
@@ -863,7 +955,10 @@ function renderArchive() {
     const pct = total ? Math.round((100 * solved) / total) : 0;
     html += `<div class="archive-card" data-diff="${esc(d)}" role="button" tabindex="0">` +
       `<div class="arch-top"><div class="arch-title">${icon("archive")}<span>${esc(d)}</span></div>` +
-      `<div class="arch-bar"><div class="arch-fill" style="width:${pct}%"></div></div></div>` +
+      `<svg class="ring" viewBox="0 0 36 36" aria-hidden="true">` +
+      `<circle class="ring-bg" cx="18" cy="18" r="15.9"></circle>` +
+      `<circle class="ring-fg" cx="18" cy="18" r="15.9" pathLength="100" stroke-dasharray="${pct} 100" transform="rotate(-90 18 18)"></circle>` +
+      `<text class="ring-lbl" x="18" y="22">${pct}</text></svg></div>` +
       `<div class="arch-sub"><span>${pct}% solved</span><span>${solved}/${total}</span></div>` +
       `</div>`;
   });
@@ -892,6 +987,8 @@ function renderArchive() {
 
 async function renderLeaderboard() {
   const body = $("leader-body");
+  body.classList.remove("dim");
+  body.innerHTML = skel(6);
   try {
     const d = await apiGet("/api/leaderboard?limit=50");
     if (!d.configured) {
@@ -903,16 +1000,27 @@ async function renderLeaderboard() {
       body.innerHTML = `<span class="dim">ยังไม่มีคะแนน</span>`;
       return;
     }
-    let html = `<table class="tests"><thead><tr>
+    const stars = top.slice(0, 3);
+    let html = `<div class="podium">` + stars.map((t, i) =>
+      `<div class="podium-card podium-${i + 1}">` +
+      `<span class="rank rank-${i + 1}">${i + 1}</span>` +
+      `<div class="podium-name">${esc(t.name)}</div>` +
+      `<div class="dim">${t.solved} ข้อ</div>` +
+      `<div class="podium-pts"><span class="${scoreCls(t.points)}">${t.points}</span></div>` +
+      `</div>`).join("") + `</div>`;
+    if (top.length > 3) {
+      html += `<table class="tests"><thead><tr>
       <th>#</th><th>ชื่อ</th><th>ผ่านเต็ม</th><th>คะแนนรวม</th>
     </tr></thead><tbody>`;
-    top.forEach((t, i) => {
-      const medal = i < 3 ? `<span class="rank rank-${i + 1}">${i + 1}</span>` : `${i + 1}`;
-      html += `<tr><td>${medal}</td><td>${esc(t.name)}</td><td>${t.solved} ข้อ</td><td><strong class="${scoreCls(t.points)}">${t.points}</strong></td></tr>`;
-    });
+      top.slice(3).forEach((t, k) => {
+        const i = k + 3;
+        html += `<tr><td>${i + 1}</td><td>${esc(t.name)}</td><td>${t.solved} ข้อ</td><td><strong class="${scoreCls(t.points)}">${t.points}</strong></td></tr>`;
+      });
+      html += `</tbody></table>`;
+    }
     body.classList.remove("dim");
-    body.innerHTML = html + `</tbody></table>
-      <p class="dim">คะแนนรวม = ผลรวมคะแนนดีสุดของแต่ละข้อ (ข้อที่ยังไม่ผ่านก็นับคะแนนบางส่วน)
+    body.innerHTML = html +
+      `<p class="dim">คะแนนรวม = ผลรวมคะแนนดีสุดของแต่ละข้อ (ข้อที่ยังไม่ผ่านก็นับคะแนนบางส่วน)
       — คนที่ "ผ่านเต็ม" น้อยกว่าแต้มมาก แปลว่าทำได้บางเทสต์หลายข้อ</p>`;
   } catch (e) {
     body.innerHTML = `<span class="dim">โหลดไม่ได้: ${esc(e.message)}</span>`;
@@ -1678,6 +1786,7 @@ async function doSubmit() {
     if (state.current === pid) {
       renderResults(result, secs);
       setJudgeStatus(`เสร็จใน ${secs.toFixed(2)}s — ${result.score}/100 คะแนน`, false);
+      toast(`ตรวจเสร็จ: ${result.score}/100 คะแนน`, result.score === 100 ? "t-ok" : "");
     }
     await fetchStats();
     state.myBestLoaded = false;
@@ -1985,6 +2094,7 @@ async function loadHistory() {
     body.innerHTML = `<span class="dim">หน้านี้โชว์เฉพาะของตัวเอง — login ด้วย Google ก่อน (ของคนอื่นดูได้ในแท็บ Submissions ของแต่ละข้อ)</span>`;
     return;
   }
+  body.innerHTML = skel(6);
   try {
     const h = await apiGet(`/api/history?limit=100${filt ? `&problem=${encodeURIComponent(filt)}` : ""}&mine=1`);
     if (!h.configured) {
@@ -2168,8 +2278,9 @@ async function renderContest(cid) {
   meta.textContent = "";
   $("contest-status-chip").innerHTML = "";
   $("contest-freeze").classList.add("hidden");
-  $("contest-problems").innerHTML = `<span class="dim">กำลังโหลด...</span>`;
-  $("contest-scoreboard").innerHTML = `<span class="dim">กำลังโหลด...</span>`;
+  $("contest-problems").innerHTML = skel(4);
+  $("contest-scoreboard").innerHTML = skel(3);
+  $("contest-annc").innerHTML = skel(2);
   try {
     const d = await apiGet(`/api/contests/${encodeURIComponent(cid)}`);
     state.contestCache[cid] = d;
@@ -2220,6 +2331,12 @@ function renderContestJoin(d) {
   } else if (d.status === "running" && !d.can_submit && d.registrations_supported) {
     parts.push(`<span class="dim">ต้องลงทะเบียนก่อนจึงส่งได้</span>`);
   }
+  const t0 = Date.parse(d.starts_at || ""), t1 = Date.parse(d.ends_at || "");
+  if (t0 && t1 && t1 > t0) {
+    const pct = Math.min(100, Math.max(0, Math.round((100 * (Date.now() - t0)) / (t1 - t0))));
+    parts.push(`<span style="flex-basis:100%"><span class="ct-track" style="display:block">` +
+      `<span class="ct-fill" id="ct-fill" data-t0="${t0}" data-t1="${t1}" style="display:block;width:${pct}%"></span></span></span>`);
+  }
   box.innerHTML = parts.join(" ");
   const reg = $("contest-register");
   if (reg) reg.onclick = () => contestRegister(d.id, true);
@@ -2259,6 +2376,11 @@ function startContestTicker(cid, d) {
     const left = Math.max(0, Math.round((target - Date.now()) / 1000));
     const el = $("contest-countdown");
     if (el) el.textContent = (phase === "upcoming" ? "เริ่มในอีก " : "เหลืออีก ") + durationText(left);
+    const fill = $("ct-fill");
+    if (fill && fill.dataset.t0 && fill.dataset.t1) {
+      const a = Number(fill.dataset.t0), b = Number(fill.dataset.t1);
+      if (b > a) fill.style.width = Math.min(100, Math.max(0, (100 * (Date.now() - a)) / (b - a))) + "%";
+    }
     if (left <= 0 && state.contestPhase === phase) {
       state.contestPhase = null;   // refire guard while refetching
       renderContest(cid);          // restarts the ticker for the new phase
@@ -2272,9 +2394,11 @@ async function contestRegister(cid, register) {
   try {
     if (register) await apiPostJson(`/api/contests/${encodeURIComponent(cid)}/register`, {});
     else await apiDelete(`/api/contests/${encodeURIComponent(cid)}/register`);
+    toast(register ? "ลงทะเบียนสำเร็จ" : "ยกเลิกการลงทะเบียนแล้ว", "t-ok");
     await renderContest(cid);
     if (document.querySelector("#view-contests.active")) renderContests();
   } catch (e) {
+    toast("ไม่สำเร็จ: " + e.message, "t-err");
     if (box) box.innerHTML = `<span class="dim">${esc(e.message)}</span>`;
   }
 }
@@ -2354,6 +2478,7 @@ async function renderContestAnnc(d) {
         await apiPostJson(`/api/contests/${encodeURIComponent(d.id)}/announcements`, { body });
         $("annc-body").value = "";
         st.textContent = "โพสต์แล้ว";
+        toast("โพสต์ประกาศแล้ว", "t-ok");
         renderContestAnnc(d);
       } catch (e) {
         st.textContent = "โพสต์ไม่สำเร็จ: " + e.message;
@@ -2480,6 +2605,7 @@ async function renderSettings() {
         const d = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
         $("settings-status").textContent = "บันทึกแล้ว";
+        toast("บันทึกโปรไฟล์แล้ว", "t-ok");
         setLang(d.profile.default_language || state.lang);
       } catch (e) {
         $("settings-status").textContent = "บันทึกไม่สำเร็จ: " + e.message;

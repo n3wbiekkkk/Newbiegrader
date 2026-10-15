@@ -694,3 +694,81 @@ tr.test-row:hover td { background: var(--panel2); }
   .task-card { flex-direction: column; align-items: stretch; }
   .score-wrap { justify-content: flex-start; }
 }
+
+/* ================= interaction upgrade: palette, toast, skeleton ========= */
+/* command palette (Ctrl/⌘K): fuzzy-jump to any problem */
+.palette-overlay {
+  position: fixed; inset: 0; z-index: 120; background: var(--topbar);
+  backdrop-filter: blur(4px); display: flex; justify-content: center;
+  padding: 12vh 16px 16px;
+}
+.palette-box {
+  width: 100%; max-width: 560px; height: fit-content;
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--r-lg);
+  box-shadow: var(--shadow); overflow: hidden;
+}
+#palette-input {
+  width: 100%; border: none; border-bottom: 1px solid var(--border);
+  background: var(--field); color: var(--text);
+  padding: 14px 18px; font-size: var(--fs-lg); font-family: inherit;
+}
+#palette-input:focus { outline: none; }
+.palette-list { max-height: 320px; overflow-y: auto; padding: 6px; }
+.palette-item {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  background: none; border: none; cursor: pointer; text-align: left;
+  padding: 9px 12px; border-radius: var(--r-sm); color: var(--text);
+  font-size: var(--fs-md);
+}
+.palette-item .dim { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.palette-item.active { background: var(--panel2); }
+.palette-hint { padding: 8px 14px; border-top: 1px solid var(--border); }
+
+/* toasts: bottom-right stack, auto-dismiss */
+#toast-stack {
+  position: fixed; right: 16px; bottom: 16px; z-index: 130;
+  display: flex; flex-direction: column; gap: 8px; max-width: min(360px, 90vw);
+}
+.toast {
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--r-md);
+  padding: 10px 14px; box-shadow: var(--shadow); font-size: var(--fs-sm);
+  animation: toast-in .2s ease; cursor: pointer;
+}
+.toast.t-ok { border-color: var(--ok-line); }
+.toast.t-err { border-color: var(--err-line); }
+@keyframes toast-in { from { opacity: 0; transform: translateY(8px); } }
+
+/* skeleton shimmer while lists load */
+.skel { padding: 4px 0; }
+.skel-line {
+  height: 14px; border-radius: 6px; margin: 10px 0;
+  background: linear-gradient(90deg, var(--panel2) 25%, var(--border) 50%, var(--panel2) 75%);
+  background-size: 200% 100%; animation: skel 1.2s ease-in-out infinite;
+}
+@keyframes skel { to { background-position: -200% 0; } }
+
+/* leaderboard podium */
+.podium { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px; }
+.podium-card {
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--r-lg);
+  padding: 18px 12px; text-align: center; box-shadow: var(--shadow-sm);
+}
+.podium-card .rank { width: 34px; height: 34px; font-size: var(--fs-md); margin-bottom: 8px; }
+.podium-name { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.podium-pts { font-family: var(--mono); font-size: var(--fs-xl); font-weight: 700; }
+.podium-1 { border-color: var(--rank1-line); }
+.podium-2 { border-color: var(--rank2-line); }
+.podium-3 { border-color: var(--rank3-line); }
+@media (max-width: 900px) { .podium { grid-template-columns: 1fr; } }
+
+/* contest timeline: start → now → end */
+.ct-track { height: 6px; border-radius: 3px; background: var(--panel2); border: 1px solid var(--border); overflow: hidden; margin-top: 8px; }
+.ct-fill { height: 100%; background: linear-gradient(90deg, var(--link), var(--hero-b)); }
+.ct-when { display: flex; justify-content: space-between; gap: 8px; margin-top: 4px; }
+
+/* archive progress rings */
+.ring { width: 46px; height: 46px; flex: none; }
+.ring-bg { fill: none; stroke: var(--border); stroke-width: 3; }
+.ring-fg { fill: none; stroke: var(--link); stroke-width: 3; stroke-linecap: round; }
+.ring-lbl { font-size: var(--fs-2xs); font-weight: 700; fill: var(--text); text-anchor: middle; }
+.arch-top .arch-bar { display: none; }
