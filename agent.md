@@ -8,7 +8,7 @@
 
 ## 0. TL;DR สำหรับคนที่เพิ่งเปิด session (อ่าน 12 บรรทัดนี้ก่อน แล้วค่อยลงรายละเอียด)
 
-1. โปรเจกต์ = เว็บสนามสอบเขียนโปรแกรม (Python/C/C++) ชื่อ **Newbiegrader** โจทย์ 50 ข้อ (3 ข้อเป็นชุดคอนเทสต์ที่ซ่อนจากหน้า Task)
+1. โปรเจกต์ = เว็บสนามสอบเขียนโปรแกรม (Python/C/C++) ชื่อ **Newbiegrader** โจทย์ 47 ข้อ ทุกข้อมีเลข (`config.json → "no"`) ใช้เรียง/ค้นหา
 2. Frontend = `static/` HTML/CSS/JS ล้วน **ห้ามมี build step** · Backend = `server.py` (FastAPI) · Engine = `grader.py` (stdlib ล้วน)
 3. **ห้ามเขียน logic การตรวจซ้ำ** — ใช้ `grader.run_one/judge_test/prepare_command` เท่านั้น
 4. ส่งงานเป็น **async job**: `POST /api/submit` → 202 + `job_id` → client poll `GET /api/jobs/{id}` (ห้ามกลับไปตรวจ inline ใน request)
@@ -37,13 +37,14 @@
 
 | อะไร | ค่า |
 |---|---|
-| โจทย์ทั้งหมด | 50 (`problems/*/config.json`) — **47 สาธารณะ + 3 ชุดคอนเทสต์** (`hidden: true`) |
-| เทสต์ทั้งหมด | 711 ไฟล์ `.in/.out` (ข้อละ 10-18) |
+| โจทย์ทั้งหมด | 47 (`problems/*/config.json`) — ทุกข้อสาธารณะตอนนี้ (ระบบรองรับข้อชุดคอนเทสต์ที่ `"hidden": true`) |
+| เทสต์ทั้งหมด | 681 ไฟล์ `.in/.out` (ข้อละ 10-18) |
 | Reference solution | `examples/<id>_ref.py` (+ `_ref.cpp` บางข้อ) รวม 59 ไฟล์ |
-| เทสต์อัตโนมัติ | 36 เทสต์ ใน `tests/` (E2E 28 + cgroup 8) |
+| เทสต์อัตโนมัติ | 37 เทสต์ ใน `tests/` (E2E 29 + cgroup 8) |
 | checker | `token` (default) / `exact` / `float` / `decimal2` |
+| เลขโจทย์ | ทุกข้อมี `config.json → "no"` เลข 1..47 ไม่ซ้ำ — เรียง/ค้นหา/เปิดด้วยเลขได้ |
 | engine version | `grader.GRADER_VERSION = "2.0.0"` (เก็บทุก submission) |
-| โจทย์ชุดคอนเทสต์ | `best_quiz_student`, `qualified_examinees`, `olympic_medal` |
+| โจทย์ชุดคอนเทสต์ | 0 ข้อตอนนี้ (mechanism พร้อมใช้: `"hidden": true` + `contests.hide_from_tasks`) |
 
 ---
 
@@ -78,6 +79,7 @@ problems/<id>/             config.json + statement.md + statement.pdf + tests/NN
 examples/<id>_ref.py       reference solution (single source of truth ตอน gen test)
 tools/validate_problem.py  ตรวจโจทย์ทั้งชุด (config/tags/เทสต์/ตัวอย่าง/ref ต้อง AC) — รันใน CI
 tools/problem_visibility.py ตั้ง hidden/public ของโจทย์ + --list
+tools/number_problems.py   จัดการเลขโจทย์ (--list/--assign/--renumber/--set/--check)
 tools/plagiarism.py        ตรวจการก็อปโค้ด (winnowing, stdlib) + self-test ใน __main__
 tools/check_frontend.js    เช็ค $("id") ใน app.js ว่ามีจริงใน index.html หรือใน template literal
 tools/make_statement_tex.py สร้าง statement.pdf (LaTeX/tectonic + TH Sarabun, build นิ่ง byte-identical)
@@ -184,7 +186,7 @@ graph LR
 - กรองที่: `/api/problems`, `/api/health`, `/api/version`, `/api/history` (สาธารณะ), `/api/problems/{id}(/sample/pdf)`, `POST /api/submit`, `POST /api/run`
 - admin เห็นครบ + ธง `hidden` / `contest_only` / `config_hidden` / `contest_hidden` ใน `/api/problems`
 - cache ของชุดนี้คือ `_contest_pid_cache` (TTL 20s) — **ต้อง `_contest_pid_cache["at"] = 0.0` ทุกครั้งที่คอนเทสต์เปลี่ยน** (upsert/delete ทำให้แล้ว)
-- ตัวอย่างจริง: `best_quiz_student`, `qualified_examinees`, `olympic_medal`
+- ตัวอย่างจริง: ดูเทสต์ `test_contest_problems_are_hidden_from_the_task_list` (สร้างคอนเทสต์ที่ซ่อน `hanoi` แล้วเช็คว่าหายจากหน้า Task แต่เปิดได้จากหน้าคอนเทสต์)
 
 ---
 
@@ -217,7 +219,7 @@ graph LR
 | GET | `/api/health` | – | `{ok, problems:[...], count}` (กรองโจทย์ที่ซ่อน) |
 | GET | `/api/languages` | – | python/c/cpp |
 | GET | `/api/version` | – | `GRADER_VERSION` + hash เทสต์ทุกข้อ + `system`(capacity); admin ได้ `hidden_problems`, `problems_total` |
-| GET | `/api/problems` | – | รายการโจทย์ (admin ได้ธง visibility) |
+| GET | `/api/problems` | – | รายการโจทย์ เรียงตามเลข (`?sort=difficulty` = เรียงตามระดับ; admin ได้ธง visibility) |
 | GET | `/api/problems/{pid}` | ตาม visibility | statement + `samples`, `hidden_tests`, `tests_hash` |
 | GET | `/api/problems/{pid}/sample/{name}` | ตาม visibility | ตัวอย่างสาธารณะเท่านั้น |
 | GET | `/api/problems/{pid}/pdf` | ตาม visibility | inline PDF |
@@ -243,6 +245,8 @@ graph LR
 | POST | `/api/auth/register`, `/api/auth/password` | – | รหัสผ่าน (PBKDF2 210k) + rate limit รายบัญชี |
 | GET/PUT | `/api/profile` | login | ชื่อที่โชว์ + ภาษา default |
 
+**เลขโจทย์ (`no`)**: ทุก endpoint ที่รับ `{pid}` รับ "เลข" แทน slug ได้ (`/api/problems/19`, `/api/problems/19/sample/02`, `POST /api/submit problem=19`, `?problem=19` ใน history/reports/plagiarism/rejudge) — ใช้ `_resolve_pid()` แปลงเป็น slug; `contests.problems` เก็บเป็น slug เสมอ (normalize ตอน upsert/อ่าน) และ `PROBLEMS_BY_NO` ถูกสร้างตอน boot (เตือนถ้าเลขซ้ำ)
+
 **Rate limit auth** (`_check_rate_limit(request, email)`): ต่อบัญชี 8 ครั้ง/15 นาที (`ACCOUNT_MAX_TRIES`, สำเร็จ = `_clear_account_attempts`) + ต่อ IP 200 ครั้ง/5 นาที (`LOGIN_MAX_TRIES`) — **ห้ามตั้ง per-IP ต่ำ** เพราะทุกคนผ่าน proxy มาด้วย IP เดียวกัน (ดูข้อ 15.5)
 
 ---
@@ -260,9 +264,10 @@ graph LR
 5. `tests/NN.in|NN.out` (10+ ข้อ): ข้อที่เป็นตัวอย่างใน PDF ต้องตรงเป๊ะ + edge + random (seeded) + max constraint
 6. `examples/<id>_ref.py` reference solution
 7. verify 3 ชั้น: (ก) ตัวอย่างตรง PDF (ข) gen กับ ref ตรงกัน (ค) cross-check อิสระ (greedy vs DP, Miller-Rabin + Pollard-Rho ฯลฯ)
-8. `python3 grader.py run <id> examples/<id>_ref.py` ต้อง `ACCEPTED N/N` + ลอง solution ผิดต้องได้ WA (กันเทสต์หลวม)
-9. `python3 tools/validate_problem.py <id>` ต้อง **0 FAIL**
-10. restart server → เทสบนเว็บ → commit + push (ข้อ 11)
+8. `python3 tools/number_problems.py --assign` ให้เลขโจทย์ใหม่ (ต่อท้าย) — validator จะ FAIL ถ้าไม่มีเลข/เลขซ้ำ
+9. `python3 grader.py run <id> examples/<id>_ref.py` ต้อง `ACCEPTED N/N` + ลอง solution ผิดต้องได้ WA (กันเทสต์หลวม)
+10. `python3 tools/validate_problem.py <id>` ต้อง **0 FAIL** (บรรทัด OK จะขึ้น `#<no>`)
+11. restart server → เทสบนเว็บ (ค้นหาด้วยเลขได้) → commit + push (ข้อ 11)
 
 ### 7.2 โจทย์ชุดคอนเทสต์ (ไม่โชว์ในหน้า Task)
 
@@ -273,7 +278,7 @@ graph LR
 4. ถ้าอยากใช้โจทย์สาธารณะในคอนเทสต์แบบไม่ซ่อน → ปิดติ๊กนั้น (`hide_from_tasks = false`)
 5. ต้องรัน SQL `alter table contests add column if not exists hide_from_tasks boolean not null default true;` ก่อน (ไม่งั้น `POST /api/contests` ตอบ 400 พร้อมบอก)
 
-**ตัวอย่างจริงในเรพ**: `best_quiz_student` (samples 01,02), `qualified_examinees` (01,02,03), `olympic_medal` (01) — ทั้งสามข้อ **ยังไม่มี `statement.pdf`** (validator เตือน) ถ้าต้องใช้ในคอนเทสต์จริงควร gen PDF
+**ตัวอย่าง**: เวลารับโจทย์ชุดแข่ง ให้สร้างโฟลเดอร์โจทย์ + ตั้ง `hidden` + `tools/validate_problem.py` + สร้างคอนเทสต์ในหน้า admin (ดูเทสต์ `test_contest_problems_are_hidden_from_the_task_list` เป็นสเปกพฤติกรรม)
 
 ### 7.3 `config.json` reference
 
@@ -288,7 +293,8 @@ graph LR
   "tags": ["Implementation"],     // ต้องอยู่ใน KNOWN_TAGS ของ grader.py (25 แท็ก)
   "notice": "ข้อนี้ใช้อะไรก็ได้",   // แบนเนอร์บนหน้า task (ไม่ใส่ = ไม่มี)
   "samples": ["02"],              // ชื่อเทสต์ที่เป็นตัวอย่างสาธารณะ (ที่เหลือ = เทสต์ลับ)
-  "hidden": true                  // โจทย์ชุดคอนเทสต์ (ไม่โชว์หน้า Task)
+  "hidden": true,                 // โจทย์ชุดคอนเทสต์ (ไม่โชว์หน้า Task)
+  "no": 19                        // เลขโจทย์ (บังคับ! ไม่ซ้ำ, >= 1) — tools/number_problems.py
 }
 ```
 
@@ -304,7 +310,8 @@ graph LR
 - **bump `?v=N` ทุกครั้ง** ที่แก้ `app.js`/`styles.css` (ปัจจุบัน `app.js?v=12`, `styles.css?v=9`, `config.js?v=4`) — กัน cache ค้าง
 - ห้าม emoji ใน UI · icon ใช้ SVG sprite (`<symbol id="i-*">` ใน index.html + helper `icon(name, cls)`)
 - โครง JS: `state` กลาง (ที่ต้นไฟล์) · router = hash (`router()` + `currentRouteRender()`) · fetch ผ่าน `apiFetch/apiGet/apiPostJson/apiPostForm/apiDelete` (แนบ `detail` ของ server มาเสมอ) · `pollJob(jid, onTick)` สำหรับงาน async (700ms, เพดาน 4 นาที) · `esc()` ก่อนแทรก HTML เสมอ · `badge()/icon()/scoreCls()/limitsMeta()`
-- routes: `#/` `#/tasks` `#/task/<pid>` `#/archive` `#/leaderboard` `#/contests` `#/contests/<id>` `#/history` `#/settings` `#/login` `#/login/register`
+- เลขโจทย์: `noLabel(p)` = chip `#19` ใช้บนการ์ด/หัวข้อ/ตาราง; ช่องค้นหารับ `19` และ `#19`; `#/task/19` เปิดด้วยเลข (router ใช้ `resolveTaskToken()`/`openTaskByToken()` — เลขที่ไม่พบในลิสต์จะลองยิง API ต่อ เช่นโจทย์ชุดคอนเทสต์); เรียงได้ 3 แบบผ่าน `#f-sort` (`state.filter.sort` + `sortProblemList()`, จำค่าใน `localStorage.ng_sort`)
+- routes: `#/` `#/tasks` `#/task/<pid|no>` `#/archive` `#/leaderboard` `#/contests` `#/contests/<id>` `#/history` `#/settings` `#/login` `#/login/register`
 - identity-dependent view: หลัง `refreshMe()` ใน `init()` ต้องเรียก `currentRouteRender()` (เคยเป็นบั๊ก: เปิด `#/settings` ตรง ๆ แล้วการ์ด admin หาย)
 - cache: `localStorage["ng_problems_v1"]` (TTL 1 ชม.) — **ห้าม cache รายการแบบ admin** (มีโจทย์ที่ซ่อน) และต้อง `removeItem` ตอน logout
 - หลังแก้visibility ของโจทย์ (สร้าง/ลบคอนเทสต์) ต้องเรียก `refreshProblems()` ไม่งั้นลิสต์ค้าง
@@ -375,9 +382,10 @@ curl -s https://gradernew.pages.dev/ | grep -o 'app.js?v=[0-9]*'                
 ```bash
 python3 -m compileall -q grader.py server.py tools tests     # syntax
 node --check static/app.js && node tools/check_frontend.js    # frontend syntax + ids
-python3 tools/validate_problem.py                            # 50 ข้อ: config/เทสต์/ตัวอย่าง/ref ต้อง AC (16-25 วิ)
+python3 tools/number_problems.py --check                     # เลขโจทย์ไม่ซ้ำ/ต่อเนื่อง
+python3 tools/validate_problem.py                            # 47 ข้อ: config/เทสต์/ตัวอย่าง/ref ต้อง AC (16-25 วิ)
 python3 tools/plagiarism.py                                  # self-test ของตัวตรวจการก็อป
-python3 -m unittest discover -s tests -v                      # 36 เทสต์ E2E + cgroup (~8 วิ)
+python3 -m unittest discover -s tests -v                      # 37 เทสต์ E2E + cgroup (~9 วิ)
 python3 grader.py run <id> examples/<id>_ref.py               # ถ้าแตะข้อนั้นโดยตรง
 ```
 **หมายเหตุ**: `validate_problem.py --jobs >1` จะได้ TLE ปลอมจากการแย่ง CPU — รัน default (jobs=1) เท่านั้น
@@ -386,7 +394,7 @@ python3 grader.py run <id> examples/<id>_ref.py               # ถ้าแต�
 
 | ไฟล์/คลาส | คุมเรื่อง |
 |---|---|
-| `test_api_e2e.ApiE2E` (28) | คิวงาน (202/409/503), redaction (AC/WA), โควตา 429, playground, history สิทธิ์, คอนเทสต์ (window/freeze/hide), rejudge, plagiarism, leaderboard (ชื่อ/fallback view), rate limit รายบัญชี, admin 403, overview, visibility matrix |
+| `test_api_e2e.ApiE2E` (29) | คิวงาน (202/409/503), redaction (AC/WA), โควตา 429, playground, history สิทธิ์, คอนเทสต์ (window/freeze/hide), rejudge, plagiarism, leaderboard (ชื่อ/fallback view), rate limit รายบัญชี, admin 403, overview, visibility matrix, **เลขโจทย์** (ต่อเนื่อง/เรียง/เปิดด้วยเลข/ส่งด้วยเลข/คอนเทสต์รับเลข) |
 | `test_api_e2e.PreMigrationFallback` (4) | DB ที่ยังไม่รัน migration: insert ตัดคอลัมน์, คิว in-memory, aggregate fallback, contests unconfigured |
 | `test_host_limits.CgroupDetection` (8) | อ่าน cgroup v2/v1/unlimited/เศษเสี้ยว + สูตรที่ server ใช้ |
 | `fake_supabase.FakeSupabase` | จำลอง PostgREST (`select/insert/update/delete/upsert` + `eq/in_/order/limit` + views + column whitelist) |
@@ -503,13 +511,15 @@ uvicorn.run(server.app, host="127.0.0.1", port=8094, log_level="warning")
 28. TL ตาม PDF เท่านั้น — CPU host ไม่เท่ากัน ห้ามปรับ TL ให้พอดีเครื่อง dev
 29. เทสต์ตัวอย่างใน statement ต้อง ship เป็นเทสต์จริงถ้าจะใช้เป็น `samples` (ไม่งั้น warning)
 30. `problems/` โหลดตอน boot — แก้เทสต์/config แล้วต้อง restart
+31. **เลขโจทย์ต้องไม่ซ้ำ**: validator FAIL ถ้าซ้ำ/หาย และ `PROBLEMS_BY_NO` ตอน boot จะเตือนแล้วให้ "ตัวแรกชนะ" — อย่าลบ `no` ออกจาก config เพื่อ "รีเซ็ต" ให้ใช้ `tools/number_problems.py`
+32. อย่าแก้ `?v=` ด้วยการ "เดา" — ค่าปัจจุบันอยู่ใน `static/index.html` (`styles.css`, `config.js`, `app.js`) และ `tools/check_frontend.js` จะฟ้องถ้าลืม id ใหม่
 
 ---
 
 ## 16. ปัญหาที่ค้างอยู่ / งานที่ควรทำต่อ
 
 1. `count_islands` บน prod: 14 ส่ง ผ่าน 0 (ref AC 18/18 ในเครื่อง) → ควรเปิดดูโค้ดจริง/เพิ่มเบาะแส (ไอเดีย: problem health dashboard จาก `submissions.results`)
-2. โจทย์ชุดคอนเทสต์ 3 ข้อ (`best_quiz_student`, `qualified_examinees`, `olympic_medal`) ยังไม่มี `statement.pdf`
+2. โจทย์ใหม่ที่รับเข้ามา: ต้องมี `no` (validator บังคับ) + `statement.pdf` (ไม่งั้นได้ warning)
 3. `bake_a_cake` และ `library_code`: ตัวอย่างใน statement ไม่ได้ ship เป็นเทสต์ → ใช้เป็น `samples` ไม่ได้
 4. remote `deploy` ฝัง credential ใน `.git/config` → ควรย้ายไป credential helper และ rotate
 5. `Session` หลุดทุก deploy ถ้า `SESSION_SECRET` ไม่ได้ตั้งบน panel — ให้เช็ค
@@ -542,6 +552,7 @@ python3 grader.py list|info <id>|run <id> <sol> [--strict --verbose --jobs N --j
 python3 -m unittest discover -s tests -v
 python3 tools/validate_problem.py [id ...]
 python3 tools/problem_visibility.py --id <id> --hidden|--public|--list
+python3 tools/number_problems.py --list|--check|--assign|--renumber|--set --id X --no N
 python3 tools/plagiarism.py
 node --check static/app.js && node tools/check_frontend.js
 python3 tools/make_statement_tex.py <id>

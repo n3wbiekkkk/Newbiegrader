@@ -161,6 +161,7 @@ class Problem:
     notice: str = ""            # ประกาศโชว์บนหน้า task (เช่น ข้อนี้ใช้อะไรก็ได้)
     samples: list[str] = field(default_factory=list)  # ชื่อ test ที่เป็น "ตัวอย่างสาธารณะ" (ที่เหลือ = hidden)
     hidden: bool = False        # true = โจทย์ชุดคอนเทสต์: ไม่โชว์ในหน้า Task (admin/คอนเทสต์เห็น)
+    no: int = 0                 # เลขโจทย์ (id เลข ใช้เรียง/ค้นหา) — 0 = ยังไม่กำหนด
 
 # Canonical tag taxonomy (frontend Tag Filter renders exactly this list).
 KNOWN_TAGS = [
@@ -223,8 +224,31 @@ def load_problem(pid: str) -> Problem:
         samples = [t.name for t in tests[:raw_samples]]
     samples = sorted(set(samples))
     hidden = bool(cfg.get("hidden", False))
+    try:
+        no = int(cfg.get("no", 0))
+    except (TypeError, ValueError):
+        print(c(f"WARNING: problem '{pid}' has a non-numeric 'no' ({cfg.get('no')!r})",
+                C.YELLOW))
+        no = 0
+    if no < 0:
+        print(c(f"WARNING: problem '{pid}' has a negative 'no' ({no})", C.YELLOW))
+        no = 0
     return Problem(pid, title, time_limit, memory_limit, checker, tolerance, description, tests,
-                   difficulty, tags, notice, samples, hidden)
+                   difficulty, tags, notice, samples, hidden, no)
+
+
+DIFFICULTY_RANK = {"easy": 0, "medium": 1, "hard": 2}
+
+
+def order_key(prob: "Problem") -> tuple:
+    """Display order: numbered problems first by number, then the rest by
+    difficulty/name (so a problem added before numbering still shows up)."""
+    return (0 if prob.no > 0 else 1, prob.no if prob.no > 0 else 0,
+            DIFFICULTY_RANK.get((prob.difficulty or "").lower(), 9), prob.pid)
+
+
+def sort_problems(probs) -> list:
+    return sorted(probs, key=order_key)
 
 
 def tests_hash(prob: Problem) -> str:

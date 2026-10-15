@@ -1,1 +1,1 @@
-{"title": "คืนพระจันทร์สีเลือด (Blood Moon)", "time_limit": 1.0, "memory_limit": 256, "checker": "token", "difficulty": "easy", "tags": ["Implementation", "Ad-hoc"], "notice": "ข้อนี้ใช้วิธีใดก็ได้ ไม่บังคับ pointer — ส่งโปรแกรมเต็มที่อ่าน input ตาม spec", "samples": ["01"]}
+{"title": "คืนพระจันทร์สีเลือด (Blood Moon)", "time_limit": 1.0, "memory_limit": 256, "checker": "token", "difficulty": "easy", "tags": ["Implementation", "Ad-hoc"], "notice": "ข้อนี้ใช้วิธีใดก็ได้ ไม่บังคับ pointer — ส่งโปรแกรมเต็มที่อ่าน input ตาม spec", "samples": ["01"], "no": 4}

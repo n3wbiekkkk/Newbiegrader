@@ -1010,9 +1010,33 @@ if grader.PROBLEMS_DIR.is_dir():
         except SystemExit as e:
             print(f"[web] skip problem {_pdir.name}: {e}", file=sys.stderr)
 
+# numeric id -> pid (a problem may also be addressed as #19 in URLs and the CLI)
+PROBLEMS_BY_NO: Dict[int, str] = {}
+for _pid, _p in sorted(PROBLEMS.items()):
+    if _p.no > 0:
+        if _p.no in PROBLEMS_BY_NO:
+            print(f"[web] WARNING: problems {PROBLEMS_BY_NO[_p.no]} and {_pid} share "
+                  f"number {_p.no}; the first one wins "
+                  "(fix with tools/number_problems.py)", file=sys.stderr)
+        else:
+            PROBLEMS_BY_NO[_p.no] = _pid
+
+
+def _resolve_pid(token: str) -> str:
+    """Accept either the slug (`hanoi`) or its number (`19`) — students share
+    links like /#/task/19 and the CLI shows numbers."""
+    token = (token or "").strip()
+    if token in PROBLEMS:
+        return token
+    if token.isdigit():
+        pid = PROBLEMS_BY_NO.get(int(token), "")
+        if pid:
+            return pid
+    return token
+
 
 def _problem_or_404(pid: str) -> grader.Problem:
-    p = PROBLEMS.get(pid)
+    p = PROBLEMS.get(_resolve_pid(pid))
     if p is None:
         raise HTTPException(status_code=404, detail=f"unknown problem: {pid}")
     return p
@@ -1037,7 +1061,7 @@ def _contest_problem_sets() -> tuple:
     if _sb is not None:
         try:
             for row in _contest_rows():
-                pids = {str(x) for x in (row.get("problems") or [])}
+                pids = {_resolve_pid(str(x)) for x in (row.get("problems") or [])}
                 all_pids |= pids
                 if row.get("hide_from_tasks", True):
                     hidden |= pids
@@ -1054,6 +1078,7 @@ def _hidden_pids() -> set:
 
 def _visible_to(pid: str, email: str) -> bool:
     """Public Task entry, or reachable because the problem belongs to a contest."""
+    pid = _resolve_pid(pid)
     if pid not in PROBLEMS:
         return False
     if _is_admin(email):
@@ -1248,21 +1273,22 @@ def languages() -> dict:
 
 
 @app.get("/api/problems")
-def list_problems(request: Request) -> dict:
+def list_problems(request: Request, sort: str = "") -> dict:
     order = {"easy": 0, "medium": 1, "hard": 2}
+    sort_by_difficulty = (sort or "").strip().lower() == "difficulty"
     email = (request.session.get("user") or {}).get("email", "")
     admin = _is_admin(email)
     hidden = _hidden_pids()
     listed, contest_hidden = _contest_problem_sets()
-    ranked = sorted(PROBLEMS.values(),
-                    key=lambda p: (order.get((p.difficulty or "").lower(), 99), p.pid))
+    ranked = grader.sort_problems(PROBLEMS.values()) if not sort_by_difficulty else sorted(
+        PROBLEMS.values(), key=lambda p: (order.get((p.difficulty or "").lower(), 99), p.pid))
     out = []
     for p in ranked:
         is_hidden = p.pid in hidden
         if is_hidden and not admin:
             continue  # contest-only problem: reachable from its contest page, not Tasks
         item = {
-            "id": p.pid, "title": p.title, "time_limit": p.time_limit,
+            "id": p.pid, "no": p.no, "title": p.title, "time_limit": p.time_limit,
             "memory_limit": p.memory_limit, "checker": p.checker,
             "difficulty": p.difficulty, "tags": p.tags,
             "tests": len(p.tests), "samples": len(p.samples),
@@ -1281,7 +1307,7 @@ def problem_detail(request: Request, pid: str) -> dict:
     email = (request.session.get("user") or {}).get("email", "")
     p = _visible_problem_or_404(pid, email)
     listed, contest_hidden = _contest_problem_sets()
-    body = {"id": p.pid, "title": p.title, "time_limit": p.time_limit,
+    body = {"id": p.pid, "no": p.no, "title": p.title, "time_limit": p.time_limit,
             "memory_limit": p.memory_limit, "checker": p.checker,
             "difficulty": p.difficulty, "tags": p.tags,
             "notice": p.notice,
@@ -1515,7 +1541,7 @@ def history(request: Request, problem: Optional[str] = None, limit: int = 20,
             "id,created_at,problem,language,name,filename,verdict,accepted,passed,total,score,counts"
         ).order("created_at", desc=True).limit(limit)
         if problem:
-            q = q.eq("problem", problem)
+            q = q.eq("problem", _resolve_pid(problem))
         if mine:
             if not email:
                 raise HTTPException(status_code=401, detail="login required")
@@ -1568,7 +1594,7 @@ async def create_report(request: Request) -> dict:
         body = await request.json()
     except Exception:
         raise HTTPException(status_code=400, detail="invalid JSON")
-    problem = str(body.get("problem", "")).strip()
+    problem = _resolve_pid(str(body.get("problem", "")).strip())
     if problem not in PROBLEMS:
         raise HTTPException(status_code=400, detail="unknown problem")
     kind = str(body.get("kind", "")).strip()
@@ -1609,7 +1635,7 @@ def list_reports(request: Request, mine: bool = False, all: bool = False,
         q = _sb.table("reports").select(cols).order(
             "created_at", desc=True).limit(limit)
         if problem:
-            q = q.eq("problem", problem)
+            q = q.eq("problem", _resolve_pid(problem))
         if not want_all:
             q = q.eq("user_email", user["email"])
         res = q.execute()
@@ -1889,7 +1915,7 @@ def _contest_public(row: dict) -> dict:
         "show_samples": row.get("show_samples", True),
         "hide_from_tasks": row.get("hide_from_tasks", True),
         "status": _contest_window(row),
-        "problems": [str(x) for x in (row.get("problems") or [])],
+        "problems": [_resolve_pid(str(x)) for x in (row.get("problems") or [])],
     }
 
 
@@ -1932,7 +1958,7 @@ async def upsert_contest(request: Request) -> dict:
     ends = _norm_ts(body.get("ends_at", ""), "ends_at")
     if ends <= starts:
         raise HTTPException(status_code=400, detail="ends_at must be after starts_at")
-    problems = [str(p) for p in (body.get("problems") or [])]
+    problems = [_resolve_pid(str(p)) for p in (body.get("problems") or [])]
     unknown = [p for p in problems if p not in PROBLEMS]
     if not problems or unknown:
         raise HTTPException(status_code=400,
@@ -2026,7 +2052,7 @@ def contest_detail(request: Request, cid: str) -> dict:
     contest = _contest_or_404(cid)
     user = request.session.get("user") or {}
     email = user.get("email", "")
-    listed = [str(x) for x in (contest.get("problems") or [])]
+    listed = [_resolve_pid(str(x)) for x in (contest.get("problems") or [])]
     status = _contest_window(contest)
     live = _is_admin(email) or status != "running"
     problems = []
@@ -2034,7 +2060,8 @@ def contest_detail(request: Request, cid: str) -> dict:
         p = PROBLEMS.get(pid)
         if p is None:
             continue
-        problems.append({"id": p.pid, "title": p.title, "difficulty": p.difficulty,
+        problems.append({"id": p.pid, "no": p.no, "title": p.title,
+                         "difficulty": p.difficulty,
                          "tags": p.tags, "tests": len(p.tests), "samples": len(p.samples),
                          "time_limit": p.time_limit, "memory_limit": p.memory_limit})
     return {
@@ -2061,7 +2088,7 @@ async def admin_rejudge(request: Request) -> dict:
     except Exception:
         raise HTTPException(status_code=400, detail="invalid JSON")
     ids = [str(i) for i in (body.get("ids") or [])][:REJUDGE_MAX]
-    problem = str(body.get("problem", "")).strip()
+    problem = _resolve_pid(str(body.get("problem", "")).strip())
     try:
         limit = max(1, min(int(body.get("limit") or 50), REJUDGE_MAX))
     except (TypeError, ValueError):
@@ -2127,6 +2154,7 @@ def admin_plagiarism(request: Request, problem: str = "",
     user = request.session.get("user") or {}
     if not _is_admin(user.get("email", "")):
         raise HTTPException(status_code=403, detail="admin only")
+    problem = _resolve_pid(problem)
     if problem not in PROBLEMS:
         raise HTTPException(status_code=400, detail="unknown problem")
     if _sb is None:

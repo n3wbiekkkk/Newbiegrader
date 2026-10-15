@@ -1,1 +1,1 @@
-{"title": "เลขสะท้อนคู่ (Mirror Pair)", "time_limit": 1.0, "memory_limit": 64, "checker": "token", "difficulty": "easy", "tags": ["Math", "Implementation"], "notice": "ข้อนี้ใช้วิธีใดก็ได้ ไม่บังคับฟังก์ชัน/recursion — ส่งโปรแกรมเต็มที่อ่าน input ตาม spec", "samples": ["02"]}
+{"title": "เลขสะท้อนคู่ (Mirror Pair)", "time_limit": 1.0, "memory_limit": 64, "checker": "token", "difficulty": "easy", "tags": ["Math", "Implementation"], "notice": "ข้อนี้ใช้วิธีใดก็ได้ ไม่บังคับฟังก์ชัน/recursion — ส่งโปรแกรมเต็มที่อ่าน input ตาม spec", "samples": ["02"], "no": 22}

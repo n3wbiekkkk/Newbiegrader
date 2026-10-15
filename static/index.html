@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600;700&display=swap">
-<link rel="stylesheet" href="/styles.css?v=9">
+<link rel="stylesheet" href="/styles.css?v=10">
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -99,7 +99,12 @@
       <p class="dim">เลือกโจทย์แล้วกดเข้าไปส่งโค้ดได้เลย</p>
     </div>
     <div class="filterbar">
-      <input id="q" type="search" placeholder="ค้นหา id / ชื่อโจทย์..." aria-label="search problems">
+      <input id="q" type="search" placeholder="ค้นหาเลข # / id / ชื่อโจทย์..." aria-label="search problems">
+      <select id="f-sort" aria-label="sort problems">
+        <option value="no">เรียงตามเลขโจทย์</option>
+        <option value="difficulty">เรียงตามระดับ</option>
+        <option value="title">เรียงตามชื่อ</option>
+      </select>
       <select id="f-diff" aria-label="filter by difficulty">
         <option value="">ทุกระดับ</option>
       </select>
@@ -438,6 +443,6 @@
 </footer>
 
 <script src="/config.js?v=4"></script>
-<script src="/app.js?v=12"></script>
+<script src="/app.js?v=13"></script>
 </body>
 </html>
