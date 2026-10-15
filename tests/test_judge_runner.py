@@ -37,6 +37,7 @@ def process_alive(pid):
 
 
 class OutputCollectionTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform.startswith("linux"), "needs Linux subreaper + prctl(PDEATHSIG)")
     def test_owner_death_terminates_the_owned_job(self):
         with tempfile.TemporaryDirectory() as tmp:
             os.chmod(tmp, 0o777)
@@ -110,7 +111,7 @@ class OutputCollectionTests(unittest.TestCase):
             self.assertTrue(marker.exists(), "compiler did not reach its subprocess")
             self.assertFalse(process_alive(int(marker.read_text())))
 
-    @unittest.skipUnless(os.name == "posix", "POSIX resource limits")
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux RLIMIT semantics")
     def test_sandbox_preserves_memory_and_process_limits(self):
         result = grader.run_one([sys.executable, "-c",
                                 "import json, resource; print(json.dumps(["
@@ -221,6 +222,7 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
                 f"open({str(path)!r}, 'w').write(str(p.pid))\n"
                 + ("" if exit_parent else "time.sleep(60)\n"))
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "needs Linux subreaper + /proc descendant reaping")
     async def test_hard_deadline_kills_descendant_that_changes_session(self):
         run = self.runner()
         with tempfile.TemporaryDirectory() as tmp:
@@ -234,6 +236,7 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
                 await task
             self.assertFalse(process_alive(pid), "deadline returned with child alive")
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "needs Linux subreaper + /proc descendant reaping")
     async def test_cancellation_waits_for_descendant_cleanup(self):
         run = self.runner()
         with tempfile.TemporaryDirectory() as tmp:
@@ -248,6 +251,7 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
                 await task
             self.assertFalse(process_alive(pid), "cancellation returned with child alive")
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "needs Linux subreaper + /proc descendant reaping")
     async def test_success_also_cleans_orphan_descendants(self):
         run = self.runner()
         with tempfile.TemporaryDirectory() as tmp:
