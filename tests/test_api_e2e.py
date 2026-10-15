@@ -86,6 +86,17 @@ class ApiE2E(unittest.TestCase):
         if r.status_code == 409:
             r = self.client.post("/api/auth/password",
                                  json={"email": email, "password": PASSWORD})
+        elif r.status_code == 403 and server._is_admin(email):
+            # Admin addresses are reserved (never self-registered in prod):
+            # seed the account out-of-band, then log in via password.
+            existing = [u for u in self.fake.tables.get("users", [])
+                        if u.get("email") == email]
+            if not existing:
+                self.fake.table("users").insert({
+                    "email": email, "name": name,
+                    "password_hash": server._hash_password(PASSWORD)}).execute()
+            r = self.client.post("/api/auth/password",
+                                 json={"email": email, "password": PASSWORD})
         self.assertEqual(r.status_code, 200, r.text)
 
     def submit(self, problem: str, code: str, expect: int = 202,
@@ -494,6 +505,46 @@ class ApiE2E(unittest.TestCase):
                                          params={"problem": "thai_time"}).status_code, 403)
         self.assertEqual(self.client.post("/api/contests", json={}).status_code, 403)
         self.assertEqual(self.client.get("/api/admin/overview").status_code, 403)
+
+    def test_security_regressions(self):
+        # Admin addresses are reserved: open registration must refuse them.
+        r = self.client.post("/api/auth/register",
+                             json={"email": ADMIN, "password": PASSWORD, "name": "X"})
+        self.assertEqual(r.status_code, 403, r.text)
+        # Unknown API paths are JSON 404, never the SPA index.html.
+        r = self.client.get("/api/no-such-endpoint")
+        self.assertEqual(r.status_code, 404, r.text)
+        self.assertIn("application/json", r.headers.get("content-type", ""))
+        # Bad plagiarism params are 400/422, not 500.
+        self.login(ADMIN)
+        r = self.client.get("/api/admin/plagiarism",
+                            params={"problem": "thai_time", "threshold": "abc"})
+        self.assertIn(r.status_code, (400, 422), r.text)
+        r = self.client.get("/api/admin/plagiarism",
+                            params={"problem": "thai_time", "limit": "abc"})
+        self.assertIn(r.status_code, (400, 422), r.text)
+        # Another user's job id is indistinguishable from unknown (404).
+        # NOTE: check before creating the upcoming contest below, which hides
+        # thai_time from non-admins until it starts.
+        job = self.submit("thai_time", THAI_REF)
+        jid = job["job_id"]
+        self.login(STUDENT_B)
+        r = self.client.get(f"/api/jobs/{jid}")
+        self.assertEqual(r.status_code, 404, r.text)
+        r = self.client.get("/api/jobs/does-not-exist")
+        self.assertEqual(r.status_code, 404, r.text)
+        # Upcoming contests hide problem details from non-admins.
+        self.login(ADMIN)
+        r = self.client.post("/api/contests", json={
+            "id": "future-cup", "title": "Future",
+            "starts_at": _iso(60), "ends_at": _iso(120),
+            "problems": ["thai_time"]})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.login(STUDENT_A)
+        detail = self.client.get("/api/contests/future-cup").json()
+        self.assertEqual(detail["status"], "upcoming")
+        for p in detail["problem_details"]:
+            self.assertNotIn("title", p, p)
 
     def test_admin_overview_reports_queue_state(self):
         # sync endpoint: it runs in a threadpool, where an event loop must not be
