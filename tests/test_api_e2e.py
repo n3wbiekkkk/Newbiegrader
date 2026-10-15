@@ -73,6 +73,11 @@ class ApiE2E(unittest.TestCase):
         server._contest_pid_cache["at"] = 0.0
         server._contest_pid_cache["all"] = set()
         server._contest_pid_cache["hide"] = set()
+        server._reg_count_cache["at"] = 0.0
+        # contests/registrations are per-test fixtures (submissions accumulate and
+        # some tests assert on the running totals)
+        self.fake.tables["contests"] = []
+        self.fake.tables["contest_registrations"] = []
 
     def login(self, email: str, name: str = "Tester") -> None:
         self.client.cookies.clear()
@@ -337,7 +342,13 @@ class ApiE2E(unittest.TestCase):
             "problems": ["thai_time"]})
         self.assertEqual(bad.status_code, 400)
 
+    def register_contest(self, cid: str) -> dict:
+        r = self.client.post(f"/api/contests/{cid}/register", json={})
+        self.assertEqual(r.status_code, 200, r.text)
+        return r.json()
+
     def judged_contest(self, problem: str, code: str, contest: str) -> dict:
+        self.register_contest(contest)     # contest submissions need registration
         job = self.submit(problem, code, contest=contest)
         return self.wait_job(job["job_id"])
 
@@ -645,6 +656,135 @@ class ApiE2E(unittest.TestCase):
         self.assertEqual(created.json()["contest"]["problems"], [pid])
         self.assertEqual(self.client.delete("/api/contests/num-cup").status_code, 200)
 
+    def test_contest_registration_locks_problems(self):
+        # Codeforces lifecycle: register before the start, problems open at the
+        # start, unregistered users cannot submit.
+        self.addCleanup(lambda: self.fake.tables.__setitem__("contests", []))
+        self.login(ADMIN)
+        created = self.client.post("/api/contests", json={
+            "id": "cf-style", "title": "CF Style",
+            "starts_at": _iso(10), "ends_at": _iso(70),
+            "problems": ["hanoi"], "hide_from_tasks": True})
+        self.assertEqual(created.status_code, 200, created.text)
+
+        self.login(STUDENT_A)
+        d = self.client.get("/api/contests/cf-style").json()
+        self.assertFalse(d["problems_open"])
+        self.assertFalse(d["registered"])
+        self.assertFalse(d["can_submit"])
+        self.assertGreater(d["starts_in_s"], 0)
+        self.assertEqual(d["participants"], 0)
+        self.assertEqual(self.client.get("/api/problems/hanoi").status_code, 404)
+        early = self.client.post("/api/submit", data={
+            "problem": "hanoi", "language": "python",
+            "code": "print(1)", "contest": "cf-style"})
+        self.assertEqual(early.status_code, 404, early.text)   # problem not open yet
+        self.client.post("/api/contests/cf-style/register", json={})
+        still_early = self.client.post("/api/submit", data={
+            "problem": "hanoi", "language": "python",
+            "code": "print(1)", "contest": "cf-style"})
+        self.assertEqual(still_early.status_code, 404, still_early.text)
+
+        reg = self.client.post("/api/contests/cf-style/register", json={})
+        self.assertEqual(reg.status_code, 200, reg.text)
+        self.assertTrue(reg.json()["registered"])
+        self.assertEqual(reg.json()["participants"], 1)
+        self.assertTrue(self.client.get("/api/contests/cf-style").json()["registered"])
+        # still locked before the start, even when registered
+        self.assertEqual(self.client.get("/api/problems/hanoi").status_code, 404)
+        self.assertFalse(self.client.get("/api/contests/cf-style").json()["problems_open"])
+
+        unreg = self.client.delete("/api/contests/cf-style/register")
+        self.assertEqual(unreg.status_code, 200, unreg.text)
+        self.assertFalse(unreg.json()["registered"])
+        self.client.post("/api/contests/cf-style/register", json={})   # register again
+
+        # move the window so it is running now
+        self.login(ADMIN)
+        now = self.client.post("/api/contests", json={
+            "id": "cf-style", "title": "CF Style",
+            "starts_at": _iso(-5), "ends_at": _iso(55),
+            "problems": ["hanoi"], "hide_from_tasks": True})
+        self.assertEqual(now.status_code, 200, now.text)
+        self.assertEqual(now.json()["contest"]["status"], "running")
+        self.assertEqual(now.json()["contest"]["participants"], 1)
+
+        self.login(STUDENT_A)
+        running = self.client.get("/api/contests/cf-style").json()
+        self.assertTrue(running["problems_open"])
+        self.assertTrue(running["can_submit"])
+        self.assertEqual(self.client.get("/api/problems/hanoi").status_code, 200)
+        code = (ROOT / "examples" / "hanoi_ref.py").read_text(encoding="utf-8")
+        job = self.judged_contest("hanoi", code, "cf-style")
+        self.assertEqual(job["result"]["score"], 100)
+
+        # a classmate who never registered is refused
+        self.login(STUDENT_B)
+        refused = self.client.post("/api/submit", data={
+            "problem": "hanoi", "language": "python", "code": code, "contest": "cf-style"})
+        self.assertEqual(refused.status_code, 403, refused.text)
+        self.assertIn("ลงทะเบียน", refused.json()["detail"])
+        self.assertFalse(self.client.get("/api/contests/cf-style").json()["can_submit"])
+        # but they can register while it runs, then submit
+        self.assertEqual(self.client.post(
+            "/api/contests/cf-style/register", json={}).status_code, 200)
+        self.assertTrue(self.judged_contest("hanoi", code, "cf-style")["result"]["accepted"])
+        self.assertEqual(self.client.delete(
+            "/api/contests/cf-style/register").status_code, 400)   # cannot leave mid-round
+
+        # after the end: problems stay open for practice, submissions are closed
+        self.login(ADMIN)
+        self.client.post("/api/contests", json={
+            "id": "cf-style", "title": "CF Style",
+            "starts_at": _iso(-120), "ends_at": _iso(-60),
+            "problems": ["hanoi"], "hide_from_tasks": True})
+        self.login(STUDENT_A)
+        after = self.client.get("/api/contests/cf-style").json()
+        self.assertTrue(after["problems_open"])
+        self.assertFalse(after["can_submit"])
+        self.assertEqual(self.client.get("/api/problems/hanoi").status_code, 200)
+        late = self.client.post("/api/submit", data={
+            "problem": "hanoi", "language": "python", "code": code, "contest": "cf-style"})
+        self.assertEqual(late.status_code, 403, late.text)
+
+        self.login(ADMIN)
+        self.assertEqual(self.client.delete("/api/contests/cf-style").status_code, 200)
+        params = self.client.get("/api/contests/cf-style").status_code
+        self.assertEqual(params, 404)
+
+    def test_contest_scores_do_not_touch_the_global_board(self):
+        self.addCleanup(lambda: self.fake.tables.__setitem__("contests", []))
+        # snapshot BEFORE seeding: stats cover every submission in the fake DB
+        before_subs = (self.client.get("/api/stats").json()["stats"].get("thai_time")
+                       or {}).get("subs", 0)
+        self.fake.tables.setdefault("submissions", [])
+        self.fake.tables["submissions"] += [
+            {"id": "g1", "user_email": "global@example.com", "name": "Global",
+             "problem": "thai_time", "score": 60, "accepted": False,
+             "contest_id": None, "created_at": "2026-10-05T00:00:00+00:00"},
+            {"id": "c1", "user_email": "global@example.com", "name": "Global",
+             "problem": "thai_time", "score": 100, "accepted": True,
+             "contest_id": "cup-x", "created_at": "2026-10-06T00:00:00+00:00"},
+            {"id": "c2", "user_email": "contest-only@example.com", "name": "Contest Only",
+             "problem": "hanoi", "score": 100, "accepted": True,
+             "contest_id": "cup-x", "created_at": "2026-10-06T00:00:00+00:00"},
+        ]
+        try:
+            server._cache.clear()      # aggregates are cached for 30-60s
+            top = {t["name"]: t for t in self.client.get("/api/leaderboard").json()["top"]}
+            self.assertEqual(top["Global"]["points"], 60, top)   # contest 100 ignored
+            self.assertFalse(top["Global"]["solved"])
+            self.assertNotIn("Contest Only", top, "contest-only scores stay out of the board")
+            stats = self.client.get("/api/stats").json()["stats"]
+            # the non-contest row counts, the contest row does not
+            self.assertEqual(stats["thai_time"]["subs"], before_subs + 1)
+            self.assertNotIn("hanoi", stats)
+            hist = self.client.get("/api/history?limit=50").json()["submissions"]
+            self.assertTrue(all("contest_id" in r for r in hist), "rows carry contest_id")
+        finally:
+            self.fake.tables["submissions"] = [
+                r for r in self.fake.tables["submissions"] if r["id"] not in ("g1", "c1", "c2")]
+
     def test_health_and_problem_listing(self):
         h = self.client.get("/api/health").json()
         self.assertTrue(h["ok"])
@@ -686,6 +826,11 @@ class PreMigrationFallback(unittest.TestCase):
         server._contest_pid_cache["at"] = 0.0
         server._contest_pid_cache["all"] = set()
         server._contest_pid_cache["hide"] = set()
+        server._reg_count_cache["at"] = 0.0
+        # contests/registrations are per-test fixtures (submissions accumulate and
+        # some tests assert on the running totals)
+        self.fake.tables["contests"] = []
+        self.fake.tables["contest_registrations"] = []
 
     def _register(self, email: str, name: str) -> None:
         self.client.cookies.clear()

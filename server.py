@@ -633,6 +633,76 @@ def _reveal_for(contest: Optional[dict], email: str) -> str:
     return REVEAL_SAMPLES
 
 
+# ---- contest registration (Codeforces style) ----
+# `contest_registrations` may be missing on an un-migrated database: in that case
+# contests stay open (everyone can submit, exactly like before) and we log a hint
+# instead of refusing every submission.
+_reg_table_ok: Dict[str, bool] = {"value": True}
+
+
+def _registrations_supported() -> bool:
+    return _sb is not None and _reg_table_ok["value"]
+
+
+def _register_note_missing_table(e: Exception) -> None:
+    if "contest_registrations" in str(e) and _reg_table_ok["value"]:
+        _reg_table_ok["value"] = False
+        print("[web] contest_registrations table missing — contests run without "
+              "registration; run supabase/schema.sql", file=sys.stderr)
+
+
+def _registered_emails(cid: str) -> set:
+    """Emails registered for one contest (empty set when unavailable)."""
+    if _sb is None or not _reg_table_ok["value"]:
+        return set()
+    try:
+        res = _sb.table("contest_registrations").select("user_email").eq(
+            "contest_id", cid).limit(5000).execute()
+        return {r.get("user_email", "") for r in (res.data or []) if r.get("user_email")}
+    except Exception as e:
+        _register_note_missing_table(e)
+        return set()
+
+
+def _is_registered(cid: str, email: str) -> bool:
+    if not email:
+        return False
+    if not _registrations_supported():
+        return True          # legacy behaviour: no registration table, no gate
+    return email in _registered_emails(cid)
+
+
+def _registration_count(cid: str) -> int:
+    return len(_registered_emails(cid))
+
+
+def _contest_started(contest: dict) -> bool:
+    """Problems of a contest are readable/submittable once the window opened."""
+    return _contest_window(contest) in ("running", "ended")
+
+
+_reg_count_cache: Dict[str, object] = {"at": 0.0, "counts": {}}
+
+
+def _registration_counts() -> Dict[str, int]:
+    """{contest_id: participants} for every contest (one query, 20 s cache)."""
+    now = time.monotonic()
+    if _reg_count_cache["at"] and now - float(_reg_count_cache["at"]) < 20:
+        return _reg_count_cache["counts"]
+    counts: Dict[str, int] = {}
+    if _sb is not None and _reg_table_ok["value"]:
+        try:
+            res = _sb.table("contest_registrations").select(
+                "contest_id").limit(5000).execute()
+            for r in res.data or []:
+                cid = r.get("contest_id") or ""
+                counts[cid] = counts.get(cid, 0) + 1
+        except Exception as e:
+            _register_note_missing_table(e)
+    _reg_count_cache.update({"at": now, "counts": counts})
+    return counts
+
+
 # ---- Google login (OAuth 2.0 code flow, session cookie) ----
 # Env: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET (from Google Auth Platform),
 #   GOOGLE_REDIRECT_URI (must match the Authorised redirect URI exactly),
@@ -1085,8 +1155,23 @@ def _visible_to(pid: str, email: str) -> bool:
         return True
     if pid not in _hidden_pids():
         return True
-    listed, _ = _contest_problem_sets()
-    return pid in listed
+    # contest-only problem: readable once a contest listing it has STARTED
+    for row in _contests_listing(pid):
+        if _contest_started(row):
+            return True
+    return False
+
+
+def _contests_listing(pid: str) -> List[dict]:
+    """Contests that include this problem (empty when contests are unavailable)."""
+    if _sb is None:
+        return []
+    try:
+        return [row for row in _contest_rows()
+                if pid in {_resolve_pid(str(x)) for x in (row.get("problems") or [])}]
+    except Exception as e:
+        print(f"[web] contest lookup for {pid} failed: {e}", file=sys.stderr)
+        return []
 
 
 def _visible_problem_or_404(pid: str, email: str) -> grader.Problem:
@@ -1408,11 +1493,17 @@ async def submit(
     contest_obj: Optional[dict] = None
     if contest:
         contest_obj = _contest_or_404(contest)
-        listed = [str(x) for x in (contest_obj.get("problems") or [])]
+        listed = {_resolve_pid(str(x)) for x in (contest_obj.get("problems") or [])}
         if prob.pid not in listed:
             raise HTTPException(status_code=400, detail="problem is not part of this contest")
-        if _contest_window(contest_obj) != "running" and not _is_admin(email):
-            raise HTTPException(status_code=403, detail="contest is not running")
+        if not _is_admin(email):
+            if _contest_window(contest_obj) != "running":
+                raise HTTPException(status_code=403,
+                                    detail="contest is not running (starts later or ended)")
+            if not _is_registered(contest_obj["id"], email):
+                raise HTTPException(status_code=403,
+                                    detail="ยังไม่ได้ลงทะเบียนคอนเทสต์นี้ — กด Register "
+                                           "ในหน้าคอนเทสต์ก่อน")
 
     _quota_check("submit", email, SUBMIT_QUOTA)
     if _active_jobs.get(email):
@@ -1538,7 +1629,8 @@ def history(request: Request, problem: Optional[str] = None, limit: int = 20,
     email = u.get("email", "")
     try:
         q = _sb.table("submissions").select(
-            "id,created_at,problem,language,name,filename,verdict,accepted,passed,total,score,counts"
+            "id,created_at,problem,language,name,filename,verdict,accepted,passed,"
+            "total,score,counts,contest_id"
         ).order("created_at", desc=True).limit(limit)
         if problem:
             q = q.eq("problem", _resolve_pid(problem))
@@ -1808,11 +1900,11 @@ def _build_leaderboard(limit: int) -> dict:
               "falling back to a 2000-row scan — run supabase/schema.sql", file=sys.stderr)
         try:
             res = _sb.table("submissions").select(
-                "problem,user_email,name,accepted,score,created_at").order(
+                "problem,user_email,name,accepted,score,created_at,contest_id").order(
                 "created_at", desc=True).limit(2000).execute()
         except Exception as e2:
             raise _db_err(e2)
-        rows = res.data or []
+        rows = [r for r in (res.data or []) if not r.get("contest_id")]
     for r in rows:
         u = r.get("user_email") or ""
         if not u:
@@ -1864,12 +1956,12 @@ def _build_stats() -> dict:
               "scan — run supabase/schema.sql", file=sys.stderr)
         try:
             res = _sb.table("submissions").select(
-                "problem,accepted,score,user_email").order(
+                "problem,accepted,score,user_email,contest_id").order(
                 "created_at", desc=True).limit(500).execute()
         except Exception as e2:
             raise _db_err(e2)
         agg: dict = {}
-        for r in res.data or []:
+        for r in [x for x in (res.data or []) if not x.get("contest_id")]:
             p = agg.setdefault(r["problem"], {"subs": 0, "accepted": 0, "best": 0,
                                               "total_score": 0, "solvers": set()})
             p["subs"] += 1
@@ -1907,9 +1999,12 @@ def _norm_ts(value: str, field: str) -> str:
     return parsed.astimezone(dt.timezone.utc).isoformat()
 
 
-def _contest_public(row: dict) -> dict:
+def _contest_public(row: dict, email: str = "", counts: Dict[str, int] | None = None) -> dict:
+    cid = row.get("id", "")
     return {
-        "id": row.get("id", ""), "title": row.get("title", ""),
+        "participants": (counts or {}).get(cid, 0),
+        "registered": _is_registered(cid, email) if _registrations_supported() else True,
+        "id": cid, "title": row.get("title", ""),
         "starts_at": row.get("starts_at"), "ends_at": row.get("ends_at"),
         "freeze_minutes": row.get("freeze_minutes") or 0,
         "show_samples": row.get("show_samples", True),
@@ -1925,11 +2020,14 @@ def _contest_rows() -> List[dict]:
 
 
 @app.get("/api/contests")
-def list_contests() -> dict:
+def list_contests(request: Request) -> dict:
     if _sb is None:
         return {"configured": False, "contests": []}
     try:
-        return {"configured": True, "contests": [_contest_public(r) for r in _contest_rows()]}
+        email = (request.session.get("user") or {}).get("email", "")
+        counts = _registration_counts()
+        return {"configured": True,
+                "contests": [_contest_public(r, email, counts) for r in _contest_rows()]}
     except Exception as e:
         # Read-only listing: degrade instead of 500 while the contests table is
         # missing (schema migration not run yet).
@@ -1982,7 +2080,9 @@ async def upsert_contest(request: Request) -> dict:
                                 detail="contests table is missing hide_from_tasks — run supabase/schema.sql")
         raise _db_err(e)
     _contest_pid_cache["at"] = 0.0   # visibility changed
-    return {"ok": True, "contest": _contest_public(row)}
+    _reg_count_cache["at"] = 0.0
+    return {"ok": True,
+            "contest": _contest_public(row, user["email"], _registration_counts())}
 
 
 @app.delete("/api/contests/{cid}")
@@ -2055,6 +2155,8 @@ def contest_detail(request: Request, cid: str) -> dict:
     listed = [_resolve_pid(str(x)) for x in (contest.get("problems") or [])]
     status = _contest_window(contest)
     live = _is_admin(email) or status != "running"
+    admin = _is_admin(email)
+    started = _contest_started(contest)
     problems = []
     for pid in listed:
         p = PROBLEMS.get(pid)
@@ -2064,11 +2166,89 @@ def contest_detail(request: Request, cid: str) -> dict:
                          "difficulty": p.difficulty,
                          "tags": p.tags, "tests": len(p.tests), "samples": len(p.samples),
                          "time_limit": p.time_limit, "memory_limit": p.memory_limit})
-    return {
-        **_contest_public(contest), "problem_details": problems,
+    body = {
+        **_contest_public(contest, email, _registration_counts()),
+        "problem_details": problems,
         "frozen": not live and (contest.get("freeze_minutes") or 0) > 0,
         "scoreboard": _contest_scoreboard(contest, live),
+        # Codeforces-style lifecycle: register before the start, problems open at
+        # the start, submissions only while running and only for participants.
+        "problems_open": started or admin,
+        "can_submit": (status == "running" and _is_registered(contest.get("id", ""), email))
+                      or admin,
+        "starts_in_s": _seconds_until(contest.get("starts_at")),
+        "ends_in_s": _seconds_until(contest.get("ends_at")),
+        "registration_open": status != "ended" or admin,
+        "registrations_supported": _registrations_supported(),
     }
+    if admin and _registrations_supported():
+        try:
+            res = _sb.table("contest_registrations").select(
+                "user_email,name,registered_at").eq(
+                "contest_id", contest.get("id", "")).order(
+                "registered_at").limit(1000).execute()
+            body["participants_list"] = [
+                {"name": r.get("name") or r.get("user_email") or "?",
+                 "email": r.get("user_email") or "",
+                 "at": r.get("registered_at")}
+                for r in (res.data or [])]
+        except Exception as e:
+            print(f"[web] participants lookup failed: {e}", file=sys.stderr)
+    return body
+
+
+def _seconds_until(ts: object) -> Optional[int]:
+    """Seconds from now until an ISO timestamp (negative = already passed)."""
+    try:
+        when = dt.datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    except Exception:
+        return None
+    return int((when - dt.datetime.now(dt.timezone.utc)).total_seconds())
+
+
+@app.post("/api/contests/{cid}/register")
+async def register_contest(request: Request, cid: str) -> dict:
+    user = request.session.get("user") or {}
+    email = user.get("email", "")
+    if not email:
+        raise HTTPException(status_code=401, detail="login first")
+    contest = _contest_or_404(cid)
+    if not _registrations_supported():
+        raise HTTPException(status_code=503,
+                            detail="contest registration is off — run supabase/schema.sql")
+    if _contest_window(contest) == "ended" and not _is_admin(email):
+        raise HTTPException(status_code=400, detail="contest already ended")
+    name = await asyncio.to_thread(
+        _profile_display_name, email, user.get("name") or email)
+    try:
+        _sb.table("contest_registrations").upsert(
+            {"contest_id": cid, "user_email": email, "name": name[:50]},
+            on_conflict="contest_id,user_email").execute()
+    except Exception as e:
+        _register_note_missing_table(e)
+        raise _db_err(e)
+    _reg_count_cache["at"] = 0.0
+    return {"ok": True, "registered": True, "participants": _registration_count(cid)}
+
+
+@app.delete("/api/contests/{cid}/register")
+async def unregister_contest(request: Request, cid: str) -> dict:
+    user = request.session.get("user") or {}
+    email = user.get("email", "")
+    if not email:
+        raise HTTPException(status_code=401, detail="login first")
+    contest = _contest_or_404(cid)
+    if _contest_window(contest) == "running" and not _is_admin(email):
+        raise HTTPException(status_code=400,
+                            detail="contest is running — cannot unregister now")
+    try:
+        _sb.table("contest_registrations").delete().eq("contest_id", cid).eq(
+            "user_email", email).execute()
+    except Exception as e:
+        _register_note_missing_table(e)
+        raise _db_err(e)
+    _reg_count_cache["at"] = 0.0
+    return {"ok": True, "registered": False, "participants": _registration_count(cid)}
 
 
 # ---- admin: rejudge (A4) + plagiarism (B8) ----

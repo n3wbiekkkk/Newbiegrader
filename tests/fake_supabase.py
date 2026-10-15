@@ -111,9 +111,9 @@ class _Query:
         if self._op == "upsert":
             row = dict(self._payload)
             self.db.check_columns(self.table, row)
-            key = self._on_conflict or "id"
+            keys = [k.strip() for k in str(self._on_conflict or "id").split(",")]
             for i, existing in enumerate(rows):
-                if existing.get(key) == row.get(key):
+                if all(existing.get(k) == row.get(k) for k in keys):
                     merged = {**existing, **row}
                     rows[i] = merged
                     return _Resp([copy.deepcopy(merged)])
@@ -188,8 +188,8 @@ class FakeSupabase:
         newest: dict = {}
         for r in self.tables.get("submissions", []):
             email = r.get("user_email") or ""
-            if not email:
-                continue
+            if not email or r.get("contest_id"):
+                continue     # contest scores live in the contest board only
             key = (email, r.get("problem") or "")
             cur = agg.setdefault(key, {"user_email": email, "problem": key[1],
                                        "best": 0, "accepted": False, "last_at": "",
@@ -210,6 +210,8 @@ class FakeSupabase:
             raise Exception('relation "public.problem_stats" does not exist')
         agg: dict = {}
         for r in self.tables.get("submissions", []):
+            if r.get("contest_id"):
+                continue     # contest scores live in the contest board only
             p = agg.setdefault(r.get("problem") or "",
                                {"problem": r.get("problem") or "", "subs": 0,
                                 "accepted": 0, "best": 0, "total_score": 0,

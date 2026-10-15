@@ -40,7 +40,7 @@
 | โจทย์ทั้งหมด | 47 (`problems/*/config.json`) — ทุกข้อสาธารณะตอนนี้ (ระบบรองรับข้อชุดคอนเทสต์ที่ `"hidden": true`) |
 | เทสต์ทั้งหมด | 681 ไฟล์ `.in/.out` (ข้อละ 10-18) |
 | Reference solution | `examples/<id>_ref.py` (+ `_ref.cpp` บางข้อ) รวม 59 ไฟล์ |
-| เทสต์อัตโนมัติ | 37 เทสต์ ใน `tests/` (E2E 29 + cgroup 8) |
+| เทสต์อัตโนมัติ | 39 เทสต์ ใน `tests/` (E2E 31 + cgroup 8) |
 | checker | `token` (default) / `exact` / `float` / `decimal2` |
 | เลขโจทย์ | ทุกข้อมี `config.json → "no"` เลข 1..47 ไม่ซ้ำ — เรียง/ค้นหา/เปิดด้วยเลขได้ |
 | engine version | `grader.GRADER_VERSION = "2.0.0"` (เก็บทุก submission) |
@@ -173,7 +173,21 @@ graph LR
 - ค่าที่ใช้จริงดูได้ที่ `GET /api/version → system` และบรรทัด `[web] host: ...` ตอน boot
 - `MEMORY_CAP_MB` ทำให้โจทย์ที่ประกาศ 512MB ถูกตัดเหลือ 256MB → รายงาน `limits.capped=true` + `memory_mb` (ค่าที่ใช้จริง) + `declared_mb` และ UI โชว์ "(เครื่องตัดที่ X MB จาก Y MB)" — **อย่าถอด cap** เพราะ 512MB process ใน container 512MB = OOM killer ฆ่า server
 
-### 4.6 การมองเห็นโจทย์ (visibility) — 3 ชั้น
+### 4.6 คอนเทสต์แบบ Codeforces (register → เปิดโจทย์ตอนเริ่ม → คะแนนอยู่แต่ในคอนเทสต์)
+
+| เฟส | ผู้ใช้ทั่วไป | ผู้ที่ลงทะเบียน | admin |
+|---|---|---|---|
+| `upcoming` (ก่อนเริ่ม) | กด **Register** ได้, อ่านโจทย์ไม่ได้ (โจทย์ชุดคอนเทสต์ตอบ 404) | อ่านโจทย์ยังไม่ได้, ยกเลิกลงทะเบียนได้ | ทุกอย่าง + เห็นรายชื่อผู้ลงทะเบียน |
+| `running` | ส่งไม่ได้ (403 "ยังไม่ได้ลงทะเบียน") | อ่านโจทย์ + ส่งได้ ยกเลิกลงทะเบียนไม่ได้ | ทุกอย่าง |
+| `ended` | อ่านโจทย์ได้ (practice) แต่ส่งไม่ได้ | เหมือนผู้ใช้ทั่วไป | ทุกอย่าง |
+
+- ตาราง `contest_registrations (contest_id, user_email, name, registered_at)` + `POST/DELETE /api/contests/{cid}/register`
+- **คะแนนในคอนเทสต์ไม่ขึ้นบอร์ดกลาง**: view `leaderboard_scores`/`problem_stats` และ fallback scan กรอง `contest_id is null` ออก
+  (คะแนนไปอยู่ที่ `GET /api/contests/{cid} → scoreboard` เท่านั้น) และหน้า Tasks คิด "Solved/points" จากแถวที่ไม่มี `contest_id`
+- ถ้ายังไม่รัน migration (ไม่มีตาราง registrations) ระบบจะ **ไม่บังคับลงทะเบียน** (ทุกคนส่งได้เหมือนเดิม) + log เตือน — กันคนใช้พังทั้งคอนเทสต์
+- ต้องเป็น admin จึงจะสร้าง/แก้คอนเทสต์ — และหน้าจัดการย้ายไปอยู่ `#/admin` แล้ว (ดูข้อ 8)
+
+### 4.7 การมองเห็นโจทย์ (visibility) — 3 ชั้น
 
 ```
 สาธารณะ (ขึ้นหน้า Task/Archive)
@@ -185,7 +199,8 @@ graph LR
 
 - กรองที่: `/api/problems`, `/api/health`, `/api/version`, `/api/history` (สาธารณะ), `/api/problems/{id}(/sample/pdf)`, `POST /api/submit`, `POST /api/run`
 - admin เห็นครบ + ธง `hidden` / `contest_only` / `config_hidden` / `contest_hidden` ใน `/api/problems`
-- cache ของชุดนี้คือ `_contest_pid_cache` (TTL 20s) — **ต้อง `_contest_pid_cache["at"] = 0.0` ทุกครั้งที่คอนเทสต์เปลี่ยน** (upsert/delete ทำให้แล้ว)
+- โจทย์ที่ถูกซ่อนจะ **อ่านได้เมื่อคอนเทสต์ที่ระบุโจทย์นั้น "เริ่มแล้ว"** (running/ended) หรือเป็น admin — ก่อนเริ่ม = 404 (กันเห็นโจทย์ก่อนเวลา)
+- cache ของชุดนี้คือ `_contest_pid_cache` (TTL 20s) — **ต้อง `_contest_pid_cache["at"] = 0.0` ทุกครั้งที่คอนเทสต์เปลี่ยน** (upsert/delete ทำให้แล้ว) และ `_reg_count_cache` สำหรับจำนวนผู้ลงทะเบียน
 - ตัวอย่างจริง: ดูเทสต์ `test_contest_problems_are_hidden_from_the_task_list` (สร้างคอนเทสต์ที่ซ่อน `hanoi` แล้วเช็คว่าหายจากหน้า Task แต่เปิดได้จากหน้าคอนเทสต์)
 
 ---
@@ -200,8 +215,9 @@ graph LR
 | `users` | `email (pk), name, password_hash, created_at` | บัญชีรหัสผ่าน (Google ไม่เก็บ) |
 | `judge_jobs` | `id, status(queued/running/done/error), kind, user_email, name, problem, language, filename, contest_id, source, target_id, result jsonb, error, tests_hash, grader_version, reveal, started_at, finished_at` | คิวงาน durable — restart ไม่ทำ job หาย |
 | `contests` | `id (slug), title, starts_at, ends_at, problems jsonb, freeze_minutes, show_samples, hide_from_tasks, created_by` | คอนเทสต์ + นโยบายโชว์ |
-| view `leaderboard_scores` | `user_email, problem, best, accepted, last_at, name` | all-time best ต่อคนต่อข้อ (คะแนนไม่หลุดเมื่อข้อมูลโต) |
-| view `problem_stats` | `problem, subs, accepted, best, total_score, solvers` | สถิติต่อข้อ |
+| `contest_registrations` | `contest_id, user_email, name, registered_at` (pk = contest_id+user_email) | ใครกด Register (บังคับก่อนส่งในคอนเทสต์) |
+| view `leaderboard_scores` | `user_email, problem, best, accepted, last_at, name` — **กรอง `contest_id is null`** | all-time best ต่อคนต่อข้อ (คะแนนในคอนเทสต์ไม่นับ) |
+| view `problem_stats` | `problem, subs, accepted, best, total_score, solvers` — **กรอง `contest_id is null`** | สถิติต่อข้อ |
 
 - **RLS เปิดทุกตาราง ไม่มี public policy** — เข้าถึงได้ทาง `service_role` ฝั่ง backend เท่านั้น (ห้ามใช้ anon key)
 - migration ทั้งไฟล์ใช้ `if not exists` / `create or replace` → รันซ้ำได้ปลอดภัย
@@ -234,8 +250,10 @@ graph LR
 | GET | `/api/leaderboard` | – | all-time (view + fallback) · ชื่อ: profile → ชื่อใน submissions → local-part ของอีเมล |
 | GET | `/api/stats` | – | สถิติต่อข้อ (view + fallback) |
 | GET | `/api/contests` | – | ลิสต์คอนเทสต์ (+ `hide_from_tasks`) |
-| GET | `/api/contests/{cid}` | – | รายละเอียด + `problem_details` + `scoreboard` (+`frozen`) |
-| POST | `/api/contests` | admin | upsert คอนเทสต์ (validate slug/เวลา/รายชื่อโจทย์) |
+| GET | `/api/contests/{cid}` | – | รายละเอียด + `problem_details` + `scoreboard` + `registered`/`participants`/`problems_open`/`can_submit`/`starts_in_s`/`ends_in_s` (admin ได้ `participants_list`) |
+| POST | `/api/contests` | admin | upsert คอนเทสต์ (validate slug/เวลา/รายชื่อโจทย์ รับเลขโจทย์ได้) |
+| POST | `/api/contests/{cid}/register` | login | ลงทะเบียนคอนเทสต์ (ปิดรับหลังจบ) → `{registered, participants}` |
+| DELETE | `/api/contests/{cid}/register` | login | ยกเลิกลงทะเบียน (ระหว่างแข่งทำไม่ได้, admin ยกเว้น) |
 | DELETE | `/api/contests/{cid}` | admin | ลบ (การส่งยังอยู่) |
 | POST | `/api/admin/rejudge` | admin | `{ids:[...]}` หรือ `{problem, limit}` → คืน job ids (batch ≤ `QUEUE_MAX`) |
 | GET | `/api/admin/plagiarism` | admin | `?problem=&threshold=&limit=` → คู่ที่คล้ายกัน |
@@ -311,7 +329,8 @@ graph LR
 - ห้าม emoji ใน UI · icon ใช้ SVG sprite (`<symbol id="i-*">` ใน index.html + helper `icon(name, cls)`)
 - โครง JS: `state` กลาง (ที่ต้นไฟล์) · router = hash (`router()` + `currentRouteRender()`) · fetch ผ่าน `apiFetch/apiGet/apiPostJson/apiPostForm/apiDelete` (แนบ `detail` ของ server มาเสมอ) · `pollJob(jid, onTick)` สำหรับงาน async (700ms, เพดาน 4 นาที) · `esc()` ก่อนแทรก HTML เสมอ · `badge()/icon()/scoreCls()/limitsMeta()`
 - เลขโจทย์: `noLabel(p)` = chip `#19` ใช้บนการ์ด/หัวข้อ/ตาราง; ช่องค้นหารับ `19` และ `#19`; `#/task/19` เปิดด้วยเลข (router ใช้ `resolveTaskToken()`/`openTaskByToken()` — เลขที่ไม่พบในลิสต์จะลองยิง API ต่อ เช่นโจทย์ชุดคอนเทสต์); เรียงได้ 3 แบบผ่าน `#f-sort` (`state.filter.sort` + `sortProblemList()`, จำค่าใน `localStorage.ng_sort`)
-- routes: `#/` `#/tasks` `#/task/<pid|no>` `#/archive` `#/leaderboard` `#/contests` `#/contests/<id>` `#/history` `#/settings` `#/login` `#/login/register`
+- หน้า **admin แยกจาก Settings**: route `#/admin` + `renderAdmin()` (การ์ด overview/reports/rejudge/plagiarism/คอนเทสต์); nav link `#nav-admin` ซ่อนจนกว่า `state.is_admin` และ non-admin ที่เปิด `#/admin` จะถูกดีดกลับ `#/`; Settings เหลือโปรไฟล์เท่านั้น
+- routes: `#/` `#/tasks` `#/task/<pid|no>` `#/archive` `#/leaderboard` `#/contests` `#/contests/<id>` `#/history` `#/settings` `#/admin` `#/login` `#/login/register`
 - identity-dependent view: หลัง `refreshMe()` ใน `init()` ต้องเรียก `currentRouteRender()` (เคยเป็นบั๊ก: เปิด `#/settings` ตรง ๆ แล้วการ์ด admin หาย)
 - cache: `localStorage["ng_problems_v1"]` (TTL 1 ชม.) — **ห้าม cache รายการแบบ admin** (มีโจทย์ที่ซ่อน) และต้อง `removeItem` ตอน logout
 - หลังแก้visibility ของโจทย์ (สร้าง/ลบคอนเทสต์) ต้องเรียก `refreshProblems()` ไม่งั้นลิสต์ค้าง
@@ -385,7 +404,7 @@ node --check static/app.js && node tools/check_frontend.js    # frontend syntax 
 python3 tools/number_problems.py --check                     # เลขโจทย์ไม่ซ้ำ/ต่อเนื่อง
 python3 tools/validate_problem.py                            # 47 ข้อ: config/เทสต์/ตัวอย่าง/ref ต้อง AC (16-25 วิ)
 python3 tools/plagiarism.py                                  # self-test ของตัวตรวจการก็อป
-python3 -m unittest discover -s tests -v                      # 37 เทสต์ E2E + cgroup (~9 วิ)
+python3 -m unittest discover -s tests -v                      # 39 เทสต์ E2E + cgroup (~9 วิ)
 python3 grader.py run <id> examples/<id>_ref.py               # ถ้าแตะข้อนั้นโดยตรง
 ```
 **หมายเหตุ**: `validate_problem.py --jobs >1` จะได้ TLE ปลอมจากการแย่ง CPU — รัน default (jobs=1) เท่านั้น
@@ -394,7 +413,7 @@ python3 grader.py run <id> examples/<id>_ref.py               # ถ้าแต�
 
 | ไฟล์/คลาส | คุมเรื่อง |
 |---|---|
-| `test_api_e2e.ApiE2E` (29) | คิวงาน (202/409/503), redaction (AC/WA), โควตา 429, playground, history สิทธิ์, คอนเทสต์ (window/freeze/hide), rejudge, plagiarism, leaderboard (ชื่อ/fallback view), rate limit รายบัญชี, admin 403, overview, visibility matrix, **เลขโจทย์** (ต่อเนื่อง/เรียง/เปิดด้วยเลข/ส่งด้วยเลข/คอนเทสต์รับเลข) |
+| `test_api_e2e.ApiE2E` (31) | คิวงาน (202/409/503), redaction (AC/WA), โควตา 429, playground, history สิทธิ์, คอนเทสต์ (window/freeze/hide), rejudge, plagiarism, leaderboard (ชื่อ/fallback view), rate limit รายบัญชี, admin 403, overview, visibility matrix, เลขโจทย์ (ต่อเนื่อง/เรียง/เปิดด้วยเลข/ส่งด้วยเลข/คอนเทสต์รับเลข), **วงจรคอนเทสต์แบบ Codeforces** (ล็อกก่อนเริ่ม/register/ต้องลงทะเบียนก่อนส่ง/จบแล้วเปิดให้ทำต่อ) + **คะแนนคอนเทสต์ไม่ขึ้นบอร์ดกลาง** |
 | `test_api_e2e.PreMigrationFallback` (4) | DB ที่ยังไม่รัน migration: insert ตัดคอลัมน์, คิว in-memory, aggregate fallback, contests unconfigured |
 | `test_host_limits.CgroupDetection` (8) | อ่าน cgroup v2/v1/unlimited/เศษเสี้ยว + สูตรที่ server ใช้ |
 | `fake_supabase.FakeSupabase` | จำลอง PostgREST (`select/insert/update/delete/upsert` + `eq/in_/order/limit` + views + column whitelist) |
@@ -512,12 +531,15 @@ uvicorn.run(server.app, host="127.0.0.1", port=8094, log_level="warning")
 29. เทสต์ตัวอย่างใน statement ต้อง ship เป็นเทสต์จริงถ้าจะใช้เป็น `samples` (ไม่งั้น warning)
 30. `problems/` โหลดตอน boot — แก้เทสต์/config แล้วต้อง restart
 31. **เลขโจทย์ต้องไม่ซ้ำ**: validator FAIL ถ้าซ้ำ/หาย และ `PROBLEMS_BY_NO` ตอน boot จะเตือนแล้วให้ "ตัวแรกชนะ" — อย่าลบ `no` ออกจาก config เพื่อ "รีเซ็ต" ให้ใช้ `tools/number_problems.py`
-32. อย่าแก้ `?v=` ด้วยการ "เดา" — ค่าปัจจุบันอยู่ใน `static/index.html` (`styles.css`, `config.js`, `app.js`) และ `tools/check_frontend.js` จะฟ้องถ้าลืม id ใหม่
+32. **คอนเทสต์**: ส่งเข้าคอนเทสต์ต้องลงทะเบียนก่อน (ยกเว้น admin) และโจทย์ที่ซ่อนจะอ่านได้เมื่อคอนเทสต์เริ่มแล้วเท่านั้น — เทสต์เก่าที่ส่งเข้าคอนเทสต์โดยไม่ register จะได้ 403/404 (ต้องเรียก `register_contest()` ก่อน)
+33. aggregate (`/api/stats`, `/api/leaderboard`) ถูก cache 30-60 วิ → เทสต์ที่ seed ข้อมูลแล้วอ่านทันทีต้อง `server._cache.clear()` ก่อน
+34. อย่าแก้ `?v=` ด้วยการ "เดา" — ค่าปัจจุบันอยู่ใน `static/index.html` (`styles.css`, `config.js`, `app.js`) และ `tools/check_frontend.js` จะฟ้องถ้าลืม id ใหม่
 
 ---
 
 ## 16. ปัญหาที่ค้างอยู่ / งานที่ควรทำต่อ
 
+0. **ต้องรัน `supabase/schema.sql` (migration 2026-10c)**: ตาราง `contest_registrations` + view ที่กรอง `contest_id is null` — ถ้าไม่รัน คอนเทสต์จะไม่บังคับลงทะเบียน และคะแนนในคอนเทสต์จะยังขึ้นบอร์ดกลาง
 1. `count_islands` บน prod: 14 ส่ง ผ่าน 0 (ref AC 18/18 ในเครื่อง) → ควรเปิดดูโค้ดจริง/เพิ่มเบาะแส (ไอเดีย: problem health dashboard จาก `submissions.results`)
 2. โจทย์ใหม่ที่รับเข้ามา: ต้องมี `no` (validator บังคับ) + `statement.pdf` (ไม่งั้นได้ warning)
 3. `bake_a_cake` และ `library_code`: ตัวอย่างใน statement ไม่ได้ ship เป็นเทสต์ → ใช้เป็น `samples` ไม่ได้
@@ -556,6 +578,10 @@ python3 tools/number_problems.py --list|--check|--assign|--renumber|--set --id X
 python3 tools/plagiarism.py
 node --check static/app.js && node tools/check_frontend.js
 python3 tools/make_statement_tex.py <id>
+
+# คอนเทสต์ (curl ต้องมี cookie session)
+curl -s -X POST -b cookies.txt -H 'Content-Type: application/json' -d '{}' https://grader.n.onjrnm.vip/api/contests/<cid>/register
+curl -s https://grader.n.onjrnm.vip/api/contests/<cid> | python3 -m json.tool | head -30
 
 # prod checks
 curl -s https://grader.n.onjrnm.vip/api/health | head -c 120
