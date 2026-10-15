@@ -341,6 +341,9 @@
         <label for="auth-pass">รหัสผ่าน (8 ตัวอักษรขึ้นไป)</label>
         <input id="auth-pass" type="password" autocomplete="current-password">
       </div>
+      <div class="settings-row">
+        <label class="check-row" for="auth-remember"><input id="auth-remember" type="checkbox" checked> จำฉันไว้ในเครื่องนี้ (1 ปี)</label>
+      </div>
       <div class="submit-row">
         <button id="auth-go" type="button" class="submit-btn">เข้าสู่ระบบ</button>
       </div>
@@ -479,7 +482,17 @@
   <p class="dim"><a class="tlink" href="https://github.com/n3wbiekkkk/Newbiegrader" rel="noopener external">ซอร์สโค้ด (AGPL-3.0)</a></p>
 </footer>
 
+<div id="cookie-banner" class="hidden" style="position:fixed;left:12px;right:12px;bottom:12px;z-index:90">
+  <div class="card" style="max-width:640px;margin:0 auto;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+    <span class="dim" style="flex:1;min-width:220px">เว็บนี้ใช้คุกกี้ที่จำเป็นเท่านั้น (จำการเข้าสู่ระบบ) ไม่มีการติดตามพฤติกรรม กดยอมรับเพื่อใช้งานต่อได้เลย</span>
+    <span style="display:flex;gap:8px">
+      <button id="cookie-accept" type="button" class="submit-btn">ยอมรับ</button>
+      <button id="cookie-decline" type="button" class="ghost-btn">ปฏิเสธ</button>
+    </span>
+  </div>
+</div>
+
 <script src="/config.js?v=4"></script>
-<script src="/app.js?v=23"></script>
+<script src="/app.js?v=24"></script>
 </body>
 </html>

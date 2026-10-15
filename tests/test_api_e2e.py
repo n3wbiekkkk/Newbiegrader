@@ -64,6 +64,10 @@ class ApiE2E(unittest.TestCase):
 
     # ---------- helpers ----------
     def setUp(self):
+        # Cookies persist on the shared TestClient: without this, an admin
+        # login from the previous test leaks into the next one (order-dependent
+        # failures, e.g. health seeing hidden problems as admin).
+        self.client.cookies.clear()
         # The API rate-limits auth; the suite logs in many times from the same
         # fake IP, so start each test with clean windows.
         server._login_tries.clear()
@@ -938,10 +942,59 @@ class ApiE2E(unittest.TestCase):
     def test_health_and_problem_listing(self):
         h = self.client.get("/api/health").json()
         self.assertTrue(h["ok"])
-        self.assertEqual(len(h["problems"]), len(server.PROBLEMS))
+        # Anonymous users see only publicly visible problems: hidden
+        # contest-only problems are filtered from health (access control,
+        # not a count bug).
+        visible = [pid for pid in server.PROBLEMS
+                   if pid not in server._hidden_pids()]
+        self.assertEqual(sorted(h["problems"]), sorted(visible))
         detail = self.client.get("/api/problems/count_islands").json()
         self.assertEqual(detail["samples"], ["03"])
         self.assertEqual(detail["hidden_tests"], detail["tests"] - 1)
+
+
+    def test_remember_me_restore_and_logout(self):
+        # Opt-out registration sets no remember cookie; default login does.
+        # Losing the session cookie must not log the user out while the
+        # remember cookie survives; logout kills both.
+        from urllib.parse import urlsplit as _urlsplit
+        _parts = _urlsplit(server.FRONTEND_URL)
+        browser = {"Origin": f"{_parts.scheme}://{_parts.hostname}"}
+        self.login("remember.me@example.com")
+        jar = self.client.cookies
+        names = [c.name for c in jar.jar]
+        self.assertIn("ng_remember", names)
+        self.client.cookies.clear()
+        r = self.client.post("/api/auth/register", json={
+            "email": "remember.no@example.com", "password": "testpass123",
+            "name": "No", "remember": False}, headers=browser)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertNotIn("ng_remember", [c.name for c in self.client.cookies.jar])
+
+        # back to the remembered account, then lose only the session cookie
+        self.client.post("/api/auth/password", json={
+            "email": "remember.me@example.com", "password": "testpass123"},
+            headers=browser)
+        jar = self.client.cookies
+        token = next(c.value for c in jar.jar if c.name == "ng_remember")
+        jar.clear()
+        solo = {"Cookie": f"ng_remember={token}"}
+        self.assertIsNone(self.client.get("/api/auth/me", headers=solo).json()["user"])
+        restored = self.client.get("/api/auth/restore", headers=solo).json()
+        self.assertTrue(restored["restored"])
+        me = self.client.get("/api/auth/me").json()
+        self.assertEqual(me["user"]["email"], "remember.me@example.com")
+
+        # garbage token restores nothing and never errors
+        bad = {"Cookie": "ng_remember=bogus"}
+        self.assertFalse(self.client.get("/api/auth/restore", headers=bad).json()["restored"])
+
+        self.login("remember.me@example.com")
+        out = self.client.post("/api/auth/logout", headers=browser)
+        self.assertEqual(out.status_code, 200, out.text)
+        left = [c.name for c in self.client.cookies.jar if c.value]
+        self.assertNotIn("ng_session", left)
+        self.assertNotIn("ng_remember", left)
 
 
 class PreMigrationFallback(unittest.TestCase):

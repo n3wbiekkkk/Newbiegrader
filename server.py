@@ -1070,6 +1070,40 @@ if not _session_secret:
     _session_secret = secrets.token_hex(32)
     print("[web] WARNING: SESSION_SECRET not set, sessions die on restart", file=sys.stderr)
 _login_signer = URLSafeTimedSerializer(_session_secret, salt="login-once")
+# "Remember me": a long-lived signed cookie holding only the email. When the
+# session cookie is gone (browser cleanup, expiry) but this one survives,
+# GET /api/auth/restore silently re-establishes the session. It is HttpOnly +
+# Secure + SameSite=lax like the session cookie, and dies with logout.
+# NOTE: like sessions, it only survives restarts when SESSION_SECRET is set.
+_remember_signer = URLSafeTimedSerializer(_session_secret, salt="remember-me")
+REMEMBER_MAX_AGE = 365 * 24 * 3600
+_REMEMBER_COOKIE = "ng_remember"
+
+
+def _cookie_secure() -> bool:
+    return os.environ.get("SESSION_SECURE", "true").lower() != "false"
+
+
+def _issue_remember(resp, email: str) -> None:
+    resp.set_cookie(_REMEMBER_COOKIE, _remember_signer.dumps({"email": email}),
+                    max_age=REMEMBER_MAX_AGE, httponly=True,
+                    samesite="lax", secure=_cookie_secure())
+
+
+def _read_remember(request: Request) -> str:
+    try:
+        data = _remember_signer.loads(request.cookies.get(_REMEMBER_COOKIE, ""),
+                                      max_age=REMEMBER_MAX_AGE)
+        return str(data.get("email") or "").strip().lower()
+    except Exception:
+        return ""
+
+
+def _json_response(payload: dict):
+    # Local import: the top-level fastapi.responses import belongs to another
+    # in-flight change; this keeps remember-me self-contained.
+    from fastapi.responses import JSONResponse
+    return JSONResponse(payload)
 app.add_middleware(
     SessionMiddleware,
     secret_key=_session_secret,
@@ -1181,7 +1215,9 @@ def auth_finish(request: Request, token: str = "", next: str = "#/"):
         "name": user.get("name") or user["email"],
         "picture": user.get("picture", ""),
     }
-    return RedirectResponse(FRONTEND_URL + "/#/" + next.lstrip("#/"), status_code=307)
+    resp = RedirectResponse(FRONTEND_URL + "/#/" + next.lstrip("#/"), status_code=307)
+    _issue_remember(resp, request.session["user"]["email"])
+    return resp
 
 
 @app.get("/api/auth/me")
@@ -1204,10 +1240,29 @@ def auth_me(request: Request) -> dict:
             "profile_configured": _sb is not None}
 
 
+@app.get("/api/auth/restore")
+def auth_restore(request: Request) -> dict:
+    """Re-establish the session from a valid remember-me cookie.
+
+    Read-only otherwise: returns {restored:false} when already logged in or
+    when there is no usable remember cookie (401 would force the frontend to
+    treat it as an error; a quiet false keeps init simple).
+    """
+    if (request.session.get("user") or {}).get("email"):
+        return {"ok": True, "restored": False}
+    email = _read_remember(request)
+    if not email:
+        return {"ok": True, "restored": False}
+    request.session["user"] = {"email": email, "name": email, "picture": ""}
+    return {"ok": True, "restored": True}
+
+
 @app.post("/api/auth/logout")
 def auth_logout(request: Request) -> dict:
     request.session.clear()
-    return {"ok": True}
+    resp = _json_response({"ok": True})
+    resp.delete_cookie(_REMEMBER_COOKIE, samesite="lax", secure=_cookie_secure())
+    return resp
 
 
 # ---- password login (no Google needed) ----
@@ -1372,7 +1427,11 @@ async def auth_register(request: Request) -> dict:
         raise _db_err(e)
     request.session["user"] = {"email": email, "name": name, "picture": "",
                                "provider": "password"}
-    return {"ok": True, "user": request.session["user"]}
+    user = request.session["user"]
+    resp = _json_response({"ok": True, "user": user})
+    if body.get("remember", True):
+        _issue_remember(resp, email)
+    return resp
 
 
 @app.post("/api/auth/password")
@@ -1404,7 +1463,11 @@ async def auth_password(request: Request) -> dict:
     request.session["user"] = {"email": user["email"],
                                "name": user.get("name") or user["email"],
                                "picture": "", "provider": "password"}
-    return {"ok": True, "user": request.session["user"]}
+    me = request.session["user"]
+    resp = _json_response({"ok": True, "user": me})
+    if body.get("remember", True):
+        _issue_remember(resp, me["email"])
+    return resp
 
 
 def _profile_display_name(email: str, fallback: str) -> str:
