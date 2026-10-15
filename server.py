@@ -304,11 +304,26 @@ REVEAL_SAMPLES = "samples"  # default for everyone: samples only
 REVEAL_NONE = "none"        # live contest with show_samples = false
 
 
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+def _plain_text(text: str) -> str:
+    """Drop ANSI colour codes from judge output.
+
+    grader.py colours its CLI diff when stdout is a tty, so `python3 server.py`
+    in a terminal produced `\\x1b[90m---·expected` inside the JSON payload and
+    the history row: the browser showed the escape sequence instead of the diff.
+    The CLI keeps its colours; the web/DB never sees them.
+    """
+    return _ANSI_RE.sub("", text)
+
+
 def _redact_results(results: List[dict], reveal: str) -> List[dict]:
     """Strip test data from per-test results the caller is not allowed to see."""
     out: List[dict] = []
     for r in results:
-        item = dict(r)
+        item = {k: (_plain_text(v) if isinstance(v, str) else v)
+                for k, v in r.items()}
         public = bool(item.pop("public", False))
         if reveal == REVEAL_ALL or (public and reveal != REVEAL_NONE):
             out.append(item)
