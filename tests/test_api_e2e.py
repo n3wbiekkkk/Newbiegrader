@@ -138,6 +138,11 @@ class ApiE2E(unittest.TestCase):
         self.assertGreaterEqual(sysinfo["judge_jobs"], 1)
         self.assertGreaterEqual(sysinfo["memory_cap_mb"], 64)
         self.assertLessEqual(sysinfo["memory_cap_mb"], sysinfo["host_memory_mb"])
+        # the memory policy is part of the judging contract: interpreted languages
+        # are judged against an allowance, compiled ones stay at the declared limit
+        self.assertGreater(sysinfo["mem_allowance"]["python"], 1)
+        self.assertEqual(sysinfo["mem_allowance"]["cpp"], 1)
+        self.assertGreater(sysinfo["mem_headroom_mb"]["python"], 0)
         self.assertGreater(sysinfo["overall_timeout_s"], 0)
 
     def test_memory_cap_is_applied_and_reported(self):

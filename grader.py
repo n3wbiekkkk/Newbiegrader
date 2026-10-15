@@ -563,6 +563,56 @@ SIGNAL_HINTS = {
 OOM_WORDS = ("bad_alloc", "out of memory", "MemoryError",
              "cannot allocate", "std::bad_alloc")
 
+# ---------- memory limit semantics ----------
+# Two separate numbers, because "memory limit" means two different things:
+#
+#  * the *threshold* a submission is judged against — the peak RSS reported to
+#    the student. Interpreted runtimes carry real overhead per value (a CPython
+#    int costs 28 bytes plus an 8-byte pointer, a JVM reserves its heap), so the
+#    same algorithm needs more bytes than in C. Problems declare their limit for
+#    a compact language, and a language allowance keeps Python and Java students
+#    from being failed for the runtime they were told to use.
+#  * the *ceiling* enforced with RLIMIT_AS — the threshold plus headroom for the
+#    runtime's virtual address space, which is reserved but never resident.
+#    Enforcing the threshold directly on RLIMIT_AS killed correct solutions on
+#    Linux while the same code passed on macOS, where RLIMIT_AS is not enforced
+#    for mmap (that is what broke CI and production).
+LANG_MEM_MULTIPLIER = {
+    "python": 2.5, "node": 2.5, "java": 3.0,
+    "go": 1.0, "rust": 1.0, "c": 1.0, "cpp": 1.0,
+}
+LANG_MEM_HEADROOM_MB = {
+    "python": 64, "node": 96, "java": 512,
+    "go": 0, "rust": 0, "c": 0, "cpp": 0,
+}
+
+def mem_limit_mb(declared_mb: int, lang: Optional[str]) -> float:
+    """Peak-RSS threshold for this language (MB). Reported and judged."""
+    if not declared_mb or declared_mb <= 0:
+        return float(declared_mb or 0)
+    return declared_mb * LANG_MEM_MULTIPLIER.get(lang or "", 1.0)
+
+def enforced_memory_mb(declared_mb: int, lang: Optional[str]) -> int:
+    """RLIMIT_AS value actually applied: threshold + runtime virtual headroom."""
+    if not declared_mb or declared_mb <= 0:
+        return declared_mb
+    return int(mem_limit_mb(declared_mb, lang) + LANG_MEM_HEADROOM_MB.get(lang or "", 0))
+
+# Tolerance for the measured peak RSS (sampling misses the very first frames).
+RSS_SLACK_MB = 1.0
+
+def over_memory_limit(declared_mb: int, peak_mb: float, lang: Optional[str] = None) -> bool:
+    if not declared_mb or declared_mb <= 0:
+        return False
+    return peak_mb > mem_limit_mb(declared_mb, lang) + RSS_SLACK_MB
+
+def memory_note(declared_mb: int, lang: Optional[str]) -> str:
+    """Human-readable note when a language allowance applies (else empty)."""
+    mult = LANG_MEM_MULTIPLIER.get(lang or "", 1.0)
+    if mult == 1.0:
+        return ""
+    return f" (allowance for {lang} x{mult:g} = {mem_limit_mb(declared_mb, lang):.0f}MB)"
+
 # ---------- execution with limits ----------
 def build_limits(memory_mb: int, time_limit: float, sandbox: bool = True):
     def _fn():
@@ -666,13 +716,17 @@ def _run_cwd(cmd: list[str]) -> str | None:
         pass
     return None
 
-def run_one(cmd: list[str], stdin_data: str, time_limit: float, memory_mb: int) -> dict:
+def run_one(cmd: list[str], stdin_data: str, time_limit: float, memory_mb: int,
+            lang: Optional[str] = None) -> dict:
     """Run 1 test ภายใต้ limit.
 
     Returns dict(stdout, stderr, wall, cpu, peak_mb, returncode, killed, reason).
     reason in {'', 'timeout', 'ole', 'oom', 'sigkill', 'signal:*', 'spawn-fail'}.
+    `lang` only affects the enforced memory ceiling (see LANG_MEM_HEADROOM_MB).
     """
     from judge_runner import run_bounded
+    use_limits = (os.name == "posix")
+    preexec = build_limits(enforced_memory_mb(memory_mb, lang), time_limit) if use_limits else None
     start = time.perf_counter()
     cpu0 = _cpu_children()
     cwd = _run_cwd(cmd)
@@ -715,9 +769,9 @@ def run_one(cmd: list[str], stdin_data: str, time_limit: float, memory_mb: int) 
             "killed": reason in ("timeout", "ole"), "reason": reason}
 
 def judge_test(cmd, tc: TestCase, prob: Problem, strict: bool,
-               verbose: bool) -> tuple[str, float, float, float, str, str]:
+               verbose: bool, lang: Optional[str] = None) -> tuple[str, float, float, float, str, str]:
     """Returns (verdict, wall_s, cpu_s, peak_mb, detail, actual_stdout)."""
-    res = run_one(cmd, tc.input, prob.time_limit, prob.memory_limit)
+    res = run_one(cmd, tc.input, prob.time_limit, prob.memory_limit, lang)
     wall, cpu, mem = res["wall"], res["cpu"], res["peak_mb"]
     checker = "exact" if strict else prob.checker
     reason = res.get("reason", "")
@@ -729,6 +783,13 @@ def judge_test(cmd, tc: TestCase, prob: Problem, strict: bool,
     if reason in ("oom", "sigkill"):
         tail = (res["stderr"] or "")[-500:] if verbose else ""
         return "MLE", wall, cpu, mem, tail or "killed (likely OOM)", ""
+    if over_memory_limit(prob.memory_limit, mem, lang):
+        # The kernel ceiling grants the runtime its virtual headroom, so a
+        # program can finish inside it while still exceeding the limit it is
+        # judged against: the measured peak RSS decides (and is what we report).
+        return ("MLE", wall, cpu, mem,
+                f"peak {mem:.1f}MB > limit {mem_limit_mb(prob.memory_limit, lang):.0f}MB"
+                + memory_note(prob.memory_limit, lang), "")
     if reason.startswith("signal:"):
         sig = reason.split(":", 1)[1]
         hint = SIGNAL_HINTS.get(sig, sig)
@@ -766,6 +827,7 @@ def cmd_run(args) -> int:
     print(c(f"Problem: {prob.pid} — {prob.title}", C.CYAN))
     print(f"  tests={len(prob.tests)}  TL={prob.time_limit}s  MEM={prob.memory_limit}MB  "
           f"checker={prob.checker}" + ("  STRICT" if args.strict else ""))
+    lang = detect_language(src)
     print("-" * 64)
 
     with tempfile.TemporaryDirectory(prefix="grader_") as tmp:
@@ -793,7 +855,7 @@ def cmd_run(args) -> int:
         results: list[dict] = []
 
         def execute(tc: TestCase) -> dict:
-            v, wall, cpu, mem, extra, actual = judge_test(cmd, tc, prob, args.strict, args.verbose)
+            v, wall, cpu, mem, extra, actual = judge_test(cmd, tc, prob, args.strict, args.verbose, lang)
             return {"name": tc.name, "verdict": v, "wall": wall, "cpu": cpu,
                     "mem": mem, "extra": extra, "actual": actual, "tc": tc}
 

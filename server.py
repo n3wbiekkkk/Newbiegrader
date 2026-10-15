@@ -242,9 +242,9 @@ def _bust_cache() -> None:
 
 # Split deployment: same-origin via frontend /api proxy (Cloudflare Pages
 # Function or legacy vercel.json), so the browser never talks cross-origin.
-# GRADER_CORS_ORIGINS stays empty in prod (e.g. https://gradernew.pages.dev
+# GRADER_CORS_ORIGINS stays empty in prod (e.g. https://newbiegrader.pages.dev
 # needs no CORS). Set it only when serving the frontend from a host WITHOUT
-# the /api proxy, e.g. GRADER_CORS_ORIGINS=https://gradernew.pages.dev
+# the /api proxy, e.g. GRADER_CORS_ORIGINS=https://newbiegrader.pages.dev
 # Empty (default) = same-origin only, no CORS headers.
 _cors_origins = [o.strip() for o in
                  os.environ.get("GRADER_CORS_ORIGINS", "").split(",") if o.strip()]
@@ -935,9 +935,9 @@ GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "").strip()
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "").strip()
 GOOGLE_REDIRECT_URI = os.environ.get(
     "GOOGLE_REDIRECT_URI",
-    "https://gradernew.pages.dev/api/auth/callback").strip()
+    "https://newbiegrader.pages.dev/api/auth/callback").strip()
 FRONTEND_URL = os.environ.get(
-    "FRONTEND_URL", "https://gradernew.pages.dev").rstrip("/")
+    "FRONTEND_URL", "https://newbiegrader.pages.dev").rstrip("/")
 
 ADMIN_EMAILS = {e.strip().lower() for e in os.environ.get(
     "ADMIN_EMAILS", "sphetpitak@gmail.com").split(",") if e.strip()}
@@ -1412,6 +1412,10 @@ def _host_limits() -> dict:
             "queue_mode": QUEUE_MODE, "role": GRADER_ROLE,
             "reserve_memory_mb": _capacity["reserve_mb"],
             "memory_per_job_mb": _capacity["per_job_mb"]}
+            # memory policy: peak-RSS threshold = declared x allowance, enforced
+            # RLIMIT_AS ceiling = threshold + virtual headroom (grader.py)
+            "mem_allowance": grader.LANG_MEM_MULTIPLIER,
+            "mem_headroom_mb": grader.LANG_MEM_HEADROOM_MB}
 
 
 def _effective(prob: Optional[grader.Problem], time_limit: float,
@@ -1467,8 +1471,9 @@ def run_submission(prob: grader.Problem, ext: str, source: str,
             return {"error": str(e)}
 
         results: List[dict] = []
+        lang = grader.detect_language(Path("solution" + ext))
         with concurrent.futures.ThreadPoolExecutor(max_workers=JUDGE_JOBS) as ex:
-            futs = [ex.submit(grader.judge_test, cmd, tc, capped, False, False)
+            futs = [ex.submit(grader.judge_test, cmd, tc, capped, False, False, lang)
                     for tc in prob.tests]
             for tc, f in zip(prob.tests, futs):
                 v, wall, cpu, mem, detail, actual = f.result()
@@ -1533,7 +1538,8 @@ def _run_playground(prob: Optional[grader.Problem], ext: str, source: str,
         except SystemExit as e:
             return {"error": str(e)}
         _tl, eff_mem, limits = _effective(prob, time_limit, memory_mb)
-        res = grader.run_one(cmd, stdin_data, time_limit, eff_mem)
+        res = grader.run_one(cmd, stdin_data, time_limit, eff_mem,
+                             grader.detect_language(src))
         reason = res.get("reason", "")
         if reason == "timeout":
             verdict = "TLE"
