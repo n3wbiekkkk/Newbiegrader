@@ -98,6 +98,20 @@ configuration, the sample wiring, and requires every reference solution in `exam
 on every test. The operational manual (hosts, deployment, environment variables, the catalogue of
 pitfalls) is maintained privately and is not part of this repository.
 
+## Team
+
+The people who write and maintain this repository.
+
+| Role | Person | Scope |
+|---|---|---|
+| Maintainer | [@sphetpitak-sudo](https://github.com/sphetpitak-sudo) | Repository owner: judging engine, HTTP API, frontend, problem set, deployment |
+| Contributors | — | None yet: every commit in the history is the maintainer's |
+
+Contributors are credited here once their work is merged, and the copyright line in the licence names
+them collectively. To be listed, open a pull request — see *Contributing* above. For anything
+security-related, contact the maintainer through the profile link above instead of opening a public
+issue.
+
 ## License
 
 Copyright (C) 2026 Newbiegrader contributors. This program is free software: you may redistribute it
