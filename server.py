@@ -41,7 +41,6 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
-from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.responses import RedirectResponse
@@ -222,6 +221,17 @@ async def _lifespan(_app: "FastAPI"):
 
 app = FastAPI(title="Newbiegrader API", version="2.0.0", lifespan=_lifespan)
 app.add_middleware(GZipMiddleware, minimum_size=500)
+
+@app.exception_handler(Exception)
+async def _unexpected_exception_handler(request: Request, exc: Exception):
+    """Convert unexpected exceptions to a generic JSON 500 instead of FastAPI's
+    default traceback HTML, preventing internal detail leakage to clients."""
+    print(f"[web] unhandled exception on {request.method} {request.url.path}: {exc!r}",
+          file=sys.stderr)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "internal server error"},
+    )
 
 
 @app.middleware("http")
