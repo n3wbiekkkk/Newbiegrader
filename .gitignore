@@ -6,3 +6,4 @@ venv/
 *.out.log
 .env
 .tmp_fmt*
+graphify-out/
