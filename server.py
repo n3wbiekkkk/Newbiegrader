@@ -37,6 +37,7 @@ from urllib.request import Request as URLRequest
 from urllib.request import urlopen
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
@@ -264,6 +265,15 @@ def _origin_tuple(value: object) -> tuple | None:
     return (scheme, host, port)
 
 
+def _is_dev_mode() -> bool:
+    """True when the server is running in local-dev (insecure) mode.
+
+    SESSION_SECURE=false means cookies are not marked Secure, which only
+    makes sense on plain-HTTP localhost dev. Production defaults true.
+    """
+    return os.environ.get("SESSION_SECURE", "true").lower() == "false"
+
+
 def _is_loopback_origin(origin: tuple) -> bool:
     scheme, host, _port = origin
     if scheme != "http":
@@ -289,7 +299,9 @@ def _origin_allowed(value: object) -> bool:
         return False
     if origin in _trusted_origins():
         return True
-    return _is_loopback_origin(origin)
+    if _is_loopback_origin(origin) and _is_dev_mode():
+        return True
+    return False
 
 
 def _has_session_cookie(request: Request) -> bool:
@@ -1532,17 +1544,9 @@ def _client_ip(request: Request) -> str:
             chosen = entry
             break
         return chosen[:64]
-    # No XFF: CF-Connecting-IP fallback, only from a trusted peer and only
-    # as a valid, untrusted address (a trusted value resolves to the peer,
-    # exactly as the chain walk would).
-    cf = request.headers.get("cf-connecting-ip", "").strip()
-    if cf:
-        try:
-            addr = ipaddress.ip_address(cf)
-        except ValueError:
-            return peer[:64]
-        if not any(addr in net for net in nets):
-            return cf[:64]
+    # No XFF: never trust CF-Connecting-IP — it is client-forgable.
+    # The socket peer is authoritative. (Cloudflare always sends XFF; when
+    # XFF is absent the peer IP is the only trustworthy identity.)
     return peer[:64]
 
 

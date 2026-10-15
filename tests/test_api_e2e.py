@@ -727,6 +727,27 @@ class ApiE2E(unittest.TestCase):
                              headers=BROWSER)
         self.assertIn(r.status_code, (200, 503), r.text)
 
+
+    def test_csrf_loopback_origin_rejected_in_production(self):
+        # Production (SESSION_SECURE=true) must not trust Origin: http://localhost.
+        # A victim browser can forge this origin to bypass CSRF on a public host;
+        # loopback trust is dev-only (SESSION_SECURE=false).
+        self.login(STUDENT_A)
+        payload = {"email": STUDENT_A, "password": PASSWORD}
+
+        # Production mode: loopback origin rejected with 403
+        os.environ["SESSION_SECURE"] = "true"
+        r = self.client.post("/api/auth/password", json=payload,
+                             headers={"Origin": "http://localhost"})
+        self.assertEqual(r.status_code, 403, r.text)
+        self.assertEqual(r.json(), {"detail": "cross-origin request refused"})
+
+        # Dev mode: loopback origin accepted (local development unchanged)
+        os.environ["SESSION_SECURE"] = "false"
+        r = self.client.post("/api/auth/password", json=payload,
+                             headers={"Origin": "http://localhost"})
+        self.assertEqual(r.status_code, 200, r.text)
+
     def test_admin_overview_reports_queue_state(self):
         # async endpoint (DB in threads, never blocks the loop) with queue
         # monitor fields for the admin banner (alert at >=5 queued).
