@@ -296,8 +296,14 @@ def _is_loopback_origin(origin: tuple) -> bool:
     scheme, host, _port = origin
     if scheme != "http":
         return False
-    return (host == "localhost" or host == "::1"
-            or host.startswith("127."))
+    # IPv4/IPv6 loopback addresses only; reject hostname-based tricks like
+    # "127.evil.com" that would bypass CSRF protection. "localhost" and
+    # "::1" are accepted as they always resolve to loopback.
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return host == "localhost"
+
 
 
 def _trusted_origins() -> set:
