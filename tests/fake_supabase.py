@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import datetime as dt
+import threading
 import uuid
 
 
@@ -89,6 +90,10 @@ class _Query:
         return True
 
     def execute(self):
+        with self.db.lock:
+            return self._execute()
+
+    def _execute(self):
         rows = self._rows()
         if self._op == "select":
             if self.table in ("leaderboard_scores", "problem_stats"):
@@ -148,6 +153,7 @@ class FakeSupabase:
     def __init__(self, columns: dict | None = None, missing: set | None = None,
                  views: bool = True, view_columns: set | None = None):
         self.tables: dict = {}
+        self.lock = threading.RLock()
         self.columns = columns or {}
         self.missing = missing or set()
         self.views = views
@@ -177,8 +183,8 @@ class FakeSupabase:
         if unknown:
             raise Exception(f'column "{unknown[0]}" of relation "{table}" does not exist')
 
-    def rpc(self, name, params=None):  # not used by the API surface we test
-        raise AssertionError(f"unexpected rpc {name}")
+    def rpc(self, name, params=None):
+        return _QueueRPC(self, name, params or {})
 
     # --- views ---
     def leaderboard_scores(self):
@@ -230,3 +236,91 @@ class FakeSupabase:
     # --- test helpers ---
     def rows(self, table):
         return self.tables.setdefault(table, [])
+
+
+class _QueueRPC:
+    """Transactional stand-in for schema.sql RPCs, including ownership fencing."""
+    def __init__(self, db, name, params):
+        self.db, self.name, self.params = db, name, params
+
+    def execute(self):
+        with self.db.lock:
+            self.db.table("judge_jobs")  # model missing migration/database outage
+            return _Resp(copy.deepcopy(self._execute()))
+
+    def _execute(self):
+        p = self.params
+        rows = self.db.rows("judge_jobs")
+        now = dt.datetime.now(dt.timezone.utc)
+        def at(value):
+            return dt.datetime.fromisoformat(value.replace("Z", "+00:00")) if value else None
+        if self.name == "judge_queue_diagnostics":
+            return {status: sum(r.get("status") == status for r in rows)
+                    for status in ("queued", "running")}
+        if self.name == "judge_queue_admit":
+            row = copy.deepcopy(p["p_job"])
+            email = row.get("user_email") or ""
+            if p["p_track_active"] and email and any(
+                    r.get("user_email") == email and r.get("track_active", True)
+                    and r.get("status") in ("queued", "running") for r in rows):
+                return {"error": "you already have a submission judging, please wait", "status_code": 409}
+            if sum(r.get("status") == "queued" for r in rows) >= p["p_queue_max"]:
+                return {"error": "judge queue is full — try again in a moment", "status_code": 503, "retry_after": 30}
+            limit, window = p.get("p_quota_limit", 0), p.get("p_quota_window", 0)
+            kind = "run" if row.get("kind") == "playground" else "submit"
+            events = self.db.rows("judge_quota_events")
+            if limit > 0 and window > 0 and email:
+                events[:] = [e for e in events if at(e["admitted_at"]) > now-dt.timedelta(days=7)]
+                hits = [e for e in events if e["user_email"] == email and e["kind"] == kind
+                        and at(e["admitted_at"]) > now-dt.timedelta(seconds=window)]
+                if len(hits) >= limit:
+                    retry = max(1, int((at(hits[0]["admitted_at"])+dt.timedelta(seconds=window)-now).total_seconds())+1)
+                    return {"error": "quota exceeded", "status_code": 429, "retry_after": retry}
+                events.append({"user_email": email, "kind": kind, "admitted_at": now.isoformat()})
+            defaults = {"id": str(uuid.uuid4()), "status": "queued", "created_at": now.isoformat(),
+                        "result": None, "error": "", "attempt": 0, "payload": {},
+                        "track_active": p["p_track_active"], "worker_id": None, "lease_until": None,
+                        "submission_id": None}
+            defaults.update(row)
+            rows.append(defaults)
+            return {"job": defaults}
+        if self.name == "judge_queue_claim":
+            for row in rows:
+                if row.get("status") == "queued" and at(row["created_at"]) < now-dt.timedelta(hours=24):
+                    row.update(status="error", error="stale job dropped", finished_at=now.isoformat())
+            candidates = [r for r in rows if r.get("status") == "queued" or
+                          (r.get("status") == "running" and r.get("lease_until") and at(r["lease_until"]) <= now)]
+            if not candidates:
+                return None
+            row = min(candidates, key=lambda r: (r.get("kind") == "rejudge", r["created_at"], r["id"]))
+            row.update(status="running", worker_id=p["p_worker"], attempt=row.get("attempt", 0)+1,
+                       started_at=now.isoformat(), error="", finished_at=None,
+                       lease_until=(now+dt.timedelta(seconds=max(1,p["p_lease_seconds"]))).isoformat())
+            return row
+        row = next((r for r in rows if r["id"] == p.get("p_id")), None)
+        owner = row and row.get("worker_id") == p.get("p_worker") and row.get("attempt") == p.get("p_attempt")
+        valid = owner and row.get("status") == "running" and row.get("lease_until") and at(row["lease_until"]) > now
+        if self.name == "judge_queue_heartbeat":
+            if valid:
+                row["lease_until"] = (now+dt.timedelta(seconds=max(1,p["p_lease_seconds"]))).isoformat()
+            return bool(valid)
+        if self.name == "judge_queue_finish":
+            if owner and row.get("status") in ("done", "error"):
+                return {"applied": True, "submission_id": row.get("submission_id")}
+            if not valid:
+                return {"applied": False}
+            sid = None
+            submission = p.get("p_submission")
+            if submission is not None and not p.get("p_error"):
+                submission = {**submission, "job_id": row["id"]}
+                if row.get("target_id"):
+                    res = self.db.table("submissions").update(submission).eq("id",row["target_id"]).execute()
+                else:
+                    res = self.db.table("submissions").insert(submission).execute()
+                sid = res.data[0]["id"] if res.data else None
+            result = p.get("p_result")
+            row.update(status="error" if p.get("p_error") else "done", error=p.get("p_error") or "",
+                       result={**result, "id": sid} if result is not None else None,
+                       finished_at=now.isoformat(), lease_until=None, submission_id=sid)
+            return {"applied": True, "submission_id": sid}
+        raise AssertionError(f"unexpected rpc {self.name}")

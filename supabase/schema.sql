@@ -200,3 +200,158 @@ select problem,
 from submissions
 where contest_id is null
 group by problem;
+
+-- ============================================================================
+-- Migration 2026-10-15: opt-in coordinated judge queue. Apply before enabling
+-- GRADER_QUEUE_MODE=database. Every RPC is restricted to the backend service role.
+-- Local queue mode remains single-process; do not mix modes against this table.
+-- ============================================================================
+alter table public.judge_jobs add column if not exists payload jsonb not null default '{}';
+alter table public.judge_jobs add column if not exists track_active boolean not null default true;
+alter table public.judge_jobs add column if not exists worker_id text;
+alter table public.judge_jobs add column if not exists attempt integer not null default 0;
+alter table public.judge_jobs add column if not exists lease_until timestamptz;
+alter table public.judge_jobs add column if not exists submission_id uuid;
+-- The rollout stops the legacy local consumer first. It had no lease/owner;
+-- initialize only those orphan rows, never disturb an active leased worker.
+update public.judge_jobs set lease_until=now()
+  where status='running' and worker_id is null and attempt=0 and lease_until is null;
+create index if not exists judge_jobs_lease on public.judge_jobs (lease_until) where status = 'running';
+create index if not exists judge_jobs_active_user on public.judge_jobs (user_email)
+  where status in ('queued', 'running') and track_active;
+create table if not exists public.judge_quota_events (
+  user_email text not null, kind text not null, admitted_at timestamptz not null default now()
+);
+create index if not exists judge_quota_window on public.judge_quota_events (user_email, kind, admitted_at);
+alter table public.judge_quota_events enable row level security;
+revoke all on public.judge_quota_events from public, anon, authenticated;
+grant all on public.judge_quota_events to service_role;
+
+create or replace function public.judge_queue_admit(
+  p_job jsonb, p_queue_max integer, p_track_active boolean,
+  p_quota_limit integer, p_quota_window integer
+) returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
+declare v_job public.judge_jobs; v_email text := coalesce(p_job->>'user_email', '');
+  v_kind text := coalesce(p_job->>'kind', 'submit'); v_quota_kind text;
+  v_first timestamptz; v_count integer;
+begin
+  -- Serialize admission across API replicas: queue and account checks plus insert
+  -- form one transaction. A check in Python cannot provide this guarantee.
+  perform pg_advisory_xact_lock(64723487231);
+  if p_track_active and v_email <> '' and exists (
+    select 1 from public.judge_jobs where user_email=v_email and track_active
+      and status in ('queued','running')
+  ) then
+    return jsonb_build_object('error','you already have a submission judging, please wait','status_code',409);
+  end if;
+  if (select count(*) from public.judge_jobs where status='queued') >= p_queue_max then
+    return jsonb_build_object('error','judge queue is full — try again in a moment','status_code',503,'retry_after',30);
+  end if;
+  v_quota_kind := case when v_kind='playground' then 'run' else 'submit' end;
+  if p_quota_limit > 0 and p_quota_window > 0 and v_email <> '' then
+    delete from public.judge_quota_events where admitted_at < now() - interval '7 days';
+    select count(*), min(admitted_at) into v_count, v_first from public.judge_quota_events
+      where user_email=v_email and kind=v_quota_kind
+        and admitted_at > now() - make_interval(secs => p_quota_window);
+    if v_count >= p_quota_limit then
+      return jsonb_build_object('error','quota exceeded','status_code',429,
+        'retry_after',greatest(1,ceil(extract(epoch from v_first + make_interval(secs => p_quota_window)-now()))::integer));
+    end if;
+    insert into public.judge_quota_events(user_email,kind) values(v_email,v_quota_kind);
+  end if;
+  insert into public.judge_jobs (id,kind,user_email,name,problem,language,filename,contest_id,
+      source,target_id,reveal,tests_hash,grader_version,payload,track_active)
+    values(coalesce((p_job->>'id')::uuid,gen_random_uuid()),v_kind,v_email,
+      coalesce(p_job->>'name',''),coalesce(p_job->>'problem',''),coalesce(p_job->>'language',''),
+      p_job->>'filename',p_job->>'contest_id',coalesce(p_job->>'source',''),
+      (p_job->>'target_id')::uuid,coalesce(p_job->>'reveal','samples'),
+      coalesce(p_job->>'tests_hash',''),coalesce(p_job->>'grader_version',''),
+      coalesce(p_job->'payload','{}'::jsonb),p_track_active)
+    returning * into v_job;
+  return jsonb_build_object('job',to_jsonb(v_job));
+end $$;
+
+create or replace function public.judge_queue_claim(p_worker text,p_lease_seconds integer)
+returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
+declare v_job public.judge_jobs;
+begin
+  update public.judge_jobs set status='error',error='stale job dropped',finished_at=now()
+    where status='queued' and created_at < now() - interval '24 hours';
+  select * into v_job from public.judge_jobs
+    where status='queued' or (status='running' and lease_until <= now())
+    order by (kind='rejudge'), created_at, id for update skip locked limit 1;
+  if not found then return null; end if;
+  update public.judge_jobs set status='running',worker_id=p_worker,attempt=attempt+1,
+      started_at=now(),lease_until=now()+make_interval(secs=>greatest(1,p_lease_seconds)),
+      error='',finished_at=null
+    where id=v_job.id returning * into v_job;
+  return to_jsonb(v_job);
+end $$;
+
+create or replace function public.judge_queue_heartbeat(
+  p_id uuid,p_worker text,p_attempt integer,p_lease_seconds integer
+) returns boolean language plpgsql security definer set search_path = pg_catalog, public as $$
+begin
+  update public.judge_jobs set lease_until=now()+make_interval(secs=>greatest(1,p_lease_seconds))
+    where id=p_id and status='running' and worker_id=p_worker and attempt=p_attempt and lease_until>now();
+  return found;
+end $$;
+
+create or replace function public.judge_queue_finish(
+  p_id uuid,p_worker text,p_attempt integer,p_result jsonb,p_submission jsonb,p_error text
+) returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
+declare v_job public.judge_jobs; v_id uuid; v_sub public.submissions;
+begin
+  select * into v_job from public.judge_jobs where id=p_id for update;
+  if not found or p_worker is null or p_attempt is null
+      or v_job.worker_id is distinct from p_worker or v_job.attempt is distinct from p_attempt then
+    return jsonb_build_object('applied',false);
+  end if;
+  if v_job.status in ('done','error') then
+    return jsonb_build_object('applied',true,'submission_id',v_job.submission_id);
+  end if;
+  if v_job.status <> 'running' or v_job.lease_until is null or v_job.lease_until <= now() then
+    return jsonb_build_object('applied',false);
+  end if;
+  -- History and terminal status commit together under the attempt fence.
+  if p_submission is not null and coalesce(p_error,'')='' then
+    v_sub := jsonb_populate_record(null::public.submissions,p_submission);
+    if v_job.target_id is not null then
+      update public.submissions set verdict=v_sub.verdict,accepted=v_sub.accepted,
+        passed=v_sub.passed,total=v_sub.total,score=v_sub.score,counts=v_sub.counts,
+        results=v_sub.results,detail=v_sub.detail,tests_hash=v_sub.tests_hash,
+        grader_version=v_sub.grader_version,kind=v_sub.kind,job_id=p_id
+        where id=v_job.target_id returning id into v_id;
+    else
+      insert into public.submissions(problem,language,filename,name,user_email,verdict,accepted,
+        passed,total,score,counts,results,code,detail,tests_hash,grader_version,kind,contest_id,job_id)
+      values(v_sub.problem,v_sub.language,v_sub.filename,coalesce(v_sub.name,''),coalesce(v_sub.user_email,''),
+        v_sub.verdict,coalesce(v_sub.accepted,false),coalesce(v_sub.passed,0),coalesce(v_sub.total,0),
+        coalesce(v_sub.score,0),coalesce(v_sub.counts,'{}'::jsonb),coalesce(v_sub.results,'[]'::jsonb),
+        coalesce(v_sub.code,''),coalesce(v_sub.detail,''),coalesce(v_sub.tests_hash,''),
+        coalesce(v_sub.grader_version,''),coalesce(v_sub.kind,'submit'),v_sub.contest_id,p_id)
+      returning id into v_id;
+    end if;
+  end if;
+  update public.judge_jobs set status=case when coalesce(p_error,'')='' then 'done' else 'error' end,
+    result=case when p_result is null then null else p_result || jsonb_build_object('id',v_id) end,
+    error=coalesce(p_error,''),finished_at=now(),lease_until=null,submission_id=v_id where id=p_id;
+  return jsonb_build_object('applied',true,'submission_id',v_id);
+end $$;
+
+create or replace function public.judge_queue_diagnostics() returns jsonb
+language sql security definer set search_path = pg_catalog, public as $$
+  select jsonb_build_object('queued',count(*) filter(where status='queued'),
+    'running',count(*) filter(where status='running')) from public.judge_jobs;
+$$;
+
+revoke all on function public.judge_queue_admit(jsonb,integer,boolean,integer,integer) from public,anon,authenticated;
+revoke all on function public.judge_queue_claim(text,integer) from public,anon,authenticated;
+revoke all on function public.judge_queue_heartbeat(uuid,text,integer,integer) from public,anon,authenticated;
+revoke all on function public.judge_queue_finish(uuid,text,integer,jsonb,jsonb,text) from public,anon,authenticated;
+revoke all on function public.judge_queue_diagnostics() from public,anon,authenticated;
+grant execute on function public.judge_queue_admit(jsonb,integer,boolean,integer,integer) to service_role;
+grant execute on function public.judge_queue_claim(text,integer) to service_role;
+grant execute on function public.judge_queue_heartbeat(uuid,text,integer,integer) to service_role;
+grant execute on function public.judge_queue_finish(uuid,text,integer,jsonb,jsonb,text) to service_role;
+grant execute on function public.judge_queue_diagnostics() to service_role;

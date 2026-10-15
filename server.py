@@ -22,6 +22,7 @@ import re
 import secrets
 import sys
 import tempfile
+import threading
 import time
 import traceback
 import uuid
@@ -77,7 +78,9 @@ def _load_dotenv() -> None:
         print(f"[web] warning: cannot read .env: {e}", file=sys.stderr)
 
 
-_load_dotenv()
+RUNNER_CHILD = os.environ.get("GRADER_RUNNER_CHILD") == "1"
+if not RUNNER_CHILD:
+    _load_dotenv()
 
 LANGS: Dict[str, Dict[str, object]] = {
     "python": {"name": "Python 3", "ext": ".py", "accept": [".py"]},
@@ -112,12 +115,28 @@ def _env_int(name: str, auto: int) -> int:
     return auto
 
 
-JUDGE_JOBS = _env_int("GRADER_JUDGE_JOBS", 4 if CPU_QUOTA >= 2 else 1)
-JUDGE_WORKERS = _env_int("GRADER_JUDGE_WORKERS", 2 if CPU_QUOTA >= 2 else 1)
-# Per-test memory ceiling. A problem may declare 512 MB, but letting a 512 MB
-# process loose in a 512 MB container OOM-kills the judge server itself, so the
-# effective limit is capped to half the container (reported as limits.capped).
-MEMORY_CAP_MB = _env_int("GRADER_MEMORY_CAP_MB", max(64, int(RAM_MB * 0.5)))
+def _derive_capacity(cpu: float, ram: int) -> dict:
+    # Reserve API/interpreter memory, then budget each supervisor and the larger
+    # of a compiler or a test. Compilation and tests never overlap within a job.
+    reserve = min(192, max(64, ram // 3))
+    available = max(1, ram - reserve)
+    cap = min(_env_int("GRADER_MEMORY_CAP_MB", max(64, ram // 2)),
+              max(1, available - 64))
+    per_job = max(cap, 256) + 64
+    safe = min(max(1, int(cpu)), available // per_job)
+    return {"workers": min(_env_int("GRADER_JUDGE_WORKERS", safe), safe),
+            "judge_jobs": 1, "memory_cap_mb": cap, "reserve_mb": reserve,
+            "per_job_mb": per_job}
+
+
+_capacity = _derive_capacity(CPU_QUOTA, RAM_MB)
+JUDGE_JOBS = _capacity["judge_jobs"]
+JUDGE_WORKERS = _capacity["workers"]
+MEMORY_CAP_MB = _capacity["memory_cap_mb"]
+QUEUE_MODE = os.environ.get("GRADER_QUEUE_MODE", "local").strip().lower()
+GRADER_ROLE = os.environ.get("GRADER_ROLE", "combined").strip().lower()
+CAPACITY_DIR = Path(os.environ.get("GRADER_CAPACITY_DIR") or
+                    str(Path(tempfile.gettempdir()) / "newbiegrader-capacity"))
 QUEUE_MAX = _env_int("GRADER_QUEUE_MAX", 25)
 # Worst case per submission = compile + every test at its limit, serially.
 OVERALL_TIMEOUT = float(os.environ.get("GRADER_OVERALL_TIMEOUT", "") or 0) or (
@@ -161,12 +180,15 @@ RUN_QUOTA = _parse_quota(os.environ.get("GRADER_RUN_QUOTA", "120/600"), (120, 60
 
 @asynccontextmanager
 async def _lifespan(_app: "FastAPI"):
-    """Start judge workers and recover jobs left behind by a restart."""
-    workers = [asyncio.create_task(_judge_worker(i)) for i in range(JUDGE_WORKERS)]
+    await validate_runtime()
     try:
         await _recover_jobs()
-    except Exception as e:  # never block startup on a DB hiccup
-        print(f"[web] job recovery failed: {e}", file=sys.stderr)
+    except Exception as e:
+        if QUEUE_MODE == "database":
+            raise
+        print(f"[web] local job recovery failed: {e}", file=sys.stderr)
+    workers = ([] if GRADER_ROLE == "api" else
+               [asyncio.create_task(_judge_worker(i)) for i in range(JUDGE_WORKERS)])
     try:
         yield
     finally:
@@ -241,7 +263,7 @@ if _cors_origins:
 _sb = None
 _sb_url = os.environ.get("SUPABASE_URL", "").strip()
 _sb_key = os.environ.get("SUPABASE_KEY", "").strip()
-if _sb_url and _sb_key:
+if not RUNNER_CHILD and _sb_url and _sb_key:
     if not _has_supabase_lib:
         print("[web] supabase lib not installed, history disabled", file=sys.stderr)
     else:
@@ -380,6 +402,86 @@ _jobs: Dict[str, dict] = {}
 _job_queue: Optional["asyncio.Queue[str]"] = None
 _job_loop: Optional[object] = None
 _active_jobs: Dict[str, set] = {}       # user_email -> {job ids} queued/running
+_admission_lock = threading.RLock()
+LEASE_SECONDS = max(60, int(OVERALL_TIMEOUT + 60))
+HEARTBEAT_SECONDS = 10
+WORKER_ID = f"{os.getpid()}-{uuid.uuid4()}"
+
+
+async def _queue_rpc(name: str, **params):
+    if _sb is None:
+        raise HTTPException(status_code=503, detail="judge database unavailable")
+    try:
+        response = await asyncio.to_thread(
+            lambda: _sb.rpc("judge_queue_" + name, params).execute())
+        return response.data
+    except Exception as e:
+        print(f"[web] queue {name} failed: {e}", file=sys.stderr)
+        raise HTTPException(status_code=503, detail="judge database unavailable",
+                            headers={"Retry-After": "30"})
+
+
+async def validate_runtime() -> None:
+    if JUDGE_WORKERS < 1:
+        raise RuntimeError("host RAM cannot safely fit a judge, compiler and API reserve")
+    if QUEUE_MODE not in ("local", "database"):
+        raise RuntimeError("GRADER_QUEUE_MODE must be local or database")
+    if GRADER_ROLE not in ("combined", "api", "worker"):
+        raise RuntimeError("GRADER_ROLE must be combined, api or worker")
+    if GRADER_ROLE != "combined" and (QUEUE_MODE != "database" or
+                                      not os.environ.get("SESSION_SECRET", "").strip()):
+        raise RuntimeError("separated roles require database mode and stable SESSION_SECRET")
+    if QUEUE_MODE == "database":
+        await _queue_rpc("diagnostics")  # verify migration and database before accepting traffic
+
+
+async def serve_workers() -> None:
+    if GRADER_ROLE == "api":
+        raise RuntimeError("API role cannot start judge workers")
+    await validate_runtime()
+    await _recover_jobs()
+    await asyncio.gather(*(_judge_worker(i) for i in range(JUDGE_WORKERS)))
+
+
+def _try_host_slot():
+    """OS locks coordinate all worker processes sharing this host directory.
+
+    A lock is held through runner cleanup. No expiry or process-local semaphore
+    can accidentally release it while a timed-out descendant still runs.
+    """
+    CAPACITY_DIR.mkdir(parents=True, exist_ok=True)
+    for idx in range(JUDGE_WORKERS):
+        handle = open(CAPACITY_DIR / f"slot-{idx}.lock", "a+b")
+        try:
+            if os.name == "nt":
+                import msvcrt
+                handle.seek(0)
+                if not handle.read(1):
+                    handle.write(b"0")
+                    handle.flush()
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            os.set_inheritable(handle.fileno(), False)
+            return handle
+        except (OSError, BlockingIOError):
+            handle.close()
+    return None
+
+
+@asynccontextmanager
+async def _host_slot():
+    handle = None
+    while handle is None:
+        handle = _try_host_slot()
+        if handle is None:
+            await asyncio.sleep(0.1)
+    try:
+        yield
+    finally:
+        handle.close()
 
 
 def _queue() -> "asyncio.Queue[str]":
@@ -409,8 +511,8 @@ def _queue() -> "asyncio.Queue[str]":
 
 def _queue_depth() -> int:
     """Queued job count without needing an event loop (sync endpoints)."""
-    q = _job_queue
-    return q.qsize() if q is not None else 0
+    with _admission_lock:
+        return sum(j.get("status") == "queued" for j in _jobs.values())
 
 
 # Columns added by the 2026-10 migration; if the migration was not run yet, the
@@ -438,11 +540,15 @@ def _remember_job(row: dict) -> dict:
 
 async def _load_job(jid: str) -> Optional[dict]:
     if _sb is None:
+        if QUEUE_MODE == "database":
+            raise HTTPException(status_code=503, detail="judge database unavailable")
         return None
     try:
         res = await asyncio.to_thread(
             lambda: _sb.table("judge_jobs").select("*").eq("id", jid).limit(1).execute())
     except Exception as e:
+        if QUEUE_MODE == "database":
+            raise HTTPException(status_code=503, detail="judge database unavailable")
         print(f"[web] job lookup failed: {e}", file=sys.stderr)
         return None
     rows = res.data or []
@@ -467,9 +573,32 @@ async def _update_job_db(jid: str, patch: dict) -> None:
 
 
 async def _create_job(row: dict, track_active: bool = True) -> dict:
-    """Insert the job (DB first for durability), then hand it to a worker."""
+    """Reserve capacity and per-account ownership atomically before any yield."""
     jid = str(uuid.uuid4())
-    row = {**row, "id": jid, "status": "queued", "result": None, "error": ""}
+    row = {**row, "id": jid, "status": "queued", "result": None, "error": "",
+           "created_at": _iso_now()}
+    if QUEUE_MODE == "database":
+        quota = RUN_QUOTA if row.get("kind") == "playground" else SUBMIT_QUOTA
+        response = await _queue_rpc("admit", p_job=row, p_queue_max=QUEUE_MAX,
+                                    p_track_active=track_active,
+                                    p_quota_limit=quota[0] if track_active else 0,
+                                    p_quota_window=quota[1] if track_active else 0)
+        if response.get("error"):
+            code = int(response.get("status_code", 503))
+            raise HTTPException(status_code=code, detail=response["error"],
+                                headers={"Retry-After": str(response.get("retry_after", 30))}
+                                if code in (429, 503) else None)
+        return response["job"]
+    with _admission_lock:
+        email = row.get("user_email") or ""
+        if track_active and _active_jobs.get(email):
+            raise HTTPException(status_code=409, detail="you already have a submission judging, please wait")
+        if _queue_depth() >= QUEUE_MAX:
+            raise HTTPException(status_code=503, detail="judge queue is full — try again in a moment",
+                                headers={"Retry-After": "30"})
+        job = _remember_job(row)
+        if track_active and email:
+            _active_jobs.setdefault(email, set()).add(jid)
     if _sb is not None:
         try:
             await asyncio.to_thread(lambda: _sb.table("judge_jobs").insert(row).execute())
@@ -477,26 +606,26 @@ async def _create_job(row: dict, track_active: bool = True) -> dict:
             # No judge_jobs table (migration not run) — degrade to memory-only
             # queueing instead of refusing the submission.
             print(f"[web] judge_jobs insert failed ({e}); queueing in memory", file=sys.stderr)
-    job = _remember_job(row)
-    if track_active and row.get("user_email"):
-        _active_jobs.setdefault(row["user_email"], set()).add(jid)
     await _queue().put(jid)
     return job
 
 
 async def _recover_jobs() -> None:
     """On boot: requeue jobs orphaned by a crash, and remember queued ones."""
-    if _sb is None:
+    if QUEUE_MODE == "database" or _sb is None:
         return
-    await asyncio.to_thread(
-        lambda: _sb.table("judge_jobs").update({"status": "queued"}).eq(
-            "status", "running").execute())
+    # Local mode is single-process only. Interrupted jobs have no live lease;
+    # the durable database mode recovers ownership exclusively in claim RPC.
+    await asyncio.to_thread(lambda: _sb.table("judge_jobs").update(
+        {"status": "queued"}).eq("status", "running").execute())
     res = await asyncio.to_thread(
         lambda: _sb.table("judge_jobs").select("*").eq("status", "queued")
         .order("created_at").limit(REJUDGE_MAX).execute())
     rows = res.data or []
     dropped = 0
     for row in rows:
+        if row["id"] in _jobs:
+            continue
         try:
             created = dt.datetime.fromisoformat(str(row.get("created_at")).replace("Z", "+00:00"))
             age = (dt.datetime.now(dt.timezone.utc) - created).total_seconds()
@@ -517,8 +646,17 @@ async def _recover_jobs() -> None:
 
 
 async def _finish_job(jid: str, *, result: Optional[dict] = None, stored: Optional[dict] = None,
-                      error: str = "") -> None:
+                      error: str = "", submission: Optional[dict] = None) -> None:
     job = _jobs.get(jid) or {"id": jid}
+    if QUEUE_MODE == "database":
+        response = await _queue_rpc("finish", p_id=jid, p_worker=job.get("worker_id"),
+                                    p_attempt=job.get("attempt"), p_error=error,
+                                    p_result=stored if stored is not None else result,
+                                    p_submission=submission)
+        if response.get("applied"):
+            _bust_cache()
+        _jobs.pop(jid, None)
+        return
     job["status"] = "error" if error else "done"
     job["error"] = error
     if result is not None:
@@ -536,37 +674,83 @@ async def _finish_job(jid: str, *, result: Optional[dict] = None, stored: Option
 
 
 async def _judge_worker(idx: int) -> None:
+    if GRADER_ROLE == "api":
+        raise RuntimeError("API role cannot run judge workers")
     while True:
-        jid = await _queue().get()
+        if QUEUE_MODE == "database":
+            try:
+                async with _host_slot():
+                    job = await _queue_rpc("claim", p_worker=f"{WORKER_ID}:{idx}",
+                                           p_lease_seconds=LEASE_SECONDS)
+                    if job:
+                        await _run_job(job)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                print(f"[web] worker unavailable: {e}", file=sys.stderr)
+            await asyncio.sleep(0.25)
+            continue
+        # A queue token is a wakeup; choose student work before a rejudge.
+        await _queue().get()
         try:
-            job = _jobs.get(jid) or await _load_job(jid)
-            if job and job.get("status") != "done":
-                await _run_job(job)
+            async with _host_slot():
+                with _admission_lock:
+                    pending = [j for j in _jobs.values() if j.get("status") == "queued"]
+                    job = min(pending, key=lambda j: (j.get("kind") == "rejudge",
+                                                     j.get("created_monotonic", 0))) if pending else None
+                    if job:
+                        job["status"] = "running"
+                if job:
+                    await _run_job(job)
         except asyncio.CancelledError:
             raise
         except Exception:
             traceback.print_exc()
-            await _finish_job(jid, error="worker crashed")
+            if job:
+                await _finish_job(job["id"], error="worker crashed")
         finally:
             _queue().task_done()
 
 
 async def _run_job(job: dict) -> None:
+    if GRADER_ROLE == "api":
+        raise RuntimeError("API role cannot execute judge jobs")
     jid = job["id"]
+    _jobs[jid] = job
+    playground = job.get("kind") == "playground"
     prob = PROBLEMS.get(job.get("problem", ""))
-    if prob is None:
+    if prob is None and not playground:
         await _finish_job(jid, error=f"unknown problem: {job.get('problem')}")
         return
     ext = str(LANGS.get(job.get("language", ""), {}).get("ext") or ".py")
     job["status"] = "running"
     job["started_at"] = _iso_now()
     _jobs[jid] = job
-    await _update_job_db(jid, {"status": "running", "started_at": job["started_at"]})
+    if QUEUE_MODE == "local":
+        await _update_job_db(jid, {"status": "running", "started_at": job["started_at"]})
     reveal = job.get("reveal") or REVEAL_SAMPLES
+    payload = {"problem": prob.pid if prob else None, "ext": ext,
+               "source": job.get("source", ""), "reveal": reveal,
+               "memory_cap_mb": MEMORY_CAP_MB, "judge_jobs": JUDGE_JOBS}
+    if playground:
+        payload.update(job.get("payload") or {})
     try:
-        result = await asyncio.wait_for(
-            asyncio.to_thread(run_submission, prob, ext, job.get("source", ""), reveal),
-            timeout=OVERALL_TIMEOUT)
+        from judge_runner import run_isolated
+        execution = asyncio.create_task(run_isolated(
+            "playground" if playground else "submission", payload,
+            (payload.get("time_limit", 2) + RUN_BUDGET) if playground else OVERALL_TIMEOUT))
+        heartbeat = asyncio.create_task(_heartbeat_job(job)) if QUEUE_MODE == "database" else None
+        try:
+            if heartbeat:
+                done, _ = await asyncio.wait((execution, heartbeat), return_when=asyncio.FIRST_COMPLETED)
+                if heartbeat in done:
+                    await heartbeat  # raises on lost lease or database failure
+            result = await execution
+        finally:
+            execution.cancel()
+            if heartbeat:
+                heartbeat.cancel()
+            await asyncio.gather(execution, *([heartbeat] if heartbeat else []), return_exceptions=True)
     except asyncio.TimeoutError:
         await _finish_job(jid, error="judging timed out (server overloaded?)")
         return
@@ -577,16 +761,38 @@ async def _run_job(job: dict) -> None:
     if "error" in result:
         await _finish_job(jid, error=str(result["error"]))
         return
-    stored = dict(result)
+    if playground:
+        await _finish_job(jid, result=result, stored=result)
+        return
+    stored = _stored_result(job, result)
     sid = None
-    if _sb is not None:
-        row = _submission_row(job, result)
+    row = _submission_row(job, result)
+    if QUEUE_MODE == "local" and _sb is not None:
         sid = await _store_submission(row, target_id=job.get("target_id"))
     result["id"] = sid
     result["job_id"] = jid
     result["name"] = job.get("name", "")
-    stored["id"] = sid
-    await _finish_job(jid, result=result, stored=stored)
+    stored.update(id=sid, job_id=jid, name=job.get("name", ""))
+    await _finish_job(jid, result=result, stored=stored,
+                      submission=row if QUEUE_MODE == "database" else None)
+
+
+async def _heartbeat_job(job: dict) -> None:
+    while True:
+        await asyncio.sleep(HEARTBEAT_SECONDS)
+        valid = await _queue_rpc("heartbeat", p_id=job["id"], p_worker=job["worker_id"],
+                                p_attempt=job["attempt"], p_lease_seconds=LEASE_SECONDS)
+        if not valid:
+            raise RuntimeError("judge ownership lost")
+
+
+def _stored_result(job: dict, result: dict) -> dict:
+    prob = PROBLEMS.get(job.get("problem", ""))
+    samples = grader.sample_names(prob) if prob else set()
+    raw = [{**r, "public": r.get("test") in samples and not r.get("hidden", False)}
+           for r in result.get("results", [])]
+    reveal = REVEAL_NONE if job.get("reveal") == REVEAL_NONE else REVEAL_SAMPLES
+    return {**result, "results": _redact_results(raw, reveal)}
 
 
 def _submission_row(job: dict, result: dict) -> dict:
@@ -600,7 +806,7 @@ def _submission_row(job: dict, result: dict) -> dict:
         "verdict": result.get("verdict", ""), "accepted": result.get("accepted", False),
         "passed": result.get("passed", 0), "total": result.get("total", 0),
         "score": result.get("score", 0), "counts": result.get("counts", {}),
-        "results": result.get("results", []),
+        "results": _stored_result(job, result).get("results", []),
         "code": (job.get("source") or "")[:200000],
         "detail": (result.get("compile_error", "") or "")[:4000],
         "tests_hash": grader.tests_hash(prob) if prob else "",
@@ -981,15 +1187,15 @@ async def auth_register(request: Request) -> dict:
     if not (PW_MIN <= len(password) <= PW_MAX):
         raise HTTPException(status_code=400, detail="password must be 8-128 characters")
     try:
-        exists = _sb.table("users").select("email").eq("email", email).limit(1).execute()
+        exists = await asyncio.to_thread(lambda: _sb.table("users").select("email").eq("email", email).limit(1).execute())
     except Exception as e:
         raise _db_err(e)
     if exists.data:
         raise HTTPException(status_code=409, detail="email already registered")
     pw_hash = await asyncio.to_thread(_hash_password, password)
     try:
-        _sb.table("users").insert(
-            {"email": email, "name": name, "password_hash": pw_hash}).execute()
+        await asyncio.to_thread(lambda: _sb.table("users").insert(
+            {"email": email, "name": name, "password_hash": pw_hash}).execute())
     except Exception as e:
         raise _db_err(e)
     request.session["user"] = {"email": email, "name": name, "picture": "",
@@ -1008,8 +1214,8 @@ async def auth_password(request: Request) -> dict:
     password = str(body.get("password", ""))
     _check_rate_limit(request, email)
     try:
-        res = _sb.table("users").select("email,name,password_hash").eq(
-            "email", email).limit(1).execute()
+        res = await asyncio.to_thread(lambda: _sb.table("users").select("email,name,password_hash").eq(
+            "email", email).limit(1).execute())
     except Exception as e:
         raise _db_err(e)
     rows = res.data or []
@@ -1078,7 +1284,7 @@ async def update_profile(request: Request) -> dict:
     row = {"user_email": user["email"], "display_name": display_name,
            "default_language": default_language}
     try:
-        _sb.table("profiles").upsert(row, on_conflict="user_email").execute()
+        await asyncio.to_thread(lambda: _sb.table("profiles").upsert(row, on_conflict="user_email").execute())
     except Exception as e:
         raise _db_err(e)
     return {"ok": True, "profile": {"email": user["email"], **row}}
@@ -1202,7 +1408,10 @@ def _host_limits() -> dict:
             "memory_cap_mb": MEMORY_CAP_MB, "queue_max": QUEUE_MAX,
             "overall_timeout_s": OVERALL_TIMEOUT,
             "sample_interval_ms": round(grader.SAMPLE_INTERVAL * 1000, 2),
-            "compile_timeout_s": grader.COMPILE_TIMEOUT}
+            "compile_timeout_s": grader.COMPILE_TIMEOUT,
+            "queue_mode": QUEUE_MODE, "role": GRADER_ROLE,
+            "reserve_memory_mb": _capacity["reserve_mb"],
+            "memory_per_job_mb": _capacity["per_job_mb"]}
 
 
 def _effective(prob: Optional[grader.Problem], time_limit: float,
@@ -1502,12 +1711,12 @@ async def submit(
     if not user.get("email"):
         raise HTTPException(status_code=401, detail="login first")
     email = user["email"]
-    if not _visible_to(problem, email):
+    if not await asyncio.to_thread(lambda: _visible_to(problem, email)):
         raise HTTPException(status_code=404, detail=f"unknown problem: {problem}")
 
     contest_obj: Optional[dict] = None
     if contest:
-        contest_obj = _contest_or_404(contest)
+        contest_obj = await asyncio.to_thread(lambda: _contest_or_404(contest))
         listed = {_resolve_pid(str(x)) for x in (contest_obj.get("problems") or [])}
         if prob.pid not in listed:
             raise HTTPException(status_code=400, detail="problem is not part of this contest")
@@ -1515,22 +1724,13 @@ async def submit(
             if _contest_window(contest_obj) != "running":
                 raise HTTPException(status_code=403,
                                     detail="contest is not running (starts later or ended)")
-            if not _is_registered(contest_obj["id"], email):
+            if not await asyncio.to_thread(lambda: _is_registered(contest_obj["id"], email)):
                 raise HTTPException(status_code=403,
                                     detail="ยังไม่ได้ลงทะเบียนคอนเทสต์นี้ — กด Register "
                                            "ในหน้าคอนเทสต์ก่อน")
 
-    _quota_check("submit", email, SUBMIT_QUOTA)
-    if _active_jobs.get(email):
-        raise HTTPException(status_code=409,
-                            detail="you already have a submission judging, please wait")
-    if _queue_depth() >= QUEUE_MAX:
-        # One worker on a fractional core: letting the queue grow unbounded means
-        # everybody waits minutes. Shed load instead.
-        raise HTTPException(
-            status_code=503,
-            detail=f"judge queue is full ({QUEUE_MAX} jobs) — try again in a moment",
-            headers={"Retry-After": "30"})
+    if QUEUE_MODE == "local":
+        _quota_check("submit", email, SUBMIT_QUOTA)
 
     source, filename = await _read_source(language, code, file)
     display = await asyncio.to_thread(
@@ -1548,7 +1748,7 @@ async def submit(
         "job_id": job["id"], "status": "queued", "problem": prob.pid,
         "samples": len(prob.samples),
         "hidden_tests": len(prob.tests) - len(prob.samples),
-        "queued_ahead": _queue().qsize(),
+        "queued_ahead": (await _queue_rpc("diagnostics"))["queued"] if QUEUE_MODE == "database" else _queue_depth(),
     }
 
 
@@ -1557,7 +1757,8 @@ async def job_status(request: Request, jid: str) -> dict:
     user = request.session.get("user") or {}
     if not user.get("email"):
         raise HTTPException(status_code=401, detail="login required")
-    job = _jobs.get(jid) or await _load_job(jid)
+    job = (await _load_job(jid) if QUEUE_MODE == "database" else
+           _jobs.get(jid) or await _load_job(jid))
     if job is None:
         raise HTTPException(status_code=404, detail="unknown job")
     if job.get("user_email") != user["email"] and not _is_admin(user["email"]):
@@ -1566,8 +1767,11 @@ async def job_status(request: Request, jid: str) -> dict:
     return {
         "id": jid, "status": status, "problem": job.get("problem", ""),
         "kind": job.get("kind", "submit"), "error": job.get("error", "") or "",
-        "queued_ahead": _queue().qsize() if status == "queued" else 0,
+        "queued_ahead": ((await _queue_rpc("diagnostics"))["queued"] if QUEUE_MODE == "database"
+                         else _queue_depth()) if status == "queued" else 0,
         "result": job.get("result") if status == "done" else None,
+        "created_at": job.get("created_at"), "started_at": job.get("started_at"),
+        "finished_at": job.get("finished_at"),
     }
 
 
@@ -1608,10 +1812,11 @@ async def run_custom(
     user = request.session.get("user") or {}
     if not user.get("email"):
         raise HTTPException(status_code=401, detail="login first")
-    _quota_check("run", user["email"], RUN_QUOTA)
+    if QUEUE_MODE == "local":
+        _quota_check("run", user["email"], RUN_QUOTA)
     prob = None
     if problem:
-        prob = _visible_problem_or_404(problem, user["email"])
+        prob = await asyncio.to_thread(lambda: _visible_problem_or_404(problem, user["email"]))
     source, _filename = await _read_source(language, code, file)
     if len(input.encode("utf-8")) > RUN_INPUT_MAX:
         raise HTTPException(status_code=413,
@@ -1619,19 +1824,21 @@ async def run_custom(
     tl = time_limit if 0 < time_limit <= RUN_TIMEOUT_MAX else (
         min(prob.time_limit, RUN_TIMEOUT_MAX) if prob else min(2.0, RUN_TIMEOUT_MAX))
     mem = prob.memory_limit if prob else 256
-    ext = str(LANGS[language]["ext"])
-    try:
-        result = await asyncio.wait_for(
-            asyncio.to_thread(_run_playground, prob, ext, source, input, tl, mem),
-            timeout=tl + RUN_BUDGET)
-    except asyncio.TimeoutError:
-        raise HTTPException(status_code=504, detail="run timed out")
-    except Exception:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail="internal run error")
-    if "error" in result:
-        raise HTTPException(status_code=500, detail=result["error"])
-    return result
+    job = await _create_job({"kind": "playground", "user_email": user["email"],
+                             "problem": prob.pid if prob else "", "language": language,
+                             "source": source, "payload": {"stdin_data": input,
+                                 "time_limit": tl, "memory_mb": mem}})
+    # API-only processes await a durable worker result; they never launch code.
+    deadline = time.monotonic() + OVERALL_TIMEOUT + RUN_BUDGET + tl
+    while time.monotonic() < deadline:
+        current = await _load_job(job["id"]) if QUEUE_MODE == "database" else _jobs.get(job["id"])
+        if current and current.get("status") == "done":
+            return current["result"]
+        if current and current.get("status") == "error":
+            error = current.get("error") or "internal run error"
+            raise HTTPException(status_code=504 if "timed out" in error else 500, detail=error)
+        await asyncio.sleep(0.1)
+    raise HTTPException(status_code=504, detail="run timed out waiting for judge")
 
 
 @app.get("/api/history")
@@ -1714,10 +1921,10 @@ async def create_report(request: Request) -> dict:
         _profile_display_name, user.get("email", ""),
         user.get("name") or user.get("email", ""))
     try:
-        res = _sb.table("reports").insert({
+        res = await asyncio.to_thread(lambda: _sb.table("reports").insert({
             "problem": problem, "kind": kind, "message": message,
             "user_email": user["email"], "name": name, "status": "open",
-        }).execute()
+        }).execute())
     except Exception as e:
         raise _db_err(e)
     rows = res.data or []
@@ -1768,7 +1975,7 @@ async def set_report_status(request: Request, rid: str) -> dict:
     if status not in REPORT_STATUS:
         raise HTTPException(status_code=400, detail="bad status")
     try:
-        _sb.table("reports").update({"status": status}).eq("id", rid).execute()
+        await asyncio.to_thread(lambda: _sb.table("reports").update({"status": status}).eq("id", rid).execute())
     except Exception as e:
         raise _db_err(e)
     return {"ok": True}
@@ -1805,6 +2012,14 @@ def admin_overview(request: Request) -> dict:
         p["best"] = max(p["best"], r.get("score") or 0)
     hidden = sorted(_hidden_pids())
     listed, contest_hidden = _contest_problem_sets()
+    if QUEUE_MODE == "database":
+        try:
+            counts = _sb.rpc("judge_queue_diagnostics", {}).execute().data
+        except Exception as e:
+            raise HTTPException(status_code=503, detail="judge database unavailable") from e
+    else:
+        counts = {status: sum(j.get("status") == status for j in _jobs.values())
+                  for status in ("queued", "running")}
     return {
         "problems": len(PROBLEMS),
         "problems_public": len(PROBLEMS) - len(hidden),
@@ -1821,9 +2036,8 @@ def admin_overview(request: Request) -> dict:
         "reports_open": rep_open,
         "reports_total": (reps.count if reps else 0) or 0,
         "jobs": {
-            "queued": sum(1 for j in _jobs.values() if j.get("status") == "queued"),
-            "running": sum(1 for j in _jobs.values() if j.get("status") == "running"),
-            "queue_depth": _queue_depth(),
+            **counts,
+            "queue_depth": counts["queued"],
             "workers": JUDGE_WORKERS,
         },
         "per_problem": per_problem,
@@ -1831,7 +2045,7 @@ def admin_overview(request: Request) -> dict:
                     ("id", "created_at", "problem", "name", "language",
                      "verdict", "score")} for r in subs[:10]],
         "system": {"uptime_s": int(time.monotonic() - _boot_time),
-                   "problems_loaded": sorted(PROBLEMS.keys())},
+                   "problems_loaded": sorted(PROBLEMS.keys()), **_host_limits()},
     }
 
 
@@ -2088,7 +2302,7 @@ async def upsert_contest(request: Request) -> dict:
         "created_by": user["email"],
     }
     try:
-        _sb.table("contests").upsert(row, on_conflict="id").execute()
+        await asyncio.to_thread(lambda: _sb.table("contests").upsert(row, on_conflict="id").execute())
     except Exception as e:
         if "hide_from_tasks" in str(e):
             raise HTTPException(status_code=400,
@@ -2096,8 +2310,9 @@ async def upsert_contest(request: Request) -> dict:
         raise _db_err(e)
     _contest_pid_cache["at"] = 0.0   # visibility changed
     _reg_count_cache["at"] = 0.0
-    return {"ok": True,
-            "contest": _contest_public(row, user["email"], _registration_counts())}
+    counts = await asyncio.to_thread(_registration_counts)
+    public = await asyncio.to_thread(_contest_public, row, user["email"], counts)
+    return {"ok": True, "contest": public}
 
 
 @app.delete("/api/contests/{cid}")
@@ -2227,8 +2442,8 @@ async def register_contest(request: Request, cid: str) -> dict:
     email = user.get("email", "")
     if not email:
         raise HTTPException(status_code=401, detail="login first")
-    contest = _contest_or_404(cid)
-    if not _registrations_supported():
+    contest = await asyncio.to_thread(lambda: _contest_or_404(cid))
+    if not await asyncio.to_thread(lambda: _registrations_supported()):
         raise HTTPException(status_code=503,
                             detail="contest registration is off — run supabase/schema.sql")
     if _contest_window(contest) == "ended" and not _is_admin(email):
@@ -2236,14 +2451,14 @@ async def register_contest(request: Request, cid: str) -> dict:
     name = await asyncio.to_thread(
         _profile_display_name, email, user.get("name") or email)
     try:
-        _sb.table("contest_registrations").upsert(
+        await asyncio.to_thread(lambda: _sb.table("contest_registrations").upsert(
             {"contest_id": cid, "user_email": email, "name": name[:50]},
-            on_conflict="contest_id,user_email").execute()
+            on_conflict="contest_id,user_email").execute())
     except Exception as e:
         _register_note_missing_table(e)
         raise _db_err(e)
     _reg_count_cache["at"] = 0.0
-    return {"ok": True, "registered": True, "participants": _registration_count(cid)}
+    return {"ok": True, "registered": True, "participants": await asyncio.to_thread(lambda: _registration_count(cid))}
 
 
 @app.delete("/api/contests/{cid}/register")
@@ -2252,18 +2467,18 @@ async def unregister_contest(request: Request, cid: str) -> dict:
     email = user.get("email", "")
     if not email:
         raise HTTPException(status_code=401, detail="login first")
-    contest = _contest_or_404(cid)
+    contest = await asyncio.to_thread(lambda: _contest_or_404(cid))
     if _contest_window(contest) == "running" and not _is_admin(email):
         raise HTTPException(status_code=400,
                             detail="contest is running — cannot unregister now")
     try:
-        _sb.table("contest_registrations").delete().eq("contest_id", cid).eq(
-            "user_email", email).execute()
+        await asyncio.to_thread(lambda: _sb.table("contest_registrations").delete().eq("contest_id", cid).eq(
+            "user_email", email).execute())
     except Exception as e:
         _register_note_missing_table(e)
         raise _db_err(e)
     _reg_count_cache["at"] = 0.0
-    return {"ok": True, "registered": False, "participants": _registration_count(cid)}
+    return {"ok": True, "registered": False, "participants": await asyncio.to_thread(lambda: _registration_count(cid))}
 
 
 # ---- admin: rejudge (A4) + plagiarism (B8) ----
@@ -2290,19 +2505,23 @@ async def admin_rejudge(request: Request) -> dict:
         limit = 50
     # One worker on a fractional core: a 200-row rejudge would block students for
     # hours. Keep the batch within the queue budget; the admin can call again.
-    budget = min(REJUDGE_MAX, QUEUE_MAX)
+    depth = ((await _queue_rpc("diagnostics"))["queued"] if QUEUE_MODE == "database"
+             else _queue_depth())
+    budget = min(REJUDGE_MAX, max(0, QUEUE_MAX - depth))
+    if budget == 0:
+        return {"queued": 0, "skipped": len(ids), "jobs": []}
     if limit > budget:
         limit = budget
     ids = ids[:budget]
-    cols = "id,problem,language,filename,name,user_email,code"
+    cols = "id,problem,language,filename,name,user_email,code,contest_id"
     try:
         if ids:
-            res = _sb.table("submissions").select(cols).in_("id", ids).execute()
+            res = await asyncio.to_thread(lambda: _sb.table("submissions").select(cols).in_("id", ids).execute())
         else:
             if not problem:
                 raise HTTPException(status_code=400, detail="give ids[] or problem")
-            res = _sb.table("submissions").select(cols).eq("problem", problem).order(
-                "created_at", desc=True).limit(limit).execute()
+            res = await asyncio.to_thread(lambda: _sb.table("submissions").select(cols).eq("problem", problem).order(
+                "created_at", desc=True).limit(limit).execute())
     except HTTPException:
         raise
     except Exception as e:
@@ -2316,14 +2535,21 @@ async def admin_rejudge(request: Request) -> dict:
         if not code.strip() or pid not in PROBLEMS or lang not in LANGS:
             skipped.append(str(row.get("id")))
             continue
-        job = await _create_job({
-            "kind": "rejudge", "user_email": row.get("user_email") or "",
-            "name": row.get("name") or "", "problem": pid, "language": lang,
-            "filename": row.get("filename"), "source": code,
-            "target_id": row.get("id"), "reveal": REVEAL_SAMPLES,
-            "tests_hash": grader.tests_hash(PROBLEMS[pid]),
-            "grader_version": grader.GRADER_VERSION,
-        }, track_active=False)
+        try:
+            job = await _create_job({
+                "kind": "rejudge", "user_email": row.get("user_email") or "",
+                "name": row.get("name") or "", "problem": pid, "language": lang,
+                "filename": row.get("filename"), "source": code,
+                "contest_id": row.get("contest_id"),
+                "target_id": row.get("id"), "reveal": REVEAL_SAMPLES,
+                "tests_hash": grader.tests_hash(PROBLEMS[pid]),
+                "grader_version": grader.GRADER_VERSION,
+            }, track_active=False)
+        except HTTPException as e:
+            if e.status_code != 503:
+                raise
+            skipped.append(str(row.get("id")))
+            continue
         queued.append(job["id"])
     return {"queued": len(queued), "skipped": len(skipped), "jobs": queued}
 

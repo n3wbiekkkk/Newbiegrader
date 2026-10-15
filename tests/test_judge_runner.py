@@ -1,0 +1,217 @@
+"""Real process regressions for the execution boundary and output collector."""
+import asyncio
+import ctypes
+import importlib.util
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+from unittest.mock import patch
+
+import grader
+
+
+def process_alive(pid):
+    if os.name == "nt":
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.OpenProcess.restype = ctypes.c_void_p
+        handle = kernel.OpenProcess(0x1000, False, pid)
+        if not handle:
+            return False
+        try:
+            code = ctypes.c_ulong()
+            kernel.GetExitCodeProcess(ctypes.c_void_p(handle), ctypes.byref(code))
+            return code.value == 259
+        finally:
+            kernel.CloseHandle(ctypes.c_void_p(handle))
+    try:
+        os.kill(pid, 0)
+        stat = Path(f"/proc/{pid}/stat")
+        return not stat.exists() or stat.read_text().rsplit(")", 1)[1].split()[0] != "Z"
+    except ProcessLookupError:
+        return False
+
+
+class OutputCollectionTests(unittest.TestCase):
+    def test_owner_death_terminates_the_owned_job(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            os.chmod(tmp, 0o777)
+            marker = Path(tmp) / "pid"
+            command = [sys.executable, "-c", "import os, time; "
+                       f"open({str(marker)!r}, 'w').write(str(os.getpid())); time.sleep(60)"]
+            parent = subprocess.Popen([sys.executable, "-c",
+                "from judge_runner import run_bounded; import grader; "
+                f"run_bounded({command!r}, '', 60, output_limit=32768, env=grader.judge_env())"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                deadline = time.monotonic() + 10
+                while not marker.exists() and time.monotonic() < deadline:
+                    time.sleep(.02)
+                self.assertTrue(marker.exists(), "owner failed to launch the job")
+                pid = int(marker.read_text())
+                parent.kill()  # An abrupt death cannot run Python finally blocks.
+                parent.communicate(timeout=5)
+                deadline = time.monotonic() + 5
+                while process_alive(pid) and time.monotonic() < deadline:
+                    time.sleep(.02)
+                self.assertFalse(process_alive(pid), "job survived the owner's death")
+            finally:
+                if parent.poll() is None:
+                    parent.kill()
+                parent.communicate(timeout=5)
+
+    def test_stdout_is_stopped_during_collection(self):
+        # Removing the live output ceiling would collect a megabyte and report OK.
+        with patch.object(grader, "OUTPUT_LIMIT_BYTES", 32768):
+            result = grader.run_one(
+                [sys.executable, "-c", "import os\nwhile True: os.write(1, b'x' * 8192)"],
+                "", 3, 256)
+        self.assertEqual(result["reason"], "ole")
+        self.assertLessEqual(len(result["stdout"].encode()), 32768)
+
+    def test_stderr_is_stopped_during_collection(self):
+        # stderr must have the same live bound as stdout, even on exit code zero.
+        with patch.object(grader, "OUTPUT_LIMIT_BYTES", 32768):
+            result = grader.run_one(
+                [sys.executable, "-c", "import os; os.write(2, b'x' * 1000000)"],
+                "", 10, 256)
+        self.assertEqual(result["reason"], "ole")
+        self.assertLessEqual(len(result["stderr"].encode()), 32768)
+
+    @unittest.skipUnless(shutil.which("gcc"), "gcc required")
+    def test_compiler_diagnostics_are_bounded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "solution.c"
+            src.write_text(("#warning " + "x" * 512 + "\n") * 500 + "int main(void) {return 0;}\n")
+            env = grader.judge_env() | {"TEMP": tmp, "TMP": tmp}
+            with patch.object(grader, "OUTPUT_LIMIT_BYTES", 32768), patch.object(grader, "judge_env", return_value=env):
+                with self.assertRaises(grader.CompileError) as raised:
+                    grader.prepare_command(src, Path(tmp))
+        self.assertLessEqual(len(str(raised.exception).encode()), 33000)
+
+    def test_compile_deadline_kills_compiler_descendants(self):
+        # Exercise the shared compiler path with a compiler subprocess that hangs.
+        with tempfile.TemporaryDirectory() as tmp:
+            marker = Path(tmp) / "pid"
+            source = Path(tmp) / "compiler.py"
+            source.write_text(
+                "import os, subprocess, sys, time\n"
+                "p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], "
+                "start_new_session=(os.name == 'posix'))\n"
+                f"open({str(marker)!r}, 'w').write(str(p.pid))\n"
+                "time.sleep(60)\n")
+            with patch.object(grader, "COMPILE_TIMEOUT", 1):
+                with self.assertRaises(grader.CompileError):
+                    grader._compile([sys.executable, str(source)], Path(tmp))
+            self.assertTrue(marker.exists(), "compiler did not reach its subprocess")
+            self.assertFalse(process_alive(int(marker.read_text())))
+
+    @unittest.skipUnless(os.name == "posix", "POSIX resource limits")
+    def test_sandbox_preserves_memory_and_process_limits(self):
+        result = grader.run_one([sys.executable, "-c",
+                                "import json, resource; print(json.dumps(["
+                                "resource.getrlimit(resource.RLIMIT_AS)[0],"
+                                "resource.getrlimit(resource.RLIMIT_NPROC)[0],"
+                                "resource.getrlimit(resource.RLIMIT_FSIZE)[0],"
+                                "resource.getrlimit(resource.RLIMIT_NOFILE)[0]]))"], "", 3, 128)
+        self.assertEqual(result["reason"], "")
+        self.assertEqual(result["stdout"].strip(), "[134217728, 64, 67108864, 64]")
+
+    @unittest.skipUnless(os.name == "posix", "POSIX signal return codes")
+    def test_supervisor_preserves_signal_verdict_classification(self):
+        result = grader.run_one([sys.executable, "-c", "import os, signal; os.kill(os.getpid(), signal.SIGKILL)"],
+                               "", 3, 128)
+        self.assertEqual(result["reason"], "sigkill")
+
+
+class RunnerTests(unittest.IsolatedAsyncioTestCase):
+    def runner(self):
+        if importlib.util.find_spec("judge_runner") is None:
+            self.fail("the supervised execution boundary is missing")
+        from judge_runner import run_isolated
+        return run_isolated
+
+    def payload(self, source):
+        return {"problem": None, "ext": ".py", "source": source,
+                "stdin_data": "", "time_limit": 30, "memory_mb": 256,
+                "memory_cap_mb": 256, "judge_jobs": 1}
+
+    async def wait_file(self, path):
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            if path.exists() and path.stat().st_size:
+                return
+            await asyncio.sleep(.02)
+        self.fail("child did not start")
+
+    def descendant_source(self, path, exit_parent=False):
+        # A different session defeats killpg-only cleanup on POSIX.
+        child = "import time; time.sleep(60)"
+        return ("import os, subprocess, sys, time\n"
+                f"p = subprocess.Popen([sys.executable, '-c', {child!r}], "
+                "start_new_session=(os.name == 'posix'))\n"
+                f"open({str(path)!r}, 'w').write(str(p.pid))\n"
+                + ("" if exit_parent else "time.sleep(60)\n"))
+
+    async def test_hard_deadline_kills_descendant_that_changes_session(self):
+        run = self.runner()
+        with tempfile.TemporaryDirectory() as tmp:
+            os.chmod(tmp, 0o777)
+            marker = Path(tmp) / "pid"
+            task = asyncio.create_task(run("playground", self.payload(
+                self.descendant_source(marker)), 10))
+            await self.wait_file(marker)
+            pid = int(marker.read_text())
+            with self.assertRaises(TimeoutError):
+                await task
+            self.assertFalse(process_alive(pid), "deadline returned with child alive")
+
+    async def test_cancellation_waits_for_descendant_cleanup(self):
+        run = self.runner()
+        with tempfile.TemporaryDirectory() as tmp:
+            os.chmod(tmp, 0o777)
+            marker = Path(tmp) / "pid"
+            task = asyncio.create_task(run("playground", self.payload(
+                self.descendant_source(marker)), 30))
+            await self.wait_file(marker)
+            pid = int(marker.read_text())
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            self.assertFalse(process_alive(pid), "cancellation returned with child alive")
+
+    async def test_success_also_cleans_orphan_descendants(self):
+        run = self.runner()
+        with tempfile.TemporaryDirectory() as tmp:
+            os.chmod(tmp, 0o777)
+            marker = Path(tmp) / "pid"
+            result = await run("playground", self.payload(
+                self.descendant_source(marker, exit_parent=True)), 15)
+            self.assertEqual(result["verdict"], "OK")
+            self.assertFalse(process_alive(int(marker.read_text())))
+
+    async def test_playground_reuses_limits_and_stdin_contract(self):
+        result = await self.runner()("playground", self.payload(
+            "print(input()[::-1])") | {"stdin_data": "hello\n", "memory_cap_mb": 128}, 15)
+        self.assertEqual(result["stdout"], "olleh\n")
+        self.assertEqual(result["limits"]["memory_mb"], 128)
+        self.assertTrue(result["memory_capped"])
+
+    async def test_submission_preserves_hidden_test_redaction(self):
+        result = await self.runner()("submission", {
+            "problem": "hanoi", "ext": ".py", "source": "print('wrong')",
+            "reveal": "samples", "memory_cap_mb": 128, "judge_jobs": 1}, 20)
+        self.assertGreater(result["total"], 0)
+        sample_names = set(grader.load_problem("hanoi").samples)
+        hidden = [item for item in result["results"] if item["test"] not in sample_names]
+        self.assertTrue(hidden)
+        for item in hidden:
+            self.assertFalse({"input", "actual", "expected", "diff", "detail"} & item.keys())
+
+
+if __name__ == "__main__":
+    unittest.main()

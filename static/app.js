@@ -1460,6 +1460,8 @@ $("template-btn").onclick = () => {
 
 /* ---------------- judging jobs (async submit) ---------------- */
 const POLL_MS = 700;
+const POLL_MIN_MS = 500;
+const POLL_CAP_MS = 5000;
 const POLL_MAX_MS = 4 * 60 * 1000;
 const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 
@@ -1468,18 +1470,30 @@ const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
  * either way, so the UI just waits (with a hard 4 minute cap). */
 async function pollJob(jid, onTick) {
   const t0 = Date.now();
+  let delay = POLL_MS;
+  let previous = null;
+  const timeout = () => {
+    const err = new Error(
+      "รอผลนานเกิน 4 นาที — งานยังตรวจอยู่เบื้องหลัง กลับมาดูผลได้ที่ History");
+    err.timeout = true;
+    err.job_id = jid;
+    return err;
+  };
   for (;;) {
+    if (Date.now() - t0 >= POLL_MAX_MS) throw timeout();
     const job = await apiGet(`/api/jobs/${encodeURIComponent(jid)}`);
     if (onTick) onTick(job);
     if (job.status === "done" || job.status === "error") return job;
-    if (Date.now() - t0 >= POLL_MAX_MS) {
-      const err = new Error(
-        "รอผลนานเกิน 4 นาที — งานยังตรวจอยู่เบื้องหลัง กลับมาดูผลได้ที่ History");
-      err.timeout = true;
-      err.job_id = jid;
-      throw err;
-    }
-    await sleep(POLL_MS);
+    const remaining = POLL_MAX_MS - (Date.now() - t0);
+    if (remaining <= 0) throw timeout();
+    // Back off while unchanged; react promptly to execution or queue progress.
+    const progressed = previous && (job.status !== previous.status ||
+      (job.status === "queued" && Number(job.queued_ahead) < Number(previous.queued_ahead)));
+    delay = !previous || progressed ? POLL_MS : Math.min(POLL_CAP_MS, delay * 1.5);
+    previous = job;
+    // Jitter prevents clients submitted together from polling in lockstep.
+    const jittered = Math.max(POLL_MIN_MS, Math.min(POLL_CAP_MS, delay * (0.8 + Math.random() * 0.4)));
+    await sleep(Math.min(remaining, jittered));
   }
 }
 
@@ -1510,9 +1524,10 @@ async function resumeJob(pid, jid) {
       setJudgeStatus("ผลล่าสุดของข้อนี้", false);
     }
   } catch (e) {
-    forgetJob(pid);            // stale id: server restarted, or the job aged out
+    if (e.timeout) rememberJob(pid, jid);
+    else forgetJob(pid);       // stale id: server restarted, or the job aged out
     if (state.current === pid) {
-      setJudgeStatus("ดึงผลงานเดิมไม่ได้แล้ว — ดูผลย้อนหลังได้ที่ History", false);
+      setJudgeStatus(e.timeout ? e.message : "ดึงผลงานเดิมไม่ได้แล้ว — ดูผลย้อนหลังได้ที่ History", false);
     }
   } finally {
     polling.delete(jid);

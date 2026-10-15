@@ -8,7 +8,7 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY grader.py server.py ./
+COPY grader.py server.py judge_runner.py worker.py container_entrypoint.py ./
 COPY problems ./problems
 COPY static ./static
 
@@ -21,4 +21,4 @@ COPY static ./static
 RUN chmod -R go-rwx ./problems
 
 EXPOSE 8000
-CMD ["sh", "-c", "uvicorn server:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["python", "container_entrypoint.py"]
