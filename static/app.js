@@ -623,6 +623,7 @@ function currentRouteRender() {
 
 function router() {
   const h = location.hash || "#/";
+  if (!h.startsWith("#/contests/")) stopContestTicker();
   if (h.startsWith("#/task/")) {
     openTaskByToken(decodeURIComponent(h.slice("#/task/".length)));
     return;
@@ -2150,6 +2151,7 @@ async function renderContest(cid) {
     renderContestProblems(d);
     renderContestAnnc(d);
     renderContestScoreboard(d);
+    startContestTicker(d.id || cid, d);
   } catch (e) {
     const msg = isUnconfiguredMessage(e.message) ? CONTESTS_UNCONFIGURED : e.message;
     title.textContent = "โหลดคอนเทสต์ไม่สำเร็จ";
@@ -2166,9 +2168,9 @@ function renderContestJoin(d) {
   const n = d.participants || 0;
   const parts = [`<span class="meta">ผู้ลงทะเบียน ${n} คน</span>`];
   if (d.starts_in_s != null && d.starts_in_s > 0) {
-    parts.push(`<span class="badge b-upcoming">เริ่มในอีก ${durationText(d.starts_in_s)}</span>`);
+    parts.push(`<span class="badge b-upcoming" id="contest-countdown">เริ่มในอีก ${durationText(d.starts_in_s)}</span>`);
   } else if (d.ends_in_s != null && d.ends_in_s > 0 && d.status === "running") {
-    parts.push(`<span class="badge b-running">เหลืออีก ${durationText(d.ends_in_s)}</span>`);
+    parts.push(`<span class="badge b-running" id="contest-countdown">เหลืออีก ${durationText(d.ends_in_s)}</span>`);
   }
   if (!d.registrations_supported) {
     parts.push(`<span class="dim">ระบบลงทะเบียนยังไม่พร้อม (รัน supabase/schema.sql)</span>`);
@@ -2200,6 +2202,35 @@ function durationText(seconds) {
   if (h) return `${h} ชม. ${m} นาที`;
   if (m) return `${m} นาที ${sec} วิ`;
   return `${sec} วิ`;
+}
+
+function stopContestTicker() {
+  if (state.contestTimer) { clearInterval(state.contestTimer); state.contestTimer = null; }
+  state.contestPhase = null;
+}
+
+/* Live countdown on the contest page: ticks every second from the server
+ * timestamps captured at fetch, and reloads the page data the moment the
+ * round starts or ends — problems unlock without a manual refresh. */
+function startContestTicker(cid, d) {
+  stopContestTicker();
+  const phase = d.status;
+  let target = null;
+  if (phase === "upcoming" && d.starts_in_s != null) target = Date.now() + d.starts_in_s * 1000;
+  else if (phase === "running" && d.ends_in_s != null) target = Date.now() + d.ends_in_s * 1000;
+  if (target == null) return;
+  state.contestPhase = phase;
+  const wantHash = "#/contests/" + encodeURIComponent(cid);
+  state.contestTimer = setInterval(() => {
+    if (location.hash !== wantHash) { stopContestTicker(); return; }   // navigated away mid-fetch
+    const left = Math.max(0, Math.round((target - Date.now()) / 1000));
+    const el = $("contest-countdown");
+    if (el) el.textContent = (phase === "upcoming" ? "เริ่มในอีก " : "เหลืออีก ") + durationText(left);
+    if (left <= 0 && state.contestPhase === phase) {
+      state.contestPhase = null;   // refire guard while refetching
+      renderContest(cid);          // restarts the ticker for the new phase
+    }
+  }, 1000);
 }
 
 async function contestRegister(cid, register) {
