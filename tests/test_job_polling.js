@@ -82,3 +82,17 @@ test("resume records a final result and clears the pending id", async () => {
   assert.equal(h.saved.has("thai_time"), false);
   assert.equal(h.context.state.jobResults.thai_time.result.score, 100);
 });
+
+test("network blips retry without forgetting the job", async () => {
+  const blip = () => new Error("socket hang up");   // no .status: not an HTTP error
+  const h = harness([blip(), blip(), { status: "done", result: { score: 100 } }]);
+  const result = await h.poll();
+  assert.equal(result.result.score, 100);
+  assert.equal(h.calls.length, 3);
+});
+
+test("persistent network failure keeps the job id for resume", async () => {
+  const h = harness([new Error("network down")]);
+  await assert.rejects(h.poll(), (error) => error.keepJob === true && error.job_id === "job/a");
+  assert.equal(h.calls.length, 9);   // 1 initial + 8 retries, then give up but keep id
+});
