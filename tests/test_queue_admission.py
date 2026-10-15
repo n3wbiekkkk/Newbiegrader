@@ -431,12 +431,15 @@ class TrustedProxyIp(unittest.TestCase):
             self.assertEqual(server._client_ip(r), "10.1.2.3")
 
     def test_cf_fallback_only_without_xff(self):
+        # CF-Connecting-IP is never trusted as a client identity: when XFF
+        # is absent, the socket peer is authoritative (a forged CF header
+        # cannot impersonate another IP).
         with unittest.mock.patch.dict(os.environ,
                                       {"GRADER_TRUSTED_PROXY_CIDRS": "10.0.0.0/8"}):
             r = _http_request("10.1.2.3",
                               {"cf-connecting-ip": "203.0.113.7"})
-            self.assertEqual(server._client_ip(r), "203.0.113.7")
-            # ...but never from an untrusted direct caller.
+            self.assertEqual(server._client_ip(r), "10.1.2.3")
+            # ...and never from an untrusted direct caller either.
             r = _http_request("203.0.113.99",
                               {"cf-connecting-ip": "203.0.113.7",
                                "x-forwarded-for": "203.0.113.7"})
