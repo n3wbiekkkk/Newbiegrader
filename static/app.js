@@ -1386,6 +1386,7 @@ async function doPasswordAuth() {
   }
   const payload = { email, password };
   if (authMode === "register") payload.name = $("auth-name").value.trim();
+  payload.remember = $("auth-remember").checked;
   err.textContent = "กำลังดำเนินการ...";
   err.classList.remove("hidden");
   try {
@@ -1418,6 +1419,25 @@ async function doPasswordAuth() {
   } catch (e) {
     err.textContent = e.message;
   }
+}
+
+/* Cookie consent (PDPA): the site only sets strictly-necessary cookies
+ * (login session + remember-me). The banner just records the choice. */
+const COOKIE_CONSENT_KEY = "ng_cookie_consent";
+
+function maybeShowCookieBanner() {
+  let choice = null;
+  try { choice = localStorage.getItem(COOKIE_CONSENT_KEY); } catch (e) { /* ignore */ }
+  if (choice) return;
+  const bar = $("cookie-banner");
+  if (!bar) return;
+  bar.classList.remove("hidden");
+  const pick = (v) => {
+    try { localStorage.setItem(COOKIE_CONSENT_KEY, v); } catch (e) { /* ignore */ }
+    bar.classList.add("hidden");
+  };
+  $("cookie-accept").onclick = () => pick("accepted");
+  $("cookie-decline").onclick = () => pick("declined");
 }
 
 /* ---------------- language + file ---------------- */
@@ -2911,6 +2931,15 @@ async function init() {
     apiGet("/api/problems").catch(() => null),
     refreshMe(),
   ]);
+  // Session cookie gone but remember-me alive (browser cleanup, expiry):
+  // silently restore the login before the first route render.
+  if (!state.user) {
+    try {
+      const r = await apiGet("/api/auth/restore");
+      if (r && r.restored) await refreshMe();
+    } catch (e) { /* stay logged out */ }
+  }
+  maybeShowCookieBanner();
   // The identity arrives after the first route render, so a view opened
   // directly (bookmark/reload on #/settings, #/contests, #/task/<id>) can be
   // stale: admin cards hidden, contest banner missing, "your score" blank.
