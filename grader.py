@@ -112,6 +112,9 @@ SAMPLE_INTERVAL = float(os.environ.get("GRADER_SAMPLE_INTERVAL", "0") or 0) or (
 # Compiling C++ with -O2 can take tens of seconds on a fractional core.
 COMPILE_TIMEOUT = float(os.environ.get("GRADER_COMPILE_TIMEOUT", "0") or 0) or (
     60.0 if CPU_QUOTA > 1 else 90.0)
+# The web runner sets this from its admitted slot budget. CLI toolchains such
+# as javac keep their previous memory policy unless explicitly supervised.
+COMPILE_MEMORY_MB = 0
 
 # ---------- colors ----------
 class C:
@@ -316,9 +319,8 @@ def prepare_command(src: Path, workdir: Path) -> tuple[list[str], str, str]:
         if not comp:
             raise SystemExit("No C++ compiler (g++/clang++) found")
         exe = workdir / "sol"
-        r = subprocess.run([comp, "-O2", "-std=c++17", "-Wall", "-Wextra",
-                            "-o", str(exe), str(src)],
-                           capture_output=True, text=True, cwd=str(workdir), env=judge_env(), timeout=COMPILE_TIMEOUT)
+        r = _compile([comp, "-O2", "-std=c++17", "-Wall", "-Wextra",
+                      "-o", str(exe), str(src)], workdir)
         if r.returncode != 0:
             raise CompileError(r.stderr or r.stdout or "compile failed")
         return [str(exe)], f"{Path(comp).name} -O2 -Wall {src.name}", (r.stderr or "").strip()
@@ -327,17 +329,15 @@ def prepare_command(src: Path, workdir: Path) -> tuple[list[str], str, str]:
         if not comp:
             raise SystemExit("No C compiler found")
         exe = workdir / "sol"
-        r = subprocess.run([comp, "-O2", "-std=c11", "-Wall", "-Wextra",
-                            "-o", str(exe), str(src)],
-                           capture_output=True, text=True, cwd=str(workdir), env=judge_env(), timeout=COMPILE_TIMEOUT)
+        r = _compile([comp, "-O2", "-std=c11", "-Wall", "-Wextra",
+                      "-o", str(exe), str(src)], workdir)
         if r.returncode != 0:
             raise CompileError(r.stderr or r.stdout or "compile failed")
         return [str(exe)], f"{Path(comp).name} -O2 -Wall {src.name}", (r.stderr or "").strip()
     if lang == "java":
         if not shutil.which("javac") or not shutil.which("java"):
             raise SystemExit("javac/java not found")
-        r = subprocess.run(["javac", "-Xlint:all", "-d", str(workdir), str(src)],
-                           capture_output=True, text=True, cwd=str(workdir), env=judge_env(), timeout=COMPILE_TIMEOUT)
+        r = _compile(["javac", "-Xlint:all", "-d", str(workdir), str(src)], workdir)
         if r.returncode != 0:
             raise CompileError(r.stderr or r.stdout or "compile failed")
         cls = src.stem
@@ -346,8 +346,7 @@ def prepare_command(src: Path, workdir: Path) -> tuple[list[str], str, str]:
         if not shutil.which("go"):
             raise SystemExit("go not found")
         exe = workdir / "sol"
-        r = subprocess.run(["go", "build", "-o", str(exe), str(src)],
-                           capture_output=True, text=True, cwd=str(workdir), env=judge_env(), timeout=COMPILE_TIMEOUT)
+        r = _compile(["go", "build", "-o", str(exe), str(src)], workdir)
         if r.returncode != 0:
             raise CompileError(r.stderr or r.stdout or "compile failed")
         return [str(exe)], f"go build {src.name}", (r.stderr or "").strip()
@@ -355,8 +354,7 @@ def prepare_command(src: Path, workdir: Path) -> tuple[list[str], str, str]:
         if not shutil.which("rustc"):
             raise SystemExit("rustc not found")
         exe = workdir / "sol"
-        r = subprocess.run(["rustc", "-O", "-o", str(exe), str(src)],
-                           capture_output=True, text=True, cwd=str(workdir), env=judge_env(), timeout=COMPILE_TIMEOUT)
+        r = _compile(["rustc", "-O", "-o", str(exe), str(src)], workdir)
         if r.returncode != 0:
             raise CompileError(r.stderr or r.stdout or "compile failed")
         return [str(exe)], f"rustc -O {src.name}", (r.stderr or "").strip()
@@ -364,6 +362,20 @@ def prepare_command(src: Path, workdir: Path) -> tuple[list[str], str, str]:
 
 class CompileError(Exception):
     pass
+
+
+def _compile(command: list[str], workdir: Path):
+    from judge_runner import run_bounded
+    if os.name == "posix" and COMPILE_MEMORY_MB:
+        command = [sys.executable, str(Path(__file__).resolve()), "--compile-sandbox",
+                   str(COMPILE_MEMORY_MB), str(COMPILE_TIMEOUT), "--", *command]
+    result = run_bounded(command, "", COMPILE_TIMEOUT, output_limit=OUTPUT_LIMIT_BYTES,
+                         env=judge_env(), cwd=str(workdir))
+    if result.reason == "timeout":
+        raise CompileError("compilation exceeded its time limit")
+    if result.reason == "ole":
+        raise CompileError("compiler output exceeded its limit")
+    return result
 
 # ---------- checkers ----------
 def check_exact(expected: str, actual: str) -> bool:
@@ -552,7 +564,7 @@ OOM_WORDS = ("bad_alloc", "out of memory", "MemoryError",
              "cannot allocate", "std::bad_alloc")
 
 # ---------- execution with limits ----------
-def build_limits(memory_mb: int, time_limit: float):
+def build_limits(memory_mb: int, time_limit: float, sandbox: bool = True):
     def _fn():
         try:
             import resource
@@ -587,7 +599,7 @@ def build_limits(memory_mb: int, time_limit: float):
         # root คือ prod Docker). Best-effort: ล้มเหลวตรงไหนก็ใช้ rlimits ต่อ.
         # หมายเหตุ: workdir/binary ต้อง chmod 0755 ฝั่ง parent ก่อน (ดู run_one)
         try:
-            if sys.platform.startswith("linux") and os.geteuid() == 0:
+            if sandbox and sys.platform.startswith("linux") and os.geteuid() == 0:
                 try:  # detached net namespace ก่อน drop root (ต้องใช้ CAP_SYS_ADMIN)
                     import ctypes
                     libc = ctypes.CDLL("libc.so.6", use_errno=True)
@@ -628,8 +640,14 @@ def build_limits(memory_mb: int, time_limit: float):
 def judge_env() -> dict:
     """Minimal env for untrusted code: compilers/runtimes work, secrets never leak."""
     path = os.environ.get("PATH", "/usr/bin:/bin:/usr/local/bin")
-    return {"PATH": path, "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8",
-            "HOME": "/tmp", "TMPDIR": "/tmp"}
+    env = {"PATH": path, "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8",
+           "HOME": "/tmp", "TMPDIR": "/tmp"}
+    if os.name == "nt":
+        # Windows runtimes need SystemRoot; MinGW otherwise chooses Windows/ as
+        # its temp directory, which ordinary users cannot write.
+        env.update({name: os.environ[name] for name in ("SystemRoot", "WINDIR", "TEMP", "TMP")
+                    if name in os.environ})
+    return env
 
 
 def _run_cwd(cmd: list[str]) -> str | None:
@@ -654,8 +672,7 @@ def run_one(cmd: list[str], stdin_data: str, time_limit: float, memory_mb: int) 
     Returns dict(stdout, stderr, wall, cpu, peak_mb, returncode, killed, reason).
     reason in {'', 'timeout', 'ole', 'oom', 'sigkill', 'signal:*', 'spawn-fail'}.
     """
-    use_limits = (os.name == "posix")
-    preexec = build_limits(memory_mb, time_limit) if use_limits else None
+    from judge_runner import run_bounded
     start = time.perf_counter()
     cpu0 = _cpu_children()
     cwd = _run_cwd(cmd)
@@ -666,64 +683,36 @@ def run_one(cmd: list[str], stdin_data: str, time_limit: float, memory_mb: int) 
             os.chmod(cmd[0], 0o755)
     except OSError:
         pass
+    command = cmd
+    if os.name == "posix":
+        # A fresh interpreter applies the existing restrictions before exec.
+        # No Python callback executes between fork/exec in a threaded parent.
+        command = [sys.executable, str(Path(__file__).resolve()), "--sandbox",
+                   str(memory_mb), str(time_limit), "--", *cmd]
+    peak = 0.0
+
+    def sample(pid):
+        nonlocal peak
+        peak = max(peak, _sample_rss_mb(pid))
+
     try:
-        p = subprocess.Popen(
-            cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, preexec_fn=preexec, env=judge_env(), cwd=cwd,
-        )
+        result = run_bounded(command, stdin_data, time_limit,
+                             output_limit=OUTPUT_LIMIT_BYTES, env=judge_env(), cwd=cwd,
+                             sample=sample)
     except OSError as e:
         return {"stdout": "", "stderr": str(e), "wall": time.perf_counter() - start,
                 "cpu": 0.0, "peak_mb": 0.0, "returncode": -1, "killed": False,
                 "reason": "spawn-fail"}
-    sampler = PeakSampler(p.pid)
-    sampler.peak = _sample_rss_mb(p.pid)  # sync sample แรกกันพลาด test ที่จบเร็วมาก
-    sampler.start()
-    try:
-        try:
-            out, err = p.communicate(input=stdin_data, timeout=time_limit)
-        except subprocess.TimeoutExpired:
-            try:
-                if use_limits:
-                    os.killpg(os.getpgid(p.pid), signal.SIGKILL)
-                else:
-                    p.kill()
-            except Exception:
-                pass
-            try:
-                out, err = p.communicate(timeout=5)
-            except subprocess.TimeoutExpired:
-                try:
-                    p.kill()
-                except Exception:
-                    pass
-                out, err = p.communicate()
-            return {"stdout": out or "", "stderr": err or "",
-                    "wall": time.perf_counter() - start, "cpu": _cpu_children() - cpu0,
-                    "peak_mb": sampler.stop(), "returncode": None, "killed": True,
-                    "reason": "timeout"}
-        wall = time.perf_counter() - start
-        cpu = _cpu_children() - cpu0
-        peak = sampler.stop()
-        if len((out or "").encode("utf-8", "ignore")) > OUTPUT_LIMIT_BYTES:
-            return {"stdout": "", "stderr": err or "", "wall": wall, "cpu": cpu,
-                    "peak_mb": peak, "returncode": p.returncode, "killed": False,
-                    "reason": "ole"}
-        rc = p.returncode
-        if rc is not None and rc < 0:
-            if -rc == signal.SIGKILL:
-                # timeout path return ไปก่อนแล้ว ดังนั้น SIGKILL ตรงนี้ = โดน OOM killer เชือด
-                return {"stdout": out or "", "stderr": err or "", "wall": wall, "cpu": cpu,
-                        "peak_mb": peak, "returncode": rc, "killed": False, "reason": "sigkill"}
-            return {"stdout": out or "", "stderr": err or "", "wall": wall, "cpu": cpu,
-                    "peak_mb": peak, "returncode": rc, "killed": False,
-                    "reason": f"signal:{_sig_name(rc)}"}
-        if err and any(w in err for w in OOM_WORDS):
-            return {"stdout": out or "", "stderr": err or "", "wall": wall, "cpu": cpu,
-                    "peak_mb": peak, "returncode": rc, "killed": False, "reason": "oom"}
-        return {"stdout": out or "", "stderr": err or "", "wall": wall, "cpu": cpu,
-                "peak_mb": peak, "returncode": rc, "killed": False, "reason": ""}
-    finally:
-        sampler.stop()
+    out, err, rc = result.stdout, result.stderr, result.returncode
+    reason = result.reason
+    if not reason and rc < 0:
+        reason = "sigkill" if -rc == signal.SIGKILL else f"signal:{_sig_name(rc)}"
+    if not reason and err and any(word in err for word in OOM_WORDS):
+        reason = "oom"
+    return {"stdout": out, "stderr": err, "wall": time.perf_counter() - start,
+            "cpu": _cpu_children() - cpu0, "peak_mb": peak,
+            "returncode": None if reason == "timeout" else rc,
+            "killed": reason in ("timeout", "ole"), "reason": reason}
 
 def judge_test(cmd, tc: TestCase, prob: Problem, strict: bool,
                verbose: bool) -> tuple[str, float, float, float, str, str]:
@@ -942,4 +931,7 @@ def main(argv=None) -> int:
     return cmd_run(args)
 
 if __name__ == "__main__":
+    if sys.argv[1:2] in (["--sandbox"], ["--compile-sandbox"]):
+        build_limits(int(sys.argv[2]), float(sys.argv[3]), sys.argv[1] == "--sandbox")()
+        os.execvpe(sys.argv[5], sys.argv[5:], judge_env())
     raise SystemExit(main())
