@@ -808,6 +808,95 @@ class ApiE2E(unittest.TestCase):
         params = self.client.get("/api/contests/cf-style").status_code
         self.assertEqual(params, 404)
 
+    def test_contest_hides_problems_until_start_midround_add_and_announcements(self):
+        # Upcoming: no slugs anywhere for non-admins; mid-round upsert adds
+        # problems live; announcements are admin-posted and start-gated.
+        self.addCleanup(lambda: self.fake.tables.__setitem__("contests", []))
+        self.addCleanup(lambda: self.fake.tables.__setitem__("contest_announcements", []))
+        server._annc_table_ok["value"] = True
+        from urllib.parse import urlsplit as _urlsplit
+        _parts = _urlsplit(server.FRONTEND_URL)
+        browser = {"Origin": f"{_parts.scheme}://{_parts.hostname}"}
+        self.login(ADMIN)
+        created = self.client.post("/api/contests", json={
+            "id": "hide-cup", "title": "Hide Cup",
+            "starts_at": _iso(30), "ends_at": _iso(90),
+            "problems": ["hanoi", "thai_time"], "hide_from_tasks": True},
+            headers=browser)
+        self.assertEqual(created.status_code, 200, created.text)
+
+        self.login(STUDENT_A)
+        listed = self.client.get("/api/contests").json()["contests"]
+        mine = [c for c in listed if c["id"] == "hide-cup"][0]
+        self.assertEqual(mine["status"], "upcoming")
+        self.assertEqual(mine["problems"], [])
+        detail = self.client.get("/api/contests/hide-cup").json()
+        self.assertFalse(detail["problems_open"])
+        self.assertEqual(detail["problem_details"], [])
+        self.assertEqual(self.client.get("/api/problems/thai_time").status_code, 404)
+        annc = self.client.get("/api/contests/hide-cup/announcements").json()
+        self.assertTrue(annc.get("locked"))
+        self.assertEqual(annc["announcements"], [])
+        denied = self.client.post("/api/contests/hide-cup/announcements",
+                                  json={"body": "hi"}, headers=browser)
+        self.assertEqual(denied.status_code, 403, denied.text)
+
+        self.login(ADMIN)
+        post = self.client.post("/api/contests/hide-cup/announcements",
+                                json={"body": "welcome"}, headers=browser)
+        self.assertEqual(post.status_code, 200, post.text)
+        seen = self.client.get("/api/contests/hide-cup/announcements").json()
+        self.assertEqual([a["body"] for a in seen["announcements"]], ["welcome"])
+        bad = self.client.post("/api/contests/hide-cup/announcements",
+                               json={"body": ""}, headers=browser)
+        self.assertEqual(bad.status_code, 400, bad.text)
+
+        self.login(STUDENT_A)
+        still = self.client.get("/api/contests/hide-cup/announcements").json()
+        self.assertTrue(still.get("locked"))
+
+        # start the round: list, details and announcements all open at once
+        self.login(ADMIN)
+        self.client.post("/api/contests", json={
+            "id": "hide-cup", "title": "Hide Cup",
+            "starts_at": _iso(-5), "ends_at": _iso(55),
+            "problems": ["hanoi", "thai_time"], "hide_from_tasks": True},
+            headers=browser)
+        self.login(STUDENT_A)
+        running = self.client.get("/api/contests/hide-cup").json()
+        self.assertTrue(running["problems_open"])
+        self.assertEqual([p["id"] for p in running["problem_details"]],
+                         ["hanoi", "thai_time"])
+        self.assertEqual([c["problems"] for c in
+                          self.client.get("/api/contests").json()["contests"]
+                          if c["id"] == "hide-cup"],
+                         [["hanoi", "thai_time"]])
+        open_annc = self.client.get("/api/contests/hide-cup/announcements").json()
+        self.assertFalse(open_annc.get("locked", False))
+        self.assertEqual([a["body"] for a in open_annc["announcements"]], ["welcome"])
+
+        # mid-round add: a third problem joins live, readable immediately
+        self.login(ADMIN)
+        self.client.post("/api/contests", json={
+            "id": "hide-cup", "title": "Hide Cup",
+            "starts_at": _iso(-5), "ends_at": _iso(55),
+            "problems": ["hanoi", "thai_time", "sum_even"], "hide_from_tasks": True},
+            headers=browser)
+        self.client.post("/api/contests/hide-cup/announcements",
+                         json={"body": "q3 added"}, headers=browser)
+        self.login(STUDENT_A)
+        grown = self.client.get("/api/contests/hide-cup").json()
+        self.assertEqual([p["id"] for p in grown["problem_details"]],
+                         ["hanoi", "thai_time", "sum_even"])
+        self.assertEqual(self.client.get("/api/problems/sum_even").status_code, 200)
+        both = self.client.get("/api/contests/hide-cup/announcements").json()
+        self.assertEqual([a["body"] for a in both["announcements"]],
+                         ["welcome", "q3 added"])
+
+        self.login(ADMIN)
+        self.assertEqual(self.client.delete("/api/contests/hide-cup",
+                                            headers=browser).status_code, 200)
+
     def test_contest_scores_do_not_touch_the_global_board(self):
         self.addCleanup(lambda: self.fake.tables.__setitem__("contests", []))
         # snapshot BEFORE seeding: stats cover every submission in the fake DB

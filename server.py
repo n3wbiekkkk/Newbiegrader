@@ -2419,6 +2419,10 @@ def _norm_ts(value: str, field: str) -> str:
 
 def _contest_public(row: dict, email: str = "", counts: Dict[str, int] | None = None) -> dict:
     cid = row.get("id", "")
+    upcoming = _contest_window(row) == "upcoming"
+    # Before the start, non-admins see neither the problem slugs nor any detail:
+    # the list opens when the contest does. Admins always see everything.
+    show_problems = _is_admin(email) or not upcoming
     return {
         "participants": (counts or {}).get(cid, 0),
         "registered": _is_registered(cid, email) if _registrations_supported() else True,
@@ -2428,7 +2432,8 @@ def _contest_public(row: dict, email: str = "", counts: Dict[str, int] | None = 
         "show_samples": row.get("show_samples", True),
         "hide_from_tasks": row.get("hide_from_tasks", True),
         "status": _contest_window(row),
-        "problems": [_resolve_pid(str(x)) for x in (row.get("problems") or [])],
+        "problems": ([_resolve_pid(str(x)) for x in (row.get("problems") or [])]
+                     if show_problems else []),
     }
 
 
@@ -2606,14 +2611,15 @@ def contest_detail(request: Request, cid: str) -> dict:
     admin = _is_admin(email)
     started = _contest_started(contest)
     problems = []
-    # Upcoming contest: non-admins must not see the problem list before start.
+    # Upcoming contest: non-admins see no problem list at all before the start
+    # (not even slugs) — it opens when the contest does. Editing the contest
+    # mid-round (upsert with more problems) takes effect immediately.
     show_details = admin or started
     for pid in listed:
         p = PROBLEMS.get(pid)
         if p is None:
             continue
         if not show_details:
-            problems.append({"id": p.pid, "no": p.no})
             continue
         problems.append({"id": p.pid, "no": p.no, "title": p.title,
                          "difficulty": p.difficulty,
@@ -2702,6 +2708,74 @@ async def unregister_contest(request: Request, cid: str) -> dict:
         raise _db_err(e)
     _reg_count_cache["at"] = 0.0
     return {"ok": True, "registered": False, "participants": await asyncio.to_thread(lambda: _registration_count(cid))}
+
+
+# ---- contest announcements (clarifications during a round) ----
+# Admins post; everyone reads once the contest has started (running/ended).
+# Before the start only admins see them — announcements may hint at problems.
+_annc_table_ok: Dict[str, bool] = {"value": True}
+
+
+def _announcements_supported() -> bool:
+    return _sb is not None and _annc_table_ok["value"]
+
+
+def _annc_note_missing_table(e: Exception) -> None:
+    if "contest_announcements" in str(e) and _annc_table_ok["value"]:
+        _annc_table_ok["value"] = False
+        print("[web] contest_announcements table missing — announcements off; "
+              "run supabase/schema.sql", file=sys.stderr)
+
+
+@app.get("/api/contests/{cid}/announcements")
+def contest_announcements(request: Request, cid: str) -> dict:
+    contest = _contest_or_404(cid)
+    user = request.session.get("user") or {}
+    email = user.get("email", "")
+    admin = _is_admin(email)
+    if _sb is None:
+        return {"configured": False, "announcements": []}
+    if not admin and not _contest_started(contest):
+        return {"configured": True, "announcements": [], "locked": True}
+    if not _announcements_supported():
+        return {"configured": True, "announcements": [], "unconfigured": True}
+    try:
+        res = _sb.table("contest_announcements").select(
+            "id,body,created_at").eq("contest_id", cid).order(
+            "created_at").limit(200).execute()
+    except Exception as e:
+        _annc_note_missing_table(e)
+        if not _annc_table_ok["value"]:
+            return {"configured": True, "announcements": [], "unconfigured": True}
+        raise _db_err(e)
+    return {"configured": True, "announcements": [
+        {"id": r.get("id"), "body": r.get("body") or "",
+         "created_at": r.get("created_at")} for r in (res.data or [])]}
+
+
+@app.post("/api/contests/{cid}/announcements")
+async def post_announcement(request: Request, cid: str) -> dict:
+    user = request.session.get("user") or {}
+    if not _is_admin(user.get("email", "")):
+        raise HTTPException(status_code=403, detail="admin only")
+    if _sb is None:
+        raise HTTPException(status_code=404, detail="announcements not configured")
+    await asyncio.to_thread(lambda: _contest_or_404(cid))
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid JSON")
+    text = str(body.get("body", "")).strip()
+    if not (1 <= len(text) <= 2000):
+        raise HTTPException(status_code=400, detail="body must be 1-2000 characters")
+    row = {"id": str(uuid.uuid4()), "contest_id": cid, "body": text,
+           "created_by": user.get("email", "")}
+    try:
+        await asyncio.to_thread(lambda: _sb.table("contest_announcements").insert(row).execute())
+    except Exception as e:
+        _annc_note_missing_table(e)
+        raise _db_err(e)
+    return {"ok": True, "id": row["id"]}
 
 
 # ---- admin: rejudge (A4) + plagiarism (B8) ----

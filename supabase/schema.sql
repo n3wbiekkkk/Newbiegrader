@@ -355,3 +355,22 @@ grant execute on function public.judge_queue_claim(text,integer) to service_role
 grant execute on function public.judge_queue_heartbeat(uuid,text,integer,integer) to service_role;
 grant execute on function public.judge_queue_finish(uuid,text,integer,jsonb,jsonb,text) to service_role;
 grant execute on function public.judge_queue_diagnostics() to service_role;
+
+-- ============================================================================
+-- 2026-10: contest announcements (organizer clarifications during a round).
+-- Admins post via POST /api/contests/{cid}/announcements; everyone reads once
+-- the contest has started (before the start only admins see them, since they
+-- may hint at problems). Missing table = feature off (empty list), never fatal.
+-- Append-only: safe to re-run.
+-- ============================================================================
+
+create table if not exists contest_announcements (
+  id uuid not null primary key,
+  contest_id text not null,
+  body text not null default '',
+  created_by text not null default '',
+  created_at timestamptz not null default now()
+);
+create index if not exists contest_announcements_contest_time
+  on contest_announcements (contest_id, created_at);
+alter table contest_announcements enable row level security;

@@ -181,6 +181,17 @@
       <h3 class="pane-h">โจทย์ในคอนเทสต์</h3>
       <div id="contest-problems" class="dim">—</div>
     </div>
+    <div class="card" style="margin-top:16px">
+      <h3 class="pane-h">ประกาศจากผู้จัด</h3>
+      <div id="contest-annc" class="dim">—</div>
+      <div id="contest-annc-form" class="hidden" style="margin-top:8px">
+        <textarea id="annc-body" rows="2" maxlength="2000" placeholder="ประกาศเพิ่มเติมระหว่างแข่ง..." aria-label="ข้อความประกาศ"></textarea>
+        <div class="submit-row">
+          <button id="annc-post" type="button" class="submit-btn">โพสต์ประกาศ</button>
+          <span id="annc-status" class="dim"></span>
+        </div>
+      </div>
+    </div>
     <div class="card table-card" style="margin-top:16px">
       <h3 class="pane-h" style="padding:16px 16px 0;margin:0">Scoreboard</h3>
       <div id="contest-scoreboard" class="dim" style="padding:16px">—</div>
@@ -469,6 +480,6 @@
 </footer>
 
 <script src="/config.js?v=4"></script>
-<script src="/app.js?v=21"></script>
+<script src="/app.js?v=22"></script>
 </body>
 </html>
