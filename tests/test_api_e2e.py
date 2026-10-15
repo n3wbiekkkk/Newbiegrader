@@ -728,14 +728,17 @@ class ApiE2E(unittest.TestCase):
         self.assertIn(r.status_code, (200, 503), r.text)
 
     def test_admin_overview_reports_queue_state(self):
-        # sync endpoint: it runs in a threadpool, where an event loop must not be
-        # assumed (regression: _queue() raised "no running event loop" -> 500)
+        # async endpoint (DB in threads, never blocks the loop) with queue
+        # monitor fields for the admin banner (alert at >=5 queued).
         self.login(ADMIN)
         r = self.client.get("/api/admin/overview")
         self.assertEqual(r.status_code, 200, r.text)
         body = r.json()
         self.assertIn("jobs", body)
-        self.assertEqual(set(body["jobs"]), {"queued", "running", "queue_depth", "workers"})
+        self.assertEqual(set(body["jobs"]), {"queued", "running", "queue_depth", "workers",
+                                             "queue_max", "queue_alert", "queue_full"})
+        self.assertFalse(body["jobs"]["queue_alert"])
+        self.assertFalse(body["jobs"]["queue_full"])
         self.assertGreaterEqual(body["jobs"]["workers"], 1)
         self.assertGreaterEqual(body["problems"], 40)
         self.assertIn("count_islands", body["system"]["problems_loaded"])

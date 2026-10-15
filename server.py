@@ -36,7 +36,7 @@ from urllib.parse import urlsplit
 from urllib.request import Request as URLRequest
 from urllib.request import urlopen
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
@@ -96,7 +96,7 @@ MAX_CODE_BYTES = 256 * 1024   # 256 KB source cap
 DETAIL_HEAD = 4000            # max chars of detail/diff sent to frontend
 
 # ---- capacity, derived from the host/container this runs in ----
-# Prod is a fractional vCPU container (0.5 CPU / 0.5 GB): judging two submissions
+# Prod is a small container (currently 1 CPU / 1.5 GB): judging two submissions
 # at once, or running 4 tests of one submission in parallel, oversubscribes the
 # core and produces wall-clock TLEs that have nothing to do with the student's
 # code. Everything below is auto-derived from cgroup limits (see grader.cpu_quota
@@ -150,7 +150,8 @@ print(f"[web] host: cpu={CPU_QUOTA:g} core(s), ram={RAM_MB}MB -> "
       f"memory_cap={MEMORY_CAP_MB}MB, queue_max={QUEUE_MAX}, "
       f"overall_timeout={OVERALL_TIMEOUT:g}s, "
       f"sample_interval={grader.SAMPLE_INTERVAL * 1000:g}ms, "
-      f"compile_timeout={grader.COMPILE_TIMEOUT:g}s", file=sys.stderr)
+      f"compile_timeout={grader.COMPILE_TIMEOUT:g}s, "
+      f"role={GRADER_ROLE}, queue_mode={QUEUE_MODE}", file=sys.stderr)
 
 # ---- async judging (B9) ----
 # The HTTP path never judges inline: it queues a job and the client polls
@@ -336,6 +337,18 @@ def _cached(key: str, ttl: int, build):
         return hit[1]
     val = build()  # raises HTTPException on DB error: never cached
     _cache[key] = (now, val)
+    return val
+
+
+async def _acached(key: str, ttl: int, build):
+    """Async twin of _cached: cache check on the loop, blocking DB build in a
+    thread so aggregate endpoints never stall judging or other requests."""
+    now = time.monotonic()
+    hit = _cache.get(key)
+    if hit and now - hit[0] < ttl:
+        return hit[1]
+    val = await asyncio.to_thread(build)  # raises HTTPException: never cached
+    _cache[key] = (time.monotonic(), val)
     return val
 
 
@@ -1017,7 +1030,7 @@ def _submission_row(job: dict, result: dict) -> dict:
         "results": _stored_result(job, result).get("results", []),
         "code": (job.get("source") or "")[:200000],
         "detail": (result.get("compile_error", "") or "")[:4000],
-        "tests_hash": grader.tests_hash(prob) if prob else "",
+        "tests_hash": _tests_hash(prob.pid) if prob else "",
         "grader_version": grader.GRADER_VERSION,
         "kind": job.get("kind", "submit"),
         "contest_id": job.get("contest_id"),
@@ -1788,6 +1801,29 @@ for _pid, _p in sorted(PROBLEMS.items()):
             PROBLEMS_BY_NO[_p.no] = _pid
 
 
+# tests_hash is stable for the process lifetime: PROBLEMS are loaded once at
+# boot and never mutated, so hash every problem exactly once instead of
+# re-hashing ~60 test sets on every GET /api/version (prod p95 fix).
+_TESTS_HASH_CACHE: Dict[str, str] = {}
+
+
+def _tests_hash(pid: str) -> str:
+    """Cached grader.tests_hash (same value, no per-request SHA256 over tests)."""
+    hit = _TESTS_HASH_CACHE.get(pid)
+    if hit is not None:
+        return hit
+    prob = PROBLEMS.get(pid)
+    if prob is None:
+        return ""
+    hashed = grader.tests_hash(prob)
+    _TESTS_HASH_CACHE[pid] = hashed
+    return hashed
+
+
+for _pid in PROBLEMS:
+    _TESTS_HASH_CACHE[_pid] = grader.tests_hash(PROBLEMS[_pid])
+
+
 def _resolve_pid(token: str) -> str:
     """Accept either the slug (`hanoi`) or its number (`19`) — students share
     links like /#/task/19 and the CLI shows numbers."""
@@ -1939,7 +1975,7 @@ def run_submission(prob: grader.Problem, ext: str, source: str,
                 "build_warnings": "", "compile_error": str(e)[:4000],
                 "limits": limits, "memory_capped": limits["capped"],
                 "checker": prob.checker, "results": [], "samples": len(samples),
-                "tests_hash": grader.tests_hash(prob),
+                "tests_hash": _tests_hash(prob.pid),
                 "grader_version": grader.GRADER_VERSION,
             }
         except SystemExit as e:
@@ -1988,7 +2024,7 @@ def run_submission(prob: grader.Problem, ext: str, source: str,
             "checker": prob.checker,
             "results": _redact_results(results, reveal),
             "samples": len(samples), "hidden_tests": total - len(samples),
-            "tests_hash": grader.tests_hash(prob),
+            "tests_hash": _tests_hash(prob.pid),
             "grader_version": grader.GRADER_VERSION,
         }
 
@@ -2051,7 +2087,9 @@ def _run_playground(prob: Optional[grader.Problem], ext: str, source: str,
 
 
 @app.get("/api/health")
-def health(request: Request) -> dict:
+def health(request: Request, response: Response) -> dict:
+    # Per-user body (admin sees hidden ids): private cache only, never shared.
+    response.headers["Cache-Control"] = "private, max-age=20"
     email = (request.session.get("user") or {}).get("email", "")
     if _is_admin(email):
         ids = sorted(PROBLEMS.keys())
@@ -2070,7 +2108,9 @@ def languages() -> dict:
 
 
 @app.get("/api/problems")
-def list_problems(request: Request, sort: str = "") -> dict:
+def list_problems(request: Request, response: Response, sort: str = "") -> dict:
+    # Per-user body (admin sees hidden rows): private cache only, never shared.
+    response.headers["Cache-Control"] = "private, max-age=20"
     order = {"easy": 0, "medium": 1, "hard": 2}
     sort_by_difficulty = (sort or "").strip().lower() == "difficulty"
     email = (request.session.get("user") or {}).get("email", "")
@@ -2111,7 +2151,7 @@ def problem_detail(request: Request, pid: str) -> dict:
             "tests": len(p.tests), "statement": p.description,
             "samples": list(p.samples),
             "hidden_tests": len(p.tests) - len(p.samples),
-            "tests_hash": grader.tests_hash(p),
+            "tests_hash": _tests_hash(p.pid),
             "has_pdf": (grader.PROBLEMS_DIR / p.pid / "statement.pdf").is_file()}
     if _is_admin(email):
         body["hidden"] = p.pid in _hidden_pids()
@@ -2234,7 +2274,7 @@ async def submit(
         "problem": prob.pid, "language": language, "filename": filename,
         "contest_id": contest_obj["id"] if contest_obj else None,
         "source": source, "reveal": _effective_reveal(contest_obj, email, prob.pid),
-        "tests_hash": grader.tests_hash(prob),
+        "tests_hash": _tests_hash(prob.pid),
         "grader_version": grader.GRADER_VERSION,
     })
     return {
@@ -2270,12 +2310,15 @@ async def job_status(request: Request, jid: str) -> dict:
 
 
 @app.get("/api/version")
-def version(request: Request) -> dict:
+def version(request: Request, response: Response) -> dict:
     """Which judging semantics + test set a verdict comes from."""
+    # Hashes are precomputed at boot (_TESTS_HASH_CACHE); this stays O(n) dict
+    # build with no SHA256. Per-user body: private cache only, never shared.
+    response.headers["Cache-Control"] = "private, max-age=20"
     email = (request.session.get("user") or {}).get("email", "")
     admin = _is_admin(email)
     hidden = _hidden_pids()
-    tests = {pid: {"hash": grader.tests_hash(p), "tests": len(p.tests),
+    tests = {pid: {"hash": _tests_hash(pid), "tests": len(p.tests),
                    "samples": list(p.samples)}
              for pid, p in sorted(PROBLEMS.items())
              if admin or pid not in hidden}
@@ -2336,25 +2379,32 @@ async def run_custom(
 
 
 @app.get("/api/history")
-def history(request: Request, problem: Optional[str] = None, limit: int = 20,
-            mine: bool = False) -> dict:
+async def history(request: Request, problem: Optional[str] = None, limit: int = 20,
+                  mine: bool = False) -> dict:
     if _sb is None:
         return {"configured": False, "submissions": []}
     limit = max(1, min(limit, 100))
     u = request.session.get("user") or {}
     email = u.get("email", "")
-    try:
+    # Filter values are resolved on the loop; only the blocking HTTP call
+    # to Supabase runs in a thread so the event loop stays responsive.
+    wanted_problem = _resolve_pid(problem) if problem else ""
+    if mine and not email:
+        raise HTTPException(status_code=401, detail="login required")
+
+    def _fetch():
         q = _sb.table("submissions").select(
             "id,created_at,problem,language,name,filename,verdict,accepted,passed,"
             "total,score,counts,contest_id"
         ).order("created_at", desc=True).limit(limit)
-        if problem:
-            q = q.eq("problem", _resolve_pid(problem))
+        if wanted_problem:
+            q = q.eq("problem", wanted_problem)
         if mine:
-            if not email:
-                raise HTTPException(status_code=401, detail="login required")
             q = q.eq("user_email", email)
-        res = q.execute()
+        return q.execute()
+
+    try:
+        res = await asyncio.to_thread(_fetch)
     except HTTPException:
         raise
     except Exception as e:
@@ -2368,7 +2418,7 @@ def history(request: Request, problem: Optional[str] = None, limit: int = 20,
 
 
 @app.get("/api/history/{sid}")
-def history_detail(request: Request, sid: str) -> dict:
+async def history_detail(request: Request, sid: str) -> dict:
     user = request.session.get("user") or {}
     email = user.get("email") or ""
     if not email:
@@ -2376,7 +2426,8 @@ def history_detail(request: Request, sid: str) -> dict:
     if _sb is None:
         raise HTTPException(status_code=404, detail="history not configured")
     try:
-        res = _sb.table("submissions").select("*").eq("id", sid).limit(1).execute()
+        res = await asyncio.to_thread(
+            lambda: _sb.table("submissions").select("*").eq("id", sid).limit(1).execute())
     except Exception as e:
         raise _db_err(e)
     rows = res.data or []
@@ -2479,13 +2530,14 @@ _boot_time = time.monotonic()
 
 
 @app.get("/api/admin/overview")
-def admin_overview(request: Request) -> dict:
+async def admin_overview(request: Request) -> dict:
     user = request.session.get("user") or {}
     if not _is_admin(user.get("email", "")):
         raise HTTPException(status_code=403, detail="admin only")
     if _sb is None:
         raise HTTPException(status_code=404, detail="supabase not configured")
-    try:
+
+    def _fetch():
         n_users = (_sb.table("users").select("email", count="exact").limit(1)
                    .execute().count) or 0
         subs = _sb.table("submissions").select(
@@ -2494,6 +2546,10 @@ def admin_overview(request: Request) -> dict:
         reps = _sb.table("reports").select("status", count="exact").limit(1).execute()
         rep_open = _sb.table("reports").select("id", count="exact").eq(
             "status", "open").limit(1).execute().count or 0
+        return n_users, subs, reps, rep_open
+
+    try:
+        n_users, subs, reps, rep_open = await asyncio.to_thread(_fetch)
     except Exception as e:
         raise _db_err(e)
     per_problem: dict = {}
@@ -2508,12 +2564,14 @@ def admin_overview(request: Request) -> dict:
     listed, contest_hidden = _contest_problem_sets()
     if QUEUE_MODE == "database":
         try:
-            counts = _sb.rpc("judge_queue_diagnostics", {}).execute().data
+            counts = await asyncio.to_thread(
+                lambda: _sb.rpc("judge_queue_diagnostics", {}).execute().data)
         except Exception as e:
             raise HTTPException(status_code=503, detail="judge database unavailable") from e
     else:
         counts = {status: sum(j.get("status") == status for j in _jobs.values())
                   for status in ("queued", "running")}
+    queued = int(counts.get("queued", 0) or 0)
     return {
         "problems": len(PROBLEMS),
         "problems_public": len(PROBLEMS) - len(hidden),
@@ -2532,8 +2590,12 @@ def admin_overview(request: Request) -> dict:
         "reports_total": (reps.count if reps else 0) or 0,
         "jobs": {
             **counts,
-            "queue_depth": counts.get("queued", 0),
+            "queue_depth": queued,
             "workers": JUDGE_WORKERS,
+            "queue_max": QUEUE_MAX,
+            # Ops monitor: frontend shows a banner when true.
+            "queue_alert": queued >= 5,
+            "queue_full": queued >= QUEUE_MAX,
         },
         "per_problem": per_problem,
         "recent": [{k: r.get(k) for k in
@@ -2545,12 +2607,12 @@ def admin_overview(request: Request) -> dict:
 
 
 @app.get("/api/leaderboard")
-def leaderboard(limit: int = 50) -> dict:
+async def leaderboard(limit: int = 50) -> dict:
     if _sb is None:
         return {"configured": False, "top": []}
     limit = max(1, min(limit, 100))
-    return _cached(f"leaderboard:{limit}", CACHE_TTL["leaderboard"],
-                   lambda: _build_leaderboard(limit))
+    return await _acached(f"leaderboard:{limit}", CACHE_TTL["leaderboard"],
+                          lambda: _build_leaderboard(limit))
 
 
 def _leaderboard_names(emails: List[str], from_view: Dict[str, str]) -> Dict[str, str]:
@@ -2565,16 +2627,27 @@ def _leaderboard_names(emails: List[str], from_view: Dict[str, str]) -> Dict[str
     for email, name in (from_view or {}).items():
         if email and (name or "").strip():
             names[email] = name.strip()[:50]
-    try:  # newest non-empty submission name per user (bounded, newest first)
-        res = _sb.table("submissions").select("user_email,name").order(
-            "created_at", desc=True).limit(2000).execute()
-        for r in res.data or []:
-            u = r.get("user_email") or ""
-            n = (r.get("name") or "").strip()
-            if u and n and u not in names:
-                names[u] = n[:50]
-    except Exception as e:
-        print(f"[web] leaderboard name scan failed: {e}", file=sys.stderr)
+    # The view already carries the newest non-empty name per user: only scan
+    # submissions for users the view could not name (legacy rows predate the
+    # name column). Early-exit once every missing user is resolved instead of
+    # always reading 2000 rows.
+    missing = {e for e in emails if e and e not in names}
+    if missing:
+        try:  # newest non-empty submission name per user (bounded, newest first)
+            res = _sb.table("submissions").select("user_email,name").order(
+                "created_at", desc=True).limit(2000).execute()
+            for r in res.data or []:
+                u = r.get("user_email") or ""
+                if u not in missing:
+                    continue
+                n = (r.get("name") or "").strip()
+                if u and n:
+                    names[u] = n[:50]
+                    missing.discard(u)
+                    if not missing:
+                        break
+        except Exception as e:
+            print(f"[web] leaderboard name scan failed: {e}", file=sys.stderr)
     try:  # Settings display name wins over anything stored on submissions
         for i in range(0, len(emails), 200):
             chunk = emails[i:i + 200]
@@ -2662,10 +2735,10 @@ def _build_leaderboard(limit: int) -> dict:
 
 
 @app.get("/api/stats")
-def stats() -> dict:
+async def stats() -> dict:
     if _sb is None:
         return {"configured": False, "stats": {}}
-    return _cached("stats", CACHE_TTL["stats"], _build_stats)
+    return await _acached("stats", CACHE_TTL["stats"], _build_stats)
 
 
 def _build_stats() -> dict:
@@ -3162,7 +3235,7 @@ async def admin_rejudge(request: Request) -> dict:
                 "contest_id": row.get("contest_id"),
                 "target_id": row.get("id"),
                 "reveal": _reveal_for_row(row.get("contest_id"), user.get("email", "")),
-                "tests_hash": grader.tests_hash(PROBLEMS[pid]),
+                "tests_hash": _tests_hash(pid),
                 "grader_version": grader.GRADER_VERSION,
             }, track_active=False)
         except HTTPException as e:

@@ -1270,7 +1270,12 @@ async function loadOverview() {
       ["คิวค้าง", j.queue_depth ?? 0], ["workers", j.workers ?? 0],
     ];
     stats.classList.remove("dim");
-    stats.innerHTML = tiles.map(([k, v]) =>
+    const queueWarn = (j.queue_full || j.queue_alert)
+      ? `<div class="notice" role="alert">คิวตรวจค้าง ${esc(String(j.queue_depth ?? j.queued ?? 0))} งาน` +
+        `${j.queue_full ? " (คิวเต็ม — ผู้ใช้ใหม่จะได้ 503)" : " — งานใหม่อาจรอนาน"}` +
+        `</div>`
+      : "";
+    stats.innerHTML = queueWarn + tiles.map(([k, v]) =>
       `<div class="stat"><div class="stat-num">${esc(String(v))}</div><div class="stat-label">${esc(k)}</div></div>`).join("");
     const pp = d.per_problem || {};
     probs.classList.remove("dim");
@@ -1491,7 +1496,9 @@ $("template-btn").onclick = () => {
 };
 
 /* ---------------- judging jobs (async submit) ---------------- */
-const POLL_MS = 700;
+// Base poll 1200ms (was 700ms): prod is 1 vCPU and every poll is a proxied
+// HTTPS round trip; backoff below stretches it further while queued.
+const POLL_MS = 1200;
 const POLL_MIN_MS = 500;
 const POLL_CAP_MS = 5000;
 const POLL_MAX_MS = 4 * 60 * 1000;
@@ -1537,9 +1544,15 @@ async function pollJob(jid, onTick) {
     const remaining = POLL_MAX_MS - (Date.now() - t0);
     if (remaining <= 0) throw timeout();
     // Back off while unchanged; react promptly to execution or queue progress.
+    // A deep queue means each submission waits minutes: poll slower so status
+    // checks don't add load to the judging host.
     const progressed = previous && (job.status !== previous.status ||
       (job.status === "queued" && Number(job.queued_ahead) < Number(previous.queued_ahead)));
     delay = !previous || progressed ? POLL_MS : Math.min(POLL_CAP_MS, delay * 1.5);
+    if (job.status === "queued" && (Number(job.queued_ahead) || 0) > 0) {
+      delay = Math.max(delay, 1500);
+      if ((Number(job.queued_ahead) || 0) >= 5) delay = Math.max(delay, 3000);
+    }
     previous = job;
     // Jitter prevents clients submitted together from polling in lockstep.
     const jittered = Math.max(POLL_MIN_MS, Math.min(POLL_CAP_MS, delay * (0.8 + Math.random() * 0.4)));
@@ -2751,6 +2764,16 @@ function saveProblemsCache() {
   } catch (e) { /* ignore */ }
 }
 
+function problemsCacheAgeMs() {
+  try {
+    const raw = localStorage.getItem(PROBLEMS_CACHE_KEY);
+    if (!raw) return Infinity;
+    const c = JSON.parse(raw);
+    if (!c || !Array.isArray(c.data) || typeof c.t !== "number") return Infinity;
+    return Date.now() - c.t;
+  } catch (e) { return Infinity; }
+}
+
 async function refreshProblems() {
   try {
     const d = await apiGet("/api/problems");
@@ -2926,9 +2949,13 @@ async function init() {
     return;
   }
 
-  // 3. one parallel batch instead of sequential round trips
+  // 3. one parallel batch instead of sequential round trips.
+  // The problems list changes rarely (server caches 20s, browser cache 1h):
+  // skip the refetch when the cache was just written (<60s) to save a
+  // proxied round trip on every navigation/reload.
+  const problemsFresh = problemsCacheAgeMs() < 60 * 1000 && state.problems.length > 0;
   const [data] = await Promise.all([
-    apiGet("/api/problems").catch(() => null),
+    problemsFresh ? Promise.resolve(null) : apiGet("/api/problems").catch(() => null),
     refreshMe(),
   ]);
   // Session cookie gone but remember-me alive (browser cleanup, expiry):
