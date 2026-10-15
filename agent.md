@@ -41,6 +41,7 @@ problems/<id>/       # statement.pdf statement.md config.json (มี samples) t
 examples/*_ref.py    # reference solution ประจำข้อ (single source of truth ตอน gen test)
 tests/               # E2E API test (unittest + fake_supabase) — ไม่แตะ production
 tools/validate_problem.py   # ตรวจโจทย์ทั้งชุดก่อน commit
+tools/problem_visibility.py # ตั้ง hidden/public ของโจทย์ (โจทย์ชุดคอนเทสต์) + list
 tools/plagiarism.py  # ตรวจการก็อปโค้ด (winnowing; มี self-test ใน __main__)
 tools/check_frontend.js     # เช็ค $("id") ใน app.js ว่ามีจริงใน index.html/template
 tools/make_statement_tex.py # สร้าง statement.pdf (LaTeX)
@@ -53,7 +54,6 @@ agent.md             # ไฟล์นี้
 ```
 
 ## 4. Workflow: เพิ่มโจทย์จาก PDF
-
 1. ผู้ใช้วาง PDF ใน `problems/` → ย้ายเป็น `problems/<id>/statement.pdf` (id ตัวเล็ก, `git mv`)
    - ถ้าโจทย์มาเป็น **ภาษาอังกฤษหรือ text (ไม่มี PDF ไทย)**: แปล/เขียน `statement.md` ไทยเอง
      (เก็บเรื่องราวครบ ห้ามย่อ) แล้วทำ `statement.pdf` ด้วย LaTeX เท่านั้น:
@@ -75,6 +75,20 @@ agent.md             # ไฟล์นี้
 
 checker ที่มี: `token` (default), `exact` (byte, ผ่อน newline ท้ายไฟล์), `float` (tolerance 1e-6),
 `decimal2` (เฉพาะ mana: ทศนิยม 2 ตำแหน่งเท่านั้น แต่ไม่หัก space เกิน) — ดู `check_decimal2` ใน `grader.py`
+
+### 4.1 โจทย์ชุดคอนเทสต์ (ผู้ใช้ "โยนไฟล์ให้" แล้วไม่ต้องโชว์ในหน้า Task)
+
+- สร้างโจทย์เหมือนปกติทุกอย่าง (ข้อ 4) แล้วตั้ง `"hidden": true` ใน `config.json`
+  (ใช้ `python3 tools/problem_visibility.py --id <pid> --hidden`, ดูรายการ: `--list`, ยกเลิก: `--public`)
+- ผลลัพธ์: `/api/problems`, `/api/health`, `/api/version`, `/api/history` (สาธารณะ) และ `POST /api/submit`
+  **ไม่โชว์/ไม่รับ** ข้อนั้นให้ผู้ใช้ทั่วไป — เข้าถึงได้ทางหน้าคอนเทสต์ที่ระบุโจทย์นั้น และทางหน้า admin
+  (ป้าย `hidden` ใน `/api/problems` ตอนเรียกด้วยสิทธิ์ admin + ส่วน "โจทย์ชุดคอนเทสต์" ใน `/api/admin/overview`)
+- ทางเลือกที่ไม่ต้องแตะไฟล์โจทย์: สร้างคอนเทสต์ด้วยติ๊ก "ซ่อนโจทย์ชุดนี้จากหน้า Task"
+  (`contests.hide_from_tasks` default true) → โจทย์ทุกข้อในคอนเทสต์นั้นหายจาก Tasks จนกว่าจะลบ/ปิดติ๊ก
+- ต้องรัน `supabase/schema.sql` ให้มีคอลัมน์ `hide_from_tasks` ก่อน (ถ้าไม่มี API จะตอบ 400 พร้อมบอกให้รัน)
+- validator จะขึ้นท้ายบรรทัด OK ว่า `[contest-only: ไม่โชว์ในหน้า Task]` (ใช้ `--list` ก็เห็น)
+- **เพิ่ม endpoint ใหม่ที่เสิร์ฟโจทย์/เทสต์/ไฟล์ statement ต้องใช้ `_visible_problem_or_404(pid, email)`
+  เสมอ** ไม่ใช่ `_problem_or_404` ไม่งั้นโจทย์ชุดคอนเทสต์รั่ว (มีเทสต์คุมอยู่: `test_contest_problems_are_hidden_from_the_task_list`)
 
 ## 5. Workflow: แก้ frontend (`static/`)
 

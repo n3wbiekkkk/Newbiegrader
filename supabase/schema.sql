@@ -149,3 +149,14 @@ select problem,
        count(distinct user_email) filter (where accepted) as solvers
 from submissions
 group by problem;
+
+-- ============================================================================
+-- Migration 2026-10b: contest problems can be kept out of the public Task list.
+-- Append-only: safe to re-run.
+-- ============================================================================
+
+-- true = problems listed in this contest disappear from the public /api/problems
+-- (Tasks/Archive) for everyone except admins; they stay listed inside the
+-- contest page and in the admin panel. Problems with "hidden": true in their
+-- config.json are always kept out of the public list.
+alter table contests add column if not exists hide_from_tasks boolean not null default true;
