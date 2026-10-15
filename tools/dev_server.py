@@ -12,8 +12,9 @@ anywhere: the data lives in the process and disappears when you stop it.
 
 Notes:
 
-* Google sign-in is unavailable here (it needs a publicly reachable redirect URI).
-  Use the email + password form with any address you like.
+* Google sign-in needs its redirect URI registered in the identity provider's
+  console; add `http://localhost:8000/api/auth/callback` there if you want it
+  locally. Otherwise use the email + password form with any address you like.
 * The judge runs your code with resource limits, but macOS does not enforce every
   one of them and the privilege drop needs Linux+root, so treat it as unsandboxed.
 * To use a real database instead, run `python3 server.py` with SUPABASE_URL and
