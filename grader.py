@@ -17,6 +17,7 @@ import concurrent.futures
 import difflib
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -107,14 +108,31 @@ RAM_MB = ram_limit_mb()
 
 # Peak-RSS sampling: 5 ms is free on a real core, wasteful on a 0.5 vCPU box
 # (a thread waking 200x/s competes with the very process being measured).
-SAMPLE_INTERVAL = float(os.environ.get("GRADER_SAMPLE_INTERVAL", "0") or 0) or (
-    0.005 if CPU_QUOTA > 1 else 0.02)
+def _env_float(name: str, default: float) -> float:
+    try:
+        raw = os.environ.get(name, "")
+        if raw is None or str(raw).strip() == "" or str(raw).strip() == "0":
+            return default
+        val = float(str(raw).strip())
+        if math.isnan(val) or math.isinf(val):
+            return default
+        return val
+    except (ValueError, TypeError):
+        return default
+
+
+SAMPLE_INTERVAL = _env_float("GRADER_SAMPLE_INTERVAL",
+                             0.005 if CPU_QUOTA > 1 else 0.02)
 # Compiling C++ with -O2 can take tens of seconds on a fractional core.
-COMPILE_TIMEOUT = float(os.environ.get("GRADER_COMPILE_TIMEOUT", "0") or 0) or (
-    60.0 if CPU_QUOTA > 1 else 90.0)
+COMPILE_TIMEOUT = _env_float("GRADER_COMPILE_TIMEOUT",
+                             60.0 if CPU_QUOTA > 1 else 90.0)
 # The web runner sets this from its admitted slot budget. CLI toolchains such
 # as javac keep their previous memory policy unless explicitly supervised.
-COMPILE_MEMORY_MB = 0
+# 0 = unsandboxed compile (default: compiler toolchains legitimately fork+exec
+# cc1/as/ld, and an NPROC sandbox breaks them on busy machines — verified
+# EAGAIN with 300+ user processes on dev; keep 0 unless the host is a quiet
+# container). Set GRADER_COMPILE_MEMORY_MB=512 to sandbox compiles in prod.
+COMPILE_MEMORY_MB = int(_env_float("GRADER_COMPILE_MEMORY_MB", 0))
 
 # ---------- colors ----------
 class C:
@@ -182,10 +200,27 @@ def load_problem(pid: str) -> Problem:
     cfg_path = pdir / "config.json"
     cfg = json.loads(cfg_path.read_text(encoding="utf-8")) if cfg_path.exists() else {}
     title = cfg.get("title", pid)
-    time_limit = float(cfg.get("time_limit", 1.0))
-    memory_limit = int(cfg.get("memory_limit", 256))
+    try:
+        time_limit = float(cfg.get("time_limit", 1.0))
+    except (TypeError, ValueError):
+        raise SystemExit(f"Problem '{pid}' has invalid time_limit ({cfg.get('time_limit')!r})")
+    if not (time_limit > 0 and time_limit <= 60) or math.isnan(time_limit) or math.isinf(time_limit):
+        raise SystemExit(f"Problem '{pid}' has invalid time_limit ({time_limit!r}): must be 0 < x <= 60")
+    try:
+        memory_limit = int(cfg.get("memory_limit", 256))
+    except (TypeError, ValueError):
+        raise SystemExit(f"Problem '{pid}' has invalid memory_limit ({cfg.get('memory_limit')!r})")
+    if memory_limit < 16 or memory_limit > 4096:
+        raise SystemExit(f"Problem '{pid}' has invalid memory_limit ({memory_limit}): must be 16..4096")
     checker = cfg.get("checker", "token")
-    tolerance = float(cfg.get("tolerance", 1e-6))
+    if checker not in ("token", "exact", "float", "decimal2"):
+        raise SystemExit(f"Problem '{pid}' has unknown checker ({checker!r}): must be token|exact|float|decimal2")
+    try:
+        tolerance = float(cfg.get("tolerance", 1e-6))
+    except (TypeError, ValueError):
+        raise SystemExit(f"Problem '{pid}' has invalid tolerance ({cfg.get('tolerance')!r})")
+    if math.isnan(tolerance) or math.isinf(tolerance) or tolerance < 0 or tolerance > 1:
+        raise SystemExit(f"Problem '{pid}' has invalid tolerance ({tolerance!r}): must be 0..1")
     difficulty = str(cfg.get("difficulty", ""))
     _tags = cfg.get("tags", [])
     tags = [str(t) for t in _tags] if isinstance(_tags, list) else []
@@ -365,12 +400,15 @@ class CompileError(Exception):
 
 
 def _compile(command: list[str], workdir: Path):
-    from judge_runner import run_bounded
+    try:
+        from judge_runner import run_bounded
+    except ImportError as e:
+        raise CompileError(f"judge runner unavailable: {e}")
     if os.name == "posix" and COMPILE_MEMORY_MB:
         command = [sys.executable, str(Path(__file__).resolve()), "--compile-sandbox",
                    str(COMPILE_MEMORY_MB), str(COMPILE_TIMEOUT), "--", *command]
     result = run_bounded(command, "", COMPILE_TIMEOUT, output_limit=OUTPUT_LIMIT_BYTES,
-                         env=judge_env(), cwd=str(workdir))
+                         env=judge_env(str(workdir)), cwd=str(workdir))
     if result.reason == "timeout":
         raise CompileError("compilation exceeded its time limit")
     if result.reason == "ole":
@@ -403,6 +441,17 @@ def check_float(expected: str, actual: str, tol: float) -> bool:
     for x, y in zip(et, at):
         try:
             fx, fy = float(x), float(y)
+            # nan/inf must match exactly: nan never equals a number, and
+            # inf must have the same sign. Without this, `nan > tol` is
+            # False so `1.0 vs nan` wrongly passes as AC.
+            if math.isnan(fx) or math.isnan(fy):
+                if not (math.isnan(fx) and math.isnan(fy)):
+                    return False
+                continue
+            if math.isinf(fx) or math.isinf(fy):
+                if fx != fy:
+                    return False
+                continue
             if abs(fx - fy) > tol and abs(fx - fy) / max(1.0, abs(fx), abs(fy)) > tol:
                 return False
         except ValueError:
@@ -629,15 +678,17 @@ def build_limits(memory_mb: int, time_limit: float, sandbox: bool = True):
                 except (ValueError, OSError):
                     pass
             try:
-                cpu = int(time_limit) + 2
+                cpu = int(math.ceil(float(time_limit) + 1))
+                if cpu < 1:
+                    cpu = 1
                 resource.setrlimit(resource.RLIMIT_CPU, (cpu, cpu))
-            except (ValueError, OSError):
+            except (ValueError, OSError, TypeError):
                 pass
             for lim, val in (
                 ("RLIMIT_NPROC", 64),      # กัน fork bomb
                 ("RLIMIT_FSIZE", 64 * 1024 * 1024),  # กันเขียนไฟล์ถล่ม disk
                 ("RLIMIT_CORE", 0),        # ไม่เอา core dump
-                ("RLIMIT_NOFILE", 64),     # กันเปิด fd ถล่ม (pipe+stdlib ใช้ไม่ถึง)
+                ("RLIMIT_NOFILE", 64),     # กันเปิด fd ถล่ม (pinned by test_judge_runner)
             ):
                 try:
                     resource.setrlimit(getattr(resource, lim), (val, val))
@@ -646,16 +697,33 @@ def build_limits(memory_mb: int, time_limit: float, sandbox: bool = True):
         except ImportError:
             pass
         # Sandbox: ตัด network + ลดสิทธิ์เป็น nobody (เฉพาะ Linux ที่รันเป็น
-        # root คือ prod Docker). Best-effort: ล้มเหลวตรงไหนก็ใช้ rlimits ต่อ.
+        # root คือ prod Docker). ไม่เงียบ: ถ้าขอ sandbox แต่ไม่ได้ root จะเตือน
+        # ผ่าน stderr เพื่อให้ operator รู้ว่าเหลือแค่ rlimits.
         # หมายเหตุ: workdir/binary ต้อง chmod 0755 ฝั่ง parent ก่อน (ดู run_one)
+        # แต่ต้องเป็น tmp ของ job เองเท่านั้น ห้าม chmod dir ต้นฉบับอย่าง examples/
+        if sandbox and not (sys.platform.startswith("linux") and os.geteuid() == 0):
+            try:
+                print("[grader] WARNING: sandbox requested but not running as root on Linux; "
+                      "continuing with rlimits only", file=sys.stderr)
+            except OSError:
+                pass
         try:
             if sandbox and sys.platform.startswith("linux") and os.geteuid() == 0:
                 try:  # detached net namespace ก่อน drop root (ต้องใช้ CAP_SYS_ADMIN)
                     import ctypes
-                    libc = ctypes.CDLL("libc.so.6", use_errno=True)
-                    libc.unshare(0x40000000)  # CLONE_NEWNET
-                except Exception:
-                    pass
+                    try:
+                        libc = ctypes.CDLL("libc.so.6", use_errno=True)
+                    except OSError:
+                        libc = ctypes.CDLL("libc.musl-x86_64.so.1", use_errno=True)
+                    ret = libc.unshare(0x40000000)  # CLONE_NEWNET
+                    if ret != 0:
+                        errno = ctypes.get_errno()
+                        print(f"[grader] WARNING: unshare(CLONE_NEWNET) failed "
+                              f"(ret={ret}, errno={errno}); continuing with rlimits",
+                              file=sys.stderr)
+                except Exception as e:
+                    print(f"[grader] WARNING: network namespace unavailable ({e}); "
+                          f"continuing with rlimits", file=sys.stderr)
                 try:
                     import grp
                     gid = grp.getgrnam("nogroup").gr_gid
@@ -671,13 +739,17 @@ def build_limits(memory_mb: int, time_limit: float, sandbox: bool = True):
                     # group root ซึ่งยังมีสิทธิ์บน problems/ ผ่าน group bits ได้
                     # ต้อง setgroups([]) ก่อน ไม่เช่นนั้น nobody ยังอ่าน test ได้
                     os.setgroups([])
-                except OSError:
-                    pass
+                except OSError as e:
+                    print(f"[grader] WARNING: setgroups failed ({e})", file=sys.stderr)
                 try:
                     os.setgid(gid)
                     os.setuid(uid)
-                except OSError:
-                    pass
+                except OSError as e:
+                    # ลดสิทธิ์ไม่สำเร็จ = ยังเป็น root: หยุดดีกว่าเสี่ยงรันโค้ด
+                    # อันตรายด้วยสิทธิ์สูง ภายใต้แค่ rlimits
+                    print(f"[grader] FATAL: setgid/setuid failed ({e}); refusing to run",
+                          file=sys.stderr)
+                    os._exit(125)
         except Exception:
             pass
         try:
@@ -687,17 +759,36 @@ def build_limits(memory_mb: int, time_limit: float, sandbox: bool = True):
     return _fn
 
 
-def judge_env() -> dict:
+def judge_env(tmpdir: str | None = None) -> dict:
     """Minimal env for untrusted code: compilers/runtimes work, secrets never leak."""
     path = os.environ.get("PATH", "/usr/bin:/bin:/usr/local/bin")
+    tmp = tmpdir or "/tmp"
     env = {"PATH": path, "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8",
-           "HOME": "/tmp", "TMPDIR": "/tmp"}
+           "HOME": tmp, "TMPDIR": tmp,
+           # แยก cache ของ toolchain ต่อ job กันชนกันบน /tmp ที่ใช้ร่วมกัน
+           "GOCACHE": tmp, "GOPATH": tmp, "GOMODCACHE": tmp,
+           "CARGO_HOME": tmp, "RUSTUP_HOME": tmp,
+           "GRADLE_USER_HOME": tmp, "MAVEN_OPTS": f"-Djava.io.tmpdir={tmp}"}
     if os.name == "nt":
         # Windows runtimes need SystemRoot; MinGW otherwise chooses Windows/ as
         # its temp directory, which ordinary users cannot write.
         env.update({name: os.environ[name] for name in ("SystemRoot", "WINDIR", "TEMP", "TMP")
                     if name in os.environ})
     return env
+
+
+def _is_job_tmp(path: str) -> bool:
+    """True ถ้าเป็น tmp ของ job เอง (chmod ได้) ไม่ใช่ dir ต้นฉบับอย่าง examples/."""
+    try:
+        rp = str(Path(path).resolve())
+    except OSError:
+        return False
+    tmpbase = tempfile.gettempdir()
+    try:
+        tmpbase = str(Path(tmpbase).resolve())
+    except OSError:
+        tmpbase = "/tmp"
+    return rp == tmpbase or rp.startswith(tmpbase.rstrip("/") + "/")
 
 
 def _run_cwd(cmd: list[str]) -> str | None:
@@ -723,15 +814,23 @@ def run_one(cmd: list[str], stdin_data: str, time_limit: float, memory_mb: int,
     Returns dict(stdout, stderr, wall, cpu, peak_mb, returncode, killed, reason).
     reason in {'', 'timeout', 'ole', 'oom', 'sigkill', 'signal:*', 'spawn-fail'}.
     `lang` only affects the enforced memory ceiling (see LANG_MEM_HEADROOM_MB).
+    NOTE: cpu มาจาก RUSAGE_CHILDREN ซึ่งเป็น global ต่อ process จึงแม่นเฉพาะ
+    jobs=1 ถ้ารันเทสต์ขนานกันค่าอาจมั่ว/ติดลบ ให้ถือเป็นค่าประมาณเท่านั้น
     """
-    from judge_runner import run_bounded
+    try:
+        from judge_runner import run_bounded
+    except ImportError as e:
+        return {"stdout": "", "stderr": f"judge runner unavailable: {e}", "wall": 0.0,
+                "cpu": 0.0, "peak_mb": 0.0, "returncode": -1, "killed": False,
+                "reason": "spawn-fail"}
     start = time.perf_counter()
     cpu0 = _cpu_children()
     cwd = _run_cwd(cmd)
     try:  # sandbox child (nobody) ต้อง traverse cwd + exec binary ได้
-        if cwd:
+        # chmod เฉพาะ tmp ของ job เอง ห้ามแตะ dir ต้นฉบับ (เช่น examples/)
+        if cwd and _is_job_tmp(cwd):
             os.chmod(cwd, 0o755)
-        if cmd and os.path.isfile(cmd[0]):
+        if cmd and os.path.isfile(cmd[0]) and _is_job_tmp(str(Path(cmd[0]).parent)):
             os.chmod(cmd[0], 0o755)
     except OSError:
         pass
@@ -754,7 +853,7 @@ def run_one(cmd: list[str], stdin_data: str, time_limit: float, memory_mb: int,
 
     try:
         result = run_bounded(command, stdin_data, time_limit,
-                             output_limit=OUTPUT_LIMIT_BYTES, env=judge_env(), cwd=cwd,
+                             output_limit=OUTPUT_LIMIT_BYTES, env=judge_env(cwd), cwd=cwd,
                              sample=sample)
     except OSError as e:
         return {"stdout": "", "stderr": str(e), "wall": time.perf_counter() - start,
@@ -762,12 +861,36 @@ def run_one(cmd: list[str], stdin_data: str, time_limit: float, memory_mb: int,
                 "reason": "spawn-fail"}
     out, err, rc = result.stdout, result.stderr, result.returncode
     reason = result.reason
-    if not reason and rc < 0:
-        reason = "sigkill" if -rc == signal.SIGKILL else f"signal:{_sig_name(rc)}"
-    if not reason and err and any(word in err for word in OOM_WORDS):
-        reason = "oom"
-    return {"stdout": out, "stderr": err, "wall": time.perf_counter() - start,
-            "cpu": _cpu_children() - cpu0, "peak_mb": peak,
+    if not reason and rc is not None and rc < 0:
+        try:
+            sig = -rc
+            if sig == signal.SIGKILL:
+                reason = "sigkill"
+            elif sig == signal.SIGXCPU:
+                reason = "timeout"
+            elif sig == signal.SIGXFSZ:
+                reason = "ole"
+            else:
+                reason = f"signal:{_sig_name(rc)}"
+        except (ValueError, OSError, AttributeError):
+            reason = f"signal:{_sig_name(rc)}"
+    if not reason and err:
+        # จับ OOM ด้วย substring อย่างเดียวมี false positive (เช่นโปรแกรม
+        # print คำว่า "out of memory" เอง) ต้องมีสัญญาณประกอบ: ถูก SIGKILL/
+        # exit 137 หรือ peak สูงจริง
+        lowered = err.lower()
+        if any(word.lower() in lowered for word in OOM_WORDS):
+            if rc in (-9, 137) or peak > (memory_mb * 0.5 if memory_mb else 0):
+                reason = "oom"
+    wall_s = time.perf_counter() - start
+    try:
+        cpu_s = _cpu_children() - cpu0
+    except (ValueError, OSError):
+        cpu_s = 0.0
+    if cpu_s < 0:
+        cpu_s = 0.0
+    return {"stdout": out, "stderr": err, "wall": wall_s,
+            "cpu": cpu_s, "peak_mb": peak,
             "returncode": None if reason == "timeout" else rc,
             "killed": reason in ("timeout", "ole"), "reason": reason}
 
@@ -783,7 +906,14 @@ def judge_test(cmd, tc: TestCase, prob: Problem, strict: bool,
         return "TLE", wall, cpu, mem, "", ""
     if reason == "ole":
         return "OLE", wall, cpu, mem, f"stdout > {OUTPUT_LIMIT_BYTES // (1024 * 1024)}MB", ""
-    if reason in ("oom", "sigkill"):
+    if reason == "oom":
+        tail = (res["stderr"] or "")[-500:] if verbose else ""
+        return "MLE", wall, cpu, mem, tail or "killed (likely OOM)", ""
+    if reason == "sigkill":
+        # SIGKILL เกิดได้ 2 ทาง: OOM killer (MLE) กับ timeout killer (TLE)
+        # ถ้า wall ชน time limit ให้เป็น TLE อย่าเหมาเป็น MLE
+        if wall >= prob.time_limit * 0.9:
+            return "TLE", wall, cpu, mem, "", ""
         tail = (res["stderr"] or "")[-500:] if verbose else ""
         return "MLE", wall, cpu, mem, tail or "killed (likely OOM)", ""
     if over_memory_limit(prob.memory_limit, mem, lang):

@@ -249,11 +249,13 @@ def _bust_cache() -> None:
 _cors_origins = [o.strip() for o in
                  os.environ.get("GRADER_CORS_ORIGINS", "").split(",") if o.strip()]
 if _cors_origins:
+    if any(o == "*" for o in _cors_origins):
+        raise RuntimeError("GRADER_CORS_ORIGINS must not be '*': use explicit origins")
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_cors_origins,
         allow_methods=["GET", "POST", "PUT", "DELETE"],
-        allow_headers=["*"],
+        allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
         allow_credentials=True,  # kept for non-proxied hosts; proxied prod is same-origin
     )
 
@@ -296,7 +298,12 @@ async def _store_submission(row: dict, target_id: Optional[str] = None) -> Optio
             return _sb.table("submissions").insert(row).execute()
         except Exception as first:
             # Pre-2026-10 database: the extra traceability columns do not exist
-            # yet. Drop them rather than losing the submission.
+            # yet. Drop them rather than losing the submission. Retry ONLY for
+            # missing-column errors; network/timeouts must not double-insert.
+            msg = str(first)
+            if "42703" not in msg and "undefined_column" not in msg.lower() and \
+               "could not find" not in msg.lower() and "column" not in msg.lower():
+                raise
             slim = {k: v for k, v in row.items() if k not in _NEW_SUB_COLS}
             if len(slim) == len(row):
                 raise
@@ -365,6 +372,27 @@ def _iso_now() -> str:
 _quota_hits: Dict[str, collections.deque] = {}
 
 
+def _evict_oldest(store: dict, now: float, window: int) -> None:
+    """Evict only the oldest entries instead of clearing the whole map.
+
+    Clearing everything on overflow lets an attacker flush victims' quotas
+    with garbage keys; evicting oldest bounds memory without that bypass.
+    """
+    if len(store) <= 20000:
+        return
+    # Drop ~10% oldest-touched keys (cheapest LRU approximation for dicts).
+    try:
+        keys = list(store.keys())
+        for k in keys[:2000]:
+            dq = store.get(k)
+            if not dq or (dq and now - dq[-1] > window):
+                store.pop(k, None)
+        while len(store) > 20000:
+            store.pop(next(iter(store)), None)
+    except (StopIteration, RuntimeError):
+        pass
+
+
 def _quota_check(kind: str, key: str, quota: tuple) -> None:
     limit, window = quota
     if limit <= 0 or not key:
@@ -374,8 +402,9 @@ def _quota_check(kind: str, key: str, quota: tuple) -> None:
     dq = _quota_hits.get(key)
     if dq is None:
         dq = _quota_hits[key] = collections.deque()
-        if len(_quota_hits) > 20000:  # bound memory on a public host
-            _quota_hits.clear()
+        _evict_oldest(_quota_hits, now, window)
+        dq = _quota_hits.get(key)
+        if dq is None:
             dq = _quota_hits[key] = collections.deque()
     while dq and now - dq[0] > window:
         dq.popleft()
@@ -431,6 +460,12 @@ async def validate_runtime() -> None:
     if GRADER_ROLE != "combined" and (QUEUE_MODE != "database" or
                                       not os.environ.get("SESSION_SECRET", "").strip()):
         raise RuntimeError("separated roles require database mode and stable SESSION_SECRET")
+    workers_env = (os.environ.get("WEB_CONCURRENCY") or
+                   os.environ.get("UVICORN_WORKERS") or "1").strip()
+    if QUEUE_MODE == "local" and workers_env not in ("", "1"):
+        raise RuntimeError("local queue mode requires a single process "
+                           "(in-memory queue/quota are per-process): use "
+                           "GRADER_QUEUE_MODE=database with multiple workers")
     if QUEUE_MODE == "database":
         await _queue_rpc("diagnostics")  # verify migration and database before accepting traffic
 
@@ -764,9 +799,10 @@ async def _run_job(job: dict) -> None:
     except asyncio.TimeoutError:
         await _finish_job(jid, error="judging timed out (server overloaded?)")
         return
-    except Exception as e:
+    except Exception:
         traceback.print_exc()
-        await _finish_job(jid, error=f"internal judging error: {e}")
+        # Never echo exception text to the client: it can contain paths/env.
+        await _finish_job(jid, error="internal judging error")
         return
     if "error" in result:
         await _finish_job(jid, error=str(result["error"]))
@@ -856,11 +892,71 @@ def _contest_or_404(cid: str) -> dict:
     return dict(rows[0])
 
 
+def _parse_bool(value: object, default: bool = True) -> bool:
+    """Strict bool parsing: string 'false'/'0'/'no' must not become True."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    s = str(value).strip().lower()
+    if s in ("1", "true", "yes", "y", "on"):
+        return True
+    if s in ("0", "false", "no", "n", "off"):
+        return False
+    return default
+
+
 def _reveal_for(contest: Optional[dict], email: str) -> str:
     if _is_admin(email):
         return REVEAL_ALL
     if contest and _contest_window(contest) == "running" and contest.get("show_samples") is False:
         return REVEAL_NONE
+    return REVEAL_SAMPLES
+
+
+def _live_hidden_pids(exclude_cid: str = "") -> set:
+    """Problems inside a *running* contest with show_samples=false.
+
+    Submissions for these problems must not reveal samples even as practice
+    (contest='' path), and /sample/* must refuse to serve them.
+    """
+    hidden: set = set()
+    if _sb is None:
+        return hidden
+    try:
+        for row in _all_contest_rows():
+            if exclude_cid and row.get("id") == exclude_cid:
+                continue
+            if _contest_window(row) != "running":
+                continue
+            if row.get("show_samples") is False:
+                for x in (row.get("problems") or []):
+                    try:
+                        hidden.add(_resolve_pid(str(x)))
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+    return hidden
+
+
+def _effective_reveal(contest: Optional[dict], email: str, pid: str) -> str:
+    """Reveal level for one submission, including the practice path.
+
+    Practice submits (contest=None) to a problem that is currently hidden
+    inside a live show_samples=false contest must still get REVEAL_NONE.
+    """
+    if _is_admin(email):
+        return REVEAL_ALL
+    if contest is not None:
+        return _reveal_for(contest, email)
+    try:
+        if pid and pid in _live_hidden_pids():
+            return REVEAL_NONE
+    except Exception:
+        pass
     return REVEAL_SAMPLES
 
 
@@ -900,7 +996,16 @@ def _is_registered(cid: str, email: str) -> bool:
         return False
     if not _registrations_supported():
         return True          # legacy behaviour: no registration table, no gate
-    return email in _registered_emails(cid)
+    if _sb is None:
+        return False
+    try:
+        # Single-row EXISTS-style check: no 5000-row download per submit.
+        res = _sb.table("contest_registrations").select("user_email").eq(
+            "contest_id", cid).eq("user_email", email).limit(1).execute()
+        return bool(res.data)
+    except Exception as e:
+        _register_note_missing_table(e)
+        return False
 
 
 def _registration_count(cid: str) -> int:
@@ -1027,7 +1132,7 @@ async def auth_callback(request: Request, code: str = "", state: str = "", error
         print(f"[web] oauth exchange failed: {e}", file=sys.stderr)
         return RedirectResponse(FRONTEND_URL + "/#/?login=failed", status_code=307)
     request.session["user"] = {
-        "email": info["email"],
+        "email": str(info["email"]).strip().lower(),
         "name": info.get("name") or info["email"],
         "picture": info.get("picture", ""),
     }
@@ -1037,11 +1142,15 @@ async def auth_callback(request: Request, code: str = "", state: str = "", error
     # Hand the session to the frontend origin via one-time token, so the
     # session cookie is set first-party (works even when browsers block
     # third-party cookies). /api/auth/finish is proxied by the frontend host.
-    token = _login_signer.dumps({"user": request.session["user"]})
+    token = _login_signer.dumps({"user": request.session["user"],
+                                 "jti": secrets.token_urlsafe(16)})
     request.session.clear()
     return RedirectResponse(
         FRONTEND_URL + "/api/auth/finish?" + urlencode({"token": token, "next": next_url}),
         status_code=307)
+
+
+_used_login_jti: Dict[str, float] = {}
 
 
 @app.get("/api/auth/finish")
@@ -1049,14 +1158,26 @@ def auth_finish(request: Request, token: str = "", next: str = "#/"):
     try:
         data = _login_signer.loads(token, max_age=300)
         user = data.get("user") or {}
-        if not user.get("email"):
+        jti = str(data.get("jti") or "")
+        if not user.get("email") or not jti:
             raise ValueError("no email")
+        now = time.monotonic()
+        # One-time use: replaying a logged/proxied token must fail.
+        if jti in _used_login_jti:
+            raise ValueError("reused token")
+        # Prune old entries (bound memory).
+        for k in list(_used_login_jti.keys())[:1000]:
+            if now - _used_login_jti.get(k, 0) > 600:
+                _used_login_jti.pop(k, None)
+        if len(_used_login_jti) > 10000:
+            _used_login_jti.pop(next(iter(_used_login_jti)), None)
+        _used_login_jti[jti] = now
     except Exception:
         return RedirectResponse(FRONTEND_URL + "/#/?login=failed", status_code=307)
     if not next.startswith("#/"):
         next = "#/"
     request.session["user"] = {
-        "email": user["email"],
+        "email": str(user["email"]).strip().lower(),
         "name": user.get("name") or user["email"],
         "picture": user.get("picture", ""),
     }
@@ -1136,7 +1257,17 @@ def _check_rate_limit(request: Request, email: str = "") -> None:
                             headers={"Retry-After": "60"})
     _login_tries[ip].append(time.monotonic())
     if len(_login_tries) > 10000:
-        _login_tries.clear()
+        # Evict oldest-idle IPs only; never clear the whole map (quota bypass).
+        try:
+            now = time.monotonic()
+            for k in list(_login_tries.keys())[:1000]:
+                hits = _login_tries.get(k) or []
+                if not hits or now - hits[-1] > LOGIN_WINDOW_S:
+                    _login_tries.pop(k, None)
+            while len(_login_tries) > 10000:
+                _login_tries.pop(next(iter(_login_tries)), None)
+        except (StopIteration, RuntimeError):
+            pass
     email = (email or "").strip().lower()
     if not email:
         return
@@ -1149,7 +1280,16 @@ def _check_rate_limit(request: Request, email: str = "") -> None:
             headers={"Retry-After": str(retry)})
     hits.append(time.monotonic())
     if len(_account_tries) > 10000:
-        _account_tries.clear()
+        try:
+            now = time.monotonic()
+            for k in list(_account_tries.keys())[:1000]:
+                h = _account_tries.get(k) or []
+                if not h or now - h[-1] > ACCOUNT_WINDOW_S:
+                    _account_tries.pop(k, None)
+            while len(_account_tries) > 10000:
+                _account_tries.pop(next(iter(_account_tries)), None)
+        except (StopIteration, RuntimeError):
+            pass
 
 
 def _clear_account_attempts(email: str) -> None:
@@ -1168,12 +1308,30 @@ def _hash_password(pw: str) -> str:
 
 def _verify_password(pw: str, stored: str) -> bool:
     try:
-        _, iters, salt_hex, dk_hex = stored.split("$")
+        _, iters_s, salt_hex, dk_hex = stored.split("$")
+        iters = int(iters_s)
+        # Cap iterations from DB: a planted huge value would otherwise DoS
+        # the worker with a single login attempt.
+        if iters < 1000 or iters > 1_000_000:
+            return False
+        if len(salt_hex) > 128 or len(dk_hex) > 256:
+            return False
         dk = hashlib.pbkdf2_hmac("sha256", pw.encode(),
-                                 bytes.fromhex(salt_hex), int(iters))
+                                 bytes.fromhex(salt_hex), iters)
         return hmac.compare_digest(dk.hex(), dk_hex)
     except Exception:
         return False
+
+
+def _dummy_verify(pw: str) -> None:
+    """Constant-time dummy check so unknown emails cost as much as real ones.
+
+    Prevents timing/user-enumeration via response time differences.
+    """
+    try:
+        hashlib.pbkdf2_hmac("sha256", pw.encode(), b"\x00" * 16, PBKDF2_ITERS)
+    except Exception:
+        pass
 
 
 def _require_users_table() -> None:
@@ -1194,6 +1352,10 @@ async def auth_register(request: Request) -> dict:
     _check_rate_limit(request, email)
     if not EMAIL_RE.match(email):
         raise HTTPException(status_code=400, detail="bad email")
+    if _is_admin(email):
+        # Admin emails must be created out-of-band, never via open registration:
+        # otherwise anyone can claim an admin address and inherit its rights.
+        raise HTTPException(status_code=403, detail="this email is reserved")
     if not (PW_MIN <= len(password) <= PW_MAX):
         raise HTTPException(status_code=400, detail="password must be 8-128 characters")
     try:
@@ -1230,9 +1392,13 @@ async def auth_password(request: Request) -> dict:
         raise _db_err(e)
     rows = res.data or []
     user = rows[0] if rows else None
+    if not user:
+        # Same cost as a real check: don't let timing reveal valid emails.
+        await asyncio.to_thread(_dummy_verify, password)
+        raise HTTPException(status_code=401, detail="wrong email or password")
     ok = await asyncio.to_thread(_verify_password, password,
                                  (user or {}).get("password_hash", ""))
-    if not user or not ok:
+    if not ok:
         raise HTTPException(status_code=401, detail="wrong email or password")
     _clear_account_attempts(email)
     request.session["user"] = {"email": user["email"],
@@ -1361,7 +1527,7 @@ def _contest_problem_sets() -> tuple:
     hidden: set = set()
     if _sb is not None:
         try:
-            for row in _contest_rows():
+            for row in _all_contest_rows():
                 pids = {_resolve_pid(str(x)) for x in (row.get("problems") or [])}
                 all_pids |= pids
                 if row.get("hide_from_tasks", True):
@@ -1398,7 +1564,7 @@ def _contests_listing(pid: str) -> List[dict]:
     if _sb is None:
         return []
     try:
-        return [row for row in _contest_rows()
+        return [row for row in _all_contest_rows()
                 if pid in {_resolve_pid(str(x)) for x in (row.get("problems") or [])}]
     except Exception as e:
         print(f"[web] contest lookup for {pid} failed: {e}", file=sys.stderr)
@@ -1657,6 +1823,10 @@ def problem_sample(request: Request, pid: str, name: str) -> dict:
     if name not in grader.sample_names(p):
         raise HTTPException(status_code=404,
                             detail="not a public sample (hidden tests are not served)")
+    # Live contest with show_samples=false reveals nothing, even via samples.
+    if not _is_admin(email) and p.pid in _live_hidden_pids():
+        raise HTTPException(status_code=404,
+                            detail="not a public sample (hidden tests are not served)")
     for tc in p.tests:
         if tc.name == name:
             return {"problem": p.pid, "test": tc.name,
@@ -1685,10 +1855,11 @@ async def _read_source(language: str, code: str,
     filename: Optional[str] = None
     if file is not None and file.filename:
         filename = file.filename
-        raw = await file.read()
+        # Cap the read itself: don't buffer an unbounded upload into RAM.
+        raw = await file.read(MAX_CODE_BYTES + 1)
         if len(raw) > MAX_CODE_BYTES:
             raise HTTPException(status_code=413,
-                                detail=f"file too large ({len(raw)} bytes, max {MAX_CODE_BYTES})")
+                                detail=f"file too large (max {MAX_CODE_BYTES} bytes)")
         if not raw.strip():
             raise HTTPException(status_code=400, detail="uploaded file is empty")
         try:
@@ -1756,7 +1927,7 @@ async def submit(
         "kind": "submit", "user_email": email, "name": display[:50],
         "problem": prob.pid, "language": language, "filename": filename,
         "contest_id": contest_obj["id"] if contest_obj else None,
-        "source": source, "reveal": _reveal_for(contest_obj, email),
+        "source": source, "reveal": _effective_reveal(contest_obj, email, prob.pid),
         "tests_hash": grader.tests_hash(prob),
         "grader_version": grader.GRADER_VERSION,
     })
@@ -1778,7 +1949,8 @@ async def job_status(request: Request, jid: str) -> dict:
     if job is None:
         raise HTTPException(status_code=404, detail="unknown job")
     if job.get("user_email") != user["email"] and not _is_admin(user["email"]):
-        raise HTTPException(status_code=403, detail="not your job")
+        # Same 404 as unknown: don't confirm other users' job ids exist.
+        raise HTTPException(status_code=404, detail="unknown job")
     status = job.get("status", "queued")
     return {
         "id": jid, "status": status, "problem": job.get("problem", ""),
@@ -2048,12 +2220,13 @@ def admin_overview(request: Request) -> dict:
         ],
         "users": n_users,
         "submissions": len(subs),
+        "submissions_truncated": len(subs) >= 500,
         "accepted": sum(1 for r in subs if r.get("accepted")),
         "reports_open": rep_open,
         "reports_total": (reps.count if reps else 0) or 0,
         "jobs": {
             **counts,
-            "queue_depth": counts["queued"],
+            "queue_depth": counts.get("queued", 0),
             "workers": JUDGE_WORKERS,
         },
         "per_problem": per_problem,
@@ -2264,6 +2437,35 @@ def _contest_rows() -> List[dict]:
     return res.data or []
 
 
+def _all_contest_rows() -> List[dict]:
+    """Every contest, paginated: policy decisions (visibility/reveal) must not
+    silently drop contests past the 200-row listing limit."""
+    rows: List[dict] = []
+    offset = 0
+    page = 500
+    guard = 0
+    while guard < 20:  # hard cap 10k contests, far above realistic use
+        guard += 1
+        try:
+            q = _sb.table("contests").select("*").order("starts_at", desc=True)
+            if hasattr(q, "range"):
+                res = q.range(offset, offset + page - 1).execute()
+            elif hasattr(q, "offset"):
+                res = q.offset(offset).limit(page).execute()
+            else:
+                return _contest_rows()
+            batch = res.data or []
+            rows.extend(batch)
+            if len(batch) < page:
+                break
+            offset += page
+        except Exception:
+            if not rows:
+                raise
+            break
+    return rows
+
+
 @app.get("/api/contests")
 def list_contests(request: Request) -> dict:
     if _sb is None:
@@ -2313,8 +2515,8 @@ async def upsert_contest(request: Request) -> dict:
     row = {
         "id": cid, "title": title, "starts_at": starts, "ends_at": ends,
         "problems": problems, "freeze_minutes": freeze,
-        "show_samples": bool(body.get("show_samples", True)),
-        "hide_from_tasks": bool(body.get("hide_from_tasks", True)),
+        "show_samples": _parse_bool(body.get("show_samples", True), True),
+        "hide_from_tasks": _parse_bool(body.get("hide_from_tasks", True), True),
         "created_by": user["email"],
     }
     try:
@@ -2404,9 +2606,14 @@ def contest_detail(request: Request, cid: str) -> dict:
     admin = _is_admin(email)
     started = _contest_started(contest)
     problems = []
+    # Upcoming contest: non-admins must not see the problem list before start.
+    show_details = admin or started
     for pid in listed:
         p = PROBLEMS.get(pid)
         if p is None:
+            continue
+        if not show_details:
+            problems.append({"id": p.pid, "no": p.no})
             continue
         problems.append({"id": p.pid, "no": p.no, "title": p.title,
                          "difficulty": p.difficulty,
@@ -2526,9 +2733,12 @@ async def admin_rejudge(request: Request) -> dict:
     budget = min(REJUDGE_MAX, max(0, QUEUE_MAX - depth))
     if budget == 0:
         return {"queued": 0, "skipped": len(ids), "jobs": []}
+    over_budget = 0
     if limit > budget:
         limit = budget
-    ids = ids[:budget]
+    if len(ids) > budget:
+        over_budget = len(ids) - budget
+        ids = ids[:budget]
     cols = "id,problem,language,filename,name,user_email,code,contest_id"
     try:
         if ids:
@@ -2544,6 +2754,19 @@ async def admin_rejudge(request: Request) -> dict:
         raise _db_err(e)
     queued: List[str] = []
     skipped: List[str] = []
+    # Cache contests once: rejudged rows keep their original contest's policy,
+    # so a live show_samples=false contest stays REVEAL_NONE.
+    _contest_cache: Dict[str, Optional[dict]] = {}
+    def _reveal_for_row(cid: object, requester: str) -> str:
+        if not cid:
+            return REVEAL_SAMPLES
+        ckey = str(cid)
+        if ckey not in _contest_cache:
+            try:
+                _contest_cache[ckey] = _contest_or_404(ckey)
+            except HTTPException:
+                _contest_cache[ckey] = None
+        return _reveal_for(_contest_cache[ckey], requester)
     for row in res.data or []:
         pid = row.get("problem", "")
         lang = row.get("language", "")
@@ -2557,7 +2780,8 @@ async def admin_rejudge(request: Request) -> dict:
                 "name": row.get("name") or "", "problem": pid, "language": lang,
                 "filename": row.get("filename"), "source": code,
                 "contest_id": row.get("contest_id"),
-                "target_id": row.get("id"), "reveal": REVEAL_SAMPLES,
+                "target_id": row.get("id"),
+                "reveal": _reveal_for_row(row.get("contest_id"), user.get("email", "")),
                 "tests_hash": grader.tests_hash(PROBLEMS[pid]),
                 "grader_version": grader.GRADER_VERSION,
             }, track_active=False)
@@ -2567,7 +2791,8 @@ async def admin_rejudge(request: Request) -> dict:
             skipped.append(str(row.get("id")))
             continue
         queued.append(job["id"])
-    return {"queued": len(queued), "skipped": len(skipped), "jobs": queued}
+    skipped_count = len(skipped) + over_budget
+    return {"queued": len(queued), "skipped": skipped_count, "jobs": queued}
 
 
 def _plagiarism_module():
@@ -2599,8 +2824,14 @@ def admin_plagiarism(request: Request, problem: str = "",
     mod = _plagiarism_module()
     if mod is None:
         raise HTTPException(status_code=501, detail="tools/plagiarism.py not available")
-    threshold = min(max(float(threshold), 0.05), 1.0)
-    limit = max(2, min(int(limit), 600))
+    try:
+        threshold = min(max(float(threshold), 0.05), 1.0)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="threshold must be a number 0.05..1.0")
+    try:
+        limit = max(2, min(int(limit), 600))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="limit must be an integer 2..600")
     try:
         res = _sb.table("submissions").select(
             "id,name,user_email,language,code,created_at").eq(
@@ -2613,6 +2844,17 @@ def admin_plagiarism(request: Request, problem: str = "",
     pairs = mod.similar_pairs(rows, threshold=threshold)
     return {"problem": problem, "threshold": threshold, "scanned": len(rows),
             "pairs": pairs[:200]}
+
+
+@app.get("/api/{path:path}")
+async def api_unknown(path: str) -> dict:
+    """Unknown /api/* must be JSON 404, never the SPA index.html.
+
+    The static mount below (html=True) serves index.html for any unknown path;
+    without this guard a mistyped API URL returns 200 HTML and clients fail
+    with a JSON parse error instead of a clear 404.
+    """
+    raise HTTPException(status_code=404, detail="unknown api endpoint")
 
 
 app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
