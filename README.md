@@ -12,35 +12,37 @@ history, plagiarism analysis and administrative tooling.
 ## What it provides
 
 - **Real limits, not estimates.** Wall-clock timeout plus `RLIMIT_CPU`; `RLIMIT_AS`/`RLIMIT_DATA` per
-  test with sampled peak RSS deciding the verdict. Interpreted runtimes get a documented memory
-  allowance (Python and Node ×2.5, Java ×3) so students are judged on their algorithm, not on the
-  interpreter's object overhead; C, C++, Go and Rust are held to the declared limit.
-  Verdicts: `AC`, `WA`, `TLE`, `MLE`, `OLE`, `RE`, `CE`.
+  test, with the measured peak memory deciding the verdict. Interpreted runtimes get a documented
+  memory allowance (×2.5, more for stack-based runtimes) so students are judged on their algorithm
+  rather than on their runtime's per-value overhead, while compiled languages are held to the declared
+  limit. Verdicts: `AC`, `WA`, `TLE`, `MLE`, `OLE`, `RE`, `CE`.
 - **Undisclosed tests.** Only the samples declared in `config.json` are shown; ten to eighteen hidden
   tests per problem decide the score. Hidden input, expected output and diffs never leave the server.
 - **Asynchronous judging.** `POST /api/submit` returns `202` with a job id; workers drain a durable
   queue. A reload, a navigation or a restart does not lose a run or its verdict.
-- **Contests, history, leaderboards.** Codeforces-style windows with registration, score freeze and
-  score isolation from the global ranking; per-problem statistics; winnowing plagiarism detection.
+- **Contests, history, leaderboards.** Timed rounds with registration, a score freeze for
+  non-administrators, and contest points isolated from the permanent ranking; per-problem statistics;
+  winnowing similarity detection over submitted code.
 - **A frontend that keeps the student's work.** Drafts autosaved per problem, Tab/Shift+Tab indentation,
-  `Cmd/Ctrl+Enter` to submit, Thai verdict wording, WCAG AA contrast in both themes.
+  `Cmd/Ctrl+Enter` to submit, verdicts and dates in Thai, WCAG AA contrast in both themes.
 
 ## Stack
 
-FastAPI and Uvicorn on the server; a dependency-free Python standard-library judging engine
-(`grader.py`); a vanilla HTML/CSS/JS frontend with **no build step**; Supabase (PostgreSQL) for
-history, statistics and contests; judging in disposable child processes under `rlimit` isolation.
+A small ASGI web framework and server on the back end (pinned in `requirements.txt`); a dependency-free
+Python standard-library judging engine (`grader.py`); a vanilla HTML/CSS/JS frontend with **no build
+step**; an optional hosted SQL database for history, statistics and contests; judging in disposable
+child processes under `rlimit` isolation.
 
 ```mermaid
 graph LR
   B["Browser<br/>static/ · vanilla JS hash SPA"] -->|"/api/*"| P["Edge proxy<br/>functions/api/[[proxy]].js"]
-  P --> S["server.py<br/>FastAPI + session cookie"]
+  P --> S["server.py<br/>HTTP API + session cookie"]
   S -->|"202 + job_id"| B
   S -->|"enqueue"| Q[("judge_jobs<br/>+ asyncio.Queue")]
   W["judge workers<br/>JUDGE_WORKERS tasks"] --> Q
   W --> G["grader.py<br/>prepare_command → judge_test"]
   G --> X["child process<br/>rlimits · setuid nobody · no network"]
-  W --> DB[("Supabase<br/>service_role only")]
+  W --> DB[("hosted SQL database<br/>privileged key, server-side only")]
   S --> DB
 ```
 
@@ -51,8 +53,9 @@ pip3 install -r requirements.txt
 python3 server.py                 # http://127.0.0.1:8000, serves the API and static/
 ```
 
-Browsing problems and using the CLI need neither an account nor a database. A Supabase project (run
-`supabase/schema.sql`) is required only for history, statistics, leaderboards and contests.
+Browsing problems and using the CLI need neither an account nor a database. A hosted SQL database —
+apply the schema script shipped in the repository — is required only for history, statistics,
+leaderboards and contests.
 
 The judge also runs standalone:
 
@@ -71,14 +74,15 @@ python3 tools/validate_problem.py          # 47 problems: config, tests, samples
 python3 -m unittest discover -s tests -v   # 46 tests, no live server or database needed
 ```
 
-The same sequence runs in CI on every push and pull request to `main`.
+The same sequence runs in continuous integration on every push and pull request to `main`.
 
 ## Deployment
 
-Backend: the `Dockerfile` image (`python:3.11-slim` with `gcc`/`g++`) on a Docker host —
-`git push <backend-remote> HEAD:deploy`. Frontend: publish `static/` as-is; the bundled
-`functions/api/[[proxy]].js` proxies `/api/*` to the backend under the same origin, so the session
-cookie stays first-party. Bump the `?v=N` stamp whenever a versioned asset changes.
+Backend: build the container image defined in the repository (a Python 3.11 base with a C/C++
+toolchain) and publish it to a container host — `git push <backend-remote> HEAD:deploy`. Frontend:
+publish `static/` as-is; the bundled `functions/api/[[proxy]].js` proxies `/api/*` to the back end
+under the same origin, so the session cookie stays first-party. Bump the `?v=N` stamp whenever a
+versioned asset changes.
 
 ## Contributing
 
@@ -105,9 +109,11 @@ a network requires offering those users the Corresponding Source of the running 
 deployment that source is <https://github.com/sphetpitak-sudo/gradernew>, linked from the footer of
 every page; any other instance must make an equivalent offer.
 
-**Third-party components.** Sarabun (bundled in `tools/fonts`, SIL Open Font License 1.1 —
-`tools/fonts/OFL.txt`); Prompt and JetBrains Mono (loaded from the Google Fonts CDN, OFL 1.1); Python
-and JavaScript dependencies are not vendored.
+**Bundled and linked third-party components.** The Thai typeface used to typeset statement PDFs is
+bundled with the repository and is licensed under the SIL Open Font License 1.1; the licence text
+ships beside the font files (`tools/fonts/OFL.txt`). Two web typefaces are loaded at runtime from a
+public font CDN under the same licence and are not redistributed here. Language-level dependencies are
+pinned in `requirements.txt` and are not vendored into this repository.
 
 **Warranty.** Distributed in the hope that it will be useful, but without any warranty; without even
 the implied warranty of merchantability or fitness for a particular purpose (licence sections 15–16).
