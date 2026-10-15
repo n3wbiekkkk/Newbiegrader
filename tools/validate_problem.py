@@ -307,7 +307,8 @@ def validate_problem(pid: str) -> dict:
         verdicts = []
         slowest = 0.0
         for tc in prob.tests:
-            v, wall, _cpu, _mem, _detail, _actual = grader.judge_test(cmd, tc, prob, False, False)
+            v, wall, _cpu, _mem, _detail, _actual = grader.judge_test(
+                cmd, tc, prob, False, False, grader.detect_language(ref))
             verdicts.append((tc.name, v))
             slowest = max(slowest, wall)
         res["slowest"] = slowest

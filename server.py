@@ -1258,8 +1258,9 @@ def run_submission(prob: grader.Problem, ext: str, source: str,
             return {"error": str(e)}
 
         results: List[dict] = []
+        lang = grader.detect_language(Path("solution" + ext))
         with concurrent.futures.ThreadPoolExecutor(max_workers=JUDGE_JOBS) as ex:
-            futs = [ex.submit(grader.judge_test, cmd, tc, capped, False, False)
+            futs = [ex.submit(grader.judge_test, cmd, tc, capped, False, False, lang)
                     for tc in prob.tests]
             for tc, f in zip(prob.tests, futs):
                 v, wall, cpu, mem, detail, actual = f.result()
@@ -1324,7 +1325,8 @@ def _run_playground(prob: Optional[grader.Problem], ext: str, source: str,
         except SystemExit as e:
             return {"error": str(e)}
         _tl, eff_mem, limits = _effective(prob, time_limit, memory_mb)
-        res = grader.run_one(cmd, stdin_data, time_limit, eff_mem)
+        res = grader.run_one(cmd, stdin_data, time_limit, eff_mem,
+                             grader.detect_language(src))
         reason = res.get("reason", "")
         if reason == "timeout":
             verdict = "TLE"
