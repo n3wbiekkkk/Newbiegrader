@@ -1,0 +1,2 @@
+# Keep problem-statement PDFs out of graphify builds and updates.
+problems/**/*.pdf
