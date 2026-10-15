@@ -44,6 +44,17 @@ THAI_REF = (ROOT / "examples" / "thai_time_ref.py").read_text(encoding="utf-8")
 WRONG = 'print("nope")\n'
 
 
+def _browser_origin() -> str:
+    """Trusted Origin for requests that simulate a browser with a session
+    cookie (the CSRF middleware requires one on unsafe methods)."""
+    from urllib.parse import urlsplit
+    parts = urlsplit(server.FRONTEND_URL)
+    return f"{parts.scheme}://{parts.hostname}"
+
+
+BROWSER = {"Origin": _browser_origin()}
+
+
 def _iso(offset_minutes: int) -> str:
     return (dt.datetime.now(dt.timezone.utc)
             + dt.timedelta(minutes=offset_minutes)).isoformat()
@@ -82,10 +93,12 @@ class ApiE2E(unittest.TestCase):
     def login(self, email: str, name: str = "Tester") -> None:
         self.client.cookies.clear()
         r = self.client.post("/api/auth/register",
-                             json={"email": email, "password": PASSWORD, "name": name})
+                             json={"email": email, "password": PASSWORD, "name": name},
+                             headers=BROWSER)
         if r.status_code == 409:
             r = self.client.post("/api/auth/password",
-                                 json={"email": email, "password": PASSWORD})
+                                 json={"email": email, "password": PASSWORD},
+                                 headers=BROWSER)
         elif r.status_code == 403 and server._is_admin(email):
             # Admin addresses are reserved (never self-registered in prod):
             # seed the account out-of-band, then log in via password.
@@ -96,7 +109,8 @@ class ApiE2E(unittest.TestCase):
                     "email": email, "name": name,
                     "password_hash": server._hash_password(PASSWORD)}).execute()
             r = self.client.post("/api/auth/password",
-                                 json={"email": email, "password": PASSWORD})
+                                 json={"email": email, "password": PASSWORD},
+                                 headers=BROWSER)
         self.assertEqual(r.status_code, 200, r.text)
 
     def submit(self, problem: str, code: str, expect: int = 202,
@@ -104,7 +118,7 @@ class ApiE2E(unittest.TestCase):
         data = {"problem": problem, "language": language, "code": code}
         if contest:
             data["contest"] = contest
-        r = self.client.post("/api/submit", data=data)
+        r = self.client.post("/api/submit", data=data, headers=BROWSER)
         self.assertEqual(r.status_code, expect, r.text)
         return r.json() if r.content else {}
 
@@ -180,7 +194,8 @@ class ApiE2E(unittest.TestCase):
         try:
             self.login("queuefull@example.com")
             r = self.client.post("/api/submit", data={
-                "problem": "thai_time", "language": "python", "code": THAI_REF})
+                "problem": "thai_time", "language": "python", "code": THAI_REF},
+                headers=BROWSER)
             self.assertEqual(r.status_code, 503, r.text)
             self.assertIn("queue", r.json()["detail"])
             self.assertEqual(r.headers.get("Retry-After"), "30")
@@ -256,7 +271,8 @@ class ApiE2E(unittest.TestCase):
             self.login("quota@example.com")
             self.judged("thai_time", THAI_REF)
             r = self.client.post("/api/submit", data={
-                "problem": "thai_time", "language": "python", "code": THAI_REF})
+                "problem": "thai_time", "language": "python", "code": THAI_REF},
+                headers=BROWSER)
             self.assertEqual(r.status_code, 429, r.text)
             self.assertIn("quota", r.json()["detail"])
             self.assertIn("Retry-After", r.headers)
@@ -267,7 +283,8 @@ class ApiE2E(unittest.TestCase):
         self.login(STUDENT_A)
         code = "import sys\nsys.stdout.write(sys.stdin.read().strip().upper())\n"
         r = self.client.post("/api/run", data={
-            "language": "python", "code": code, "input": "abc", "problem": "thai_time"})
+            "language": "python", "code": code, "input": "abc", "problem": "thai_time"},
+            headers=BROWSER)
         self.assertEqual(r.status_code, 200, r.text)
         body = r.json()
         self.assertEqual(body["verdict"], "OK")
@@ -275,12 +292,13 @@ class ApiE2E(unittest.TestCase):
 
         tle = self.client.post("/api/run", data={
             "language": "python", "code": "while True:\n    pass\n",
-            "input": "", "time_limit": "0.2"})
+            "input": "", "time_limit": "0.2"}, headers=BROWSER)
         self.assertEqual(tle.status_code, 200, tle.text)
         self.assertEqual(tle.json()["verdict"], "TLE")
 
         bad = self.client.post("/api/run", data={
-            "language": "python", "code": "print(1)\n", "input": "x" * 1024})
+            "language": "python", "code": "print(1)\n", "input": "x" * 1024},
+            headers=BROWSER)
         self.assertEqual(bad.status_code, 200)
         self.assertEqual(len(bad.json()["stdout"].strip()), 1)
 
@@ -310,7 +328,7 @@ class ApiE2E(unittest.TestCase):
             "id": "test-cup", "title": "Test Cup",
             "starts_at": _iso(-5), "ends_at": _iso(55),
             "problems": ["thai_time"], "freeze_minutes": 60, "show_samples": False,
-            "hide_from_tasks": False})
+            "hide_from_tasks": False}, headers=BROWSER)
         self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual(r.json()["contest"]["status"], "running")
 
@@ -346,20 +364,22 @@ class ApiE2E(unittest.TestCase):
 
         past = self.client.post("/api/contests", json={
             "id": "old-cup", "title": "Old", "starts_at": _iso(-120),
-            "ends_at": _iso(-60), "problems": ["thai_time"]})
+            "ends_at": _iso(-60), "problems": ["thai_time"]}, headers=BROWSER)
         self.assertEqual(past.status_code, 200)
         self.logout_in(STUDENT_A)
         self.submit("thai_time", THAI_REF, expect=403, contest="old-cup")
 
         self.login(ADMIN)
-        self.assertEqual(self.client.delete("/api/contests/old-cup").status_code, 200)
+        self.assertEqual(self.client.delete("/api/contests/old-cup",
+                                            headers=BROWSER).status_code, 200)
         bad = self.client.post("/api/contests", json={
             "id": "bad cup", "starts_at": _iso(0), "ends_at": _iso(10),
-            "problems": ["thai_time"]})
+            "problems": ["thai_time"]}, headers=BROWSER)
         self.assertEqual(bad.status_code, 400)
 
     def register_contest(self, cid: str) -> dict:
-        r = self.client.post(f"/api/contests/{cid}/register", json={})
+        r = self.client.post(f"/api/contests/{cid}/register", json={},
+                             headers=BROWSER)
         self.assertEqual(r.status_code, 200, r.text)
         return r.json()
 
@@ -378,7 +398,8 @@ class ApiE2E(unittest.TestCase):
         before = len(self.fake.rows("submissions"))
 
         self.login(ADMIN)
-        r = self.client.post("/api/admin/rejudge", json={"ids": [sid]})
+        r = self.client.post("/api/admin/rejudge", json={"ids": [sid]},
+                             headers=BROWSER)
         self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual(r.json()["queued"], 1)
         done = self.wait_job(r.json()["jobs"][0])
@@ -474,42 +495,78 @@ class ApiE2E(unittest.TestCase):
             server._account_tries.clear()   # registering consumed one slot
             for _ in range(2):
                 r = self.client.post("/api/auth/password", json={
-                    "email": "rate.limit.a@example.com", "password": "wrongpass123"})
+                    "email": "rate.limit.a@example.com", "password": "wrongpass123"},
+                    headers=BROWSER)
                 self.assertEqual(r.status_code, 401, r.text)
             blocked = self.client.post("/api/auth/password", json={
-                "email": "rate.limit.a@example.com", "password": "testpass123"})
+                "email": "rate.limit.a@example.com", "password": "testpass123"},
+                headers=BROWSER)
             self.assertEqual(blocked.status_code, 429, blocked.text)
             self.assertIn("account", blocked.json()["detail"])
 
             # a different student on the same (shared) network is unaffected
             other = self.client.post("/api/auth/register", json={
-                "email": "rate.limit.b@example.com", "password": "testpass123", "name": "B"})
+                "email": "rate.limit.b@example.com", "password": "testpass123", "name": "B"},
+                headers=BROWSER)
             self.assertEqual(other.status_code, 200, other.text)
 
             # one wrong try then a success resets the counter for that account
             server._account_tries.clear()
             self.client.post("/api/auth/password", json={
-                "email": "rate.limit.a@example.com", "password": "wrongpass123"})
+                "email": "rate.limit.a@example.com", "password": "wrongpass123"},
+                headers=BROWSER)
             ok = self.client.post("/api/auth/password", json={
-                "email": "rate.limit.a@example.com", "password": "testpass123"})
+                "email": "rate.limit.a@example.com", "password": "testpass123"},
+                headers=BROWSER)
             self.assertEqual(ok.status_code, 200, ok.text)
             self.assertNotIn("rate.limit.a@example.com", server._account_tries)
         finally:
             server.ACCOUNT_MAX_TRIES = original
 
+    def test_forged_forwarded_headers_do_not_bypass_ip_limit(self):
+        # Rotating X-Forwarded-For / CF-Connecting-IP must not dodge the
+        # per-network bucket: untrusted peers resolve to the socket peer.
+        original = server.LOGIN_MAX_TRIES
+        server.LOGIN_MAX_TRIES = 3
+        try:
+            self.client.cookies.clear()
+            server._login_tries.clear()
+            for i in range(3):
+                r = self.client.post("/api/auth/password", json={
+                    "email": f"nobody{i}@example.com", "password": "wrongpass123"},
+                    headers={**BROWSER,
+                             "X-Forwarded-For": f"198.51.100.{i}",
+                             "CF-Connecting-IP": "192.0.2.99"})
+                self.assertEqual(r.status_code, 401, r.text)
+            flooded = self.client.post("/api/auth/password", json={
+                "email": "fresh@example.com", "password": "wrongpass123"},
+                headers={**BROWSER, "X-Forwarded-For": "203.0.113.250"})
+            self.assertEqual(flooded.status_code, 429, flooded.text)
+            self.assertIn("network", flooded.json()["detail"])
+            # Forged identities never entered the rate-limit map at all.
+            self.assertNotIn("198.51.100.0", server._login_tries)
+            self.assertNotIn("192.0.2.99", server._login_tries)
+            self.assertNotIn("203.0.113.250", server._login_tries)
+        finally:
+            server.LOGIN_MAX_TRIES = original
+
     def test_admin_endpoints_forbidden_for_students(self):
         self.login(STUDENT_A)
         self.assertEqual(self.client.post("/api/admin/rejudge",
-                                          json={"ids": []}).status_code, 403)
+                                          json={"ids": []},
+                                          headers=BROWSER).status_code, 403)
         self.assertEqual(self.client.get("/api/admin/plagiarism",
                                          params={"problem": "thai_time"}).status_code, 403)
-        self.assertEqual(self.client.post("/api/contests", json={}).status_code, 403)
+        self.assertEqual(self.client.post("/api/contests", json={},
+                                          headers=BROWSER).status_code, 403)
         self.assertEqual(self.client.get("/api/admin/overview").status_code, 403)
 
     def test_security_regressions(self):
         # Admin addresses are reserved: open registration must refuse them.
+        # (Browser Origin attached so the route itself answers, not CSRF.)
         r = self.client.post("/api/auth/register",
-                             json={"email": ADMIN, "password": PASSWORD, "name": "X"})
+                             json={"email": ADMIN, "password": PASSWORD, "name": "X"},
+                             headers=BROWSER)
         self.assertEqual(r.status_code, 403, r.text)
         # Unknown API paths are JSON 404, never the SPA index.html.
         r = self.client.get("/api/no-such-endpoint")
@@ -538,13 +595,133 @@ class ApiE2E(unittest.TestCase):
         r = self.client.post("/api/contests", json={
             "id": "future-cup", "title": "Future",
             "starts_at": _iso(60), "ends_at": _iso(120),
-            "problems": ["thai_time"]})
+            "problems": ["thai_time"]}, headers=BROWSER)
         self.assertEqual(r.status_code, 200, r.text)
         self.login(STUDENT_A)
         detail = self.client.get("/api/contests/future-cup").json()
         self.assertEqual(detail["status"], "upcoming")
         for p in detail["problem_details"]:
             self.assertNotIn("title", p, p)
+
+    def test_csrf_origin_protection(self):
+        # Canonical origin comes from server config, never from the request.
+        from urllib.parse import urlsplit
+        parts = urlsplit(server.FRONTEND_URL)
+        GOOD = f"{parts.scheme}://{parts.hostname}"
+        EVIL = "https://evil.example"
+        SUFFIX = f"{parts.scheme}://{parts.hostname}.evil.example"
+        payload = {"email": STUDENT_A, "password": PASSWORD}
+        self.login(STUDENT_A)
+        # 1. Same-origin POST is accepted.
+        r = self.client.post("/api/auth/password", json=payload,
+                             headers={"Origin": GOOD})
+        self.assertEqual(r.status_code, 200, r.text)
+        # 2. Cross-origin Origin is rejected with 403 (generic detail only).
+        r = self.client.post("/api/auth/password", json=payload,
+                             headers={"Origin": EVIL})
+        self.assertEqual(r.status_code, 403, r.text)
+        self.assertEqual(r.json(), {"detail": "cross-origin request refused"})
+        # 3. Valid same-origin Referer works when Origin is absent.
+        r = self.client.post("/api/auth/password", json=payload,
+                             headers={"Referer": GOOD + "/#/tasks"})
+        self.assertEqual(r.status_code, 200, r.text)
+        # 4. Cross-origin Referer is rejected when Origin is absent.
+        r = self.client.post("/api/auth/password", json=payload,
+                             headers={"Referer": EVIL + "/x"})
+        self.assertEqual(r.status_code, 403, r.text)
+        # 5. Session cookie present but both headers absent -> 403.
+        # A browser request carrying our cookie without Origin/Referer is
+        # either forged or header-stripped: fail closed. (Headerless
+        # non-browser clients are covered by test_csrf_allows_cookieless.)
+        r = self.client.post("/api/auth/password", json=payload)
+        self.assertEqual(r.status_code, 403, r.text)
+        self.assertEqual(r.json(), {"detail": "cross-origin request refused"})
+        # 6. Malformed Origin/Referer values are rejected safely (403, no 500).
+        for bad in ("not-a-url", "null", "", "https://", "ftp://x.example"):
+            r = self.client.post("/api/auth/password", json=payload,
+                                 headers={"Origin": bad})
+            self.assertEqual(r.status_code, 403, (bad, r.text))
+        r = self.client.post("/api/auth/password", json=payload,
+                             headers={"Referer": "junk"})
+        self.assertEqual(r.status_code, 403, r.text)
+        # 7. Suffix-match hostname and scheme downgrade are not accepted.
+        for bad in (SUFFIX, "http://" + parts.hostname):
+            r = self.client.post("/api/auth/password", json=payload,
+                                 headers={"Origin": bad})
+            self.assertEqual(r.status_code, 403, (bad, r.text))
+        # 8. Mismatched Origin wins even when Referer is valid.
+        r = self.client.post("/api/auth/password", json=payload,
+                             headers={"Origin": EVIL, "Referer": GOOD + "/"})
+        self.assertEqual(r.status_code, 403, r.text)
+        # 9. Admin and contest mutations are covered too.
+        self.login(ADMIN)
+        contest = {"id": "csrf-cup", "title": "CSRF Cup",
+                   "starts_at": _iso(60), "ends_at": _iso(120),
+                   "problems": ["thai_time"]}
+        r = self.client.post("/api/contests", json=contest,
+                             headers={"Origin": EVIL})
+        self.assertEqual(r.status_code, 403, r.text)
+        r = self.client.post("/api/contests", json=contest,
+                             headers={"Origin": GOOD})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.login(STUDENT_A)
+        r = self.client.post("/api/contests/csrf-cup/register", json={},
+                             headers={"Origin": EVIL})
+        self.assertEqual(r.status_code, 403, r.text)
+        r = self.client.post("/api/contests/csrf-cup/register", json={},
+                             headers={"Origin": GOOD})
+        self.assertEqual(r.status_code, 200, r.text)
+        # 10. Google OAuth completion (GET) remains functional, not 403.
+        r = self.client.get("/api/auth/finish", follow_redirects=False)
+        self.assertNotEqual(r.status_code, 403, r.text)
+        # 11. GET polling and read-only endpoints ignore Origin entirely.
+        r = self.client.get("/api/health", headers={"Origin": EVIL})
+        self.assertEqual(r.status_code, 200, r.text)
+
+    def test_csrf_allows_cookieless_but_never_grants_access(self):
+        # No session cookie + no headers -> the request passes the CSRF layer
+        # and is decided by the existing authentication/authorization layers.
+        self.client.cookies.clear()
+        # Protected operation without credentials: auth layer refuses (401),
+        # not the CSRF layer — and nothing is executed or disclosed.
+        r = self.client.post("/api/submit", data={
+            "problem": "thai_time", "language": "python", "code": "print(1)"})
+        self.assertEqual(r.status_code, 401, r.text)
+        self.assertNotIn("cross-origin", r.text)
+        # Playground likewise requires login first.
+        r = self.client.post("/api/run", data={
+            "language": "python", "code": "print(1)\n", "input": ""})
+        self.assertEqual(r.status_code, 401, r.text)
+        # ...while a genuinely new non-browser registration still proceeds.
+        r = self.client.post("/api/auth/register",
+                             json={"email": "cookieless@example.com",
+                                   "password": PASSWORD, "name": "C"})
+        self.assertEqual(r.status_code, 200, r.text)
+
+    def test_csrf_session_cookie_requires_headers_on_mutations(self):
+        # Representative mutation matrix: session cookie + no headers -> 403
+        # everywhere, without executing anything or leaking data.
+        self.login(STUDENT_A)
+        before = self.stored(user_email=STUDENT_A)
+        r = self.client.post("/api/submit", data={
+            "problem": "thai_time", "language": "python", "code": "print(1)"})
+        self.assertEqual(r.status_code, 403, r.text)
+        self.assertEqual(self.stored(user_email=STUDENT_A), before,
+                         "refused submit must not create history")
+        r = self.client.post("/api/run", data={
+            "language": "python", "code": "print(1)\n", "input": ""})
+        self.assertEqual(r.status_code, 403, r.text)
+        r = self.client.put("/api/profile", json={"display_name": "X"})
+        self.assertEqual(r.status_code, 403, r.text)
+        self.login(ADMIN)
+        r = self.client.post("/api/admin/rejudge",
+                             json={"problem": "thai_time", "limit": 1})
+        self.assertEqual(r.status_code, 403, r.text)
+        # Same calls with a valid Origin pass the CSRF layer (route decides).
+        r = self.client.post("/api/admin/rejudge",
+                             json={"problem": "thai_time", "limit": 1},
+                             headers=BROWSER)
+        self.assertIn(r.status_code, (200, 503), r.text)
 
     def test_admin_overview_reports_queue_state(self):
         # sync endpoint: it runs in a threadpool, where an event loop must not be
@@ -584,7 +761,7 @@ class ApiE2E(unittest.TestCase):
         created = self.client.post("/api/contests", json={
             "id": "cup-only", "title": "Cup Only",
             "starts_at": _iso(-5), "ends_at": _iso(55),
-            "problems": ["hanoi"], "hide_from_tasks": True})
+            "problems": ["hanoi"], "hide_from_tasks": True}, headers=BROWSER)
         self.assertEqual(created.status_code, 200, created.text)
         self.assertTrue(created.json()["contest"]["hide_from_tasks"])
 
@@ -616,7 +793,8 @@ class ApiE2E(unittest.TestCase):
         # a contest that reuses public problems keeps them in Tasks
         self.assertEqual(self.client.post("/api/contests", json={
             "id": "cup-open", "title": "Open", "starts_at": _iso(-5), "ends_at": _iso(55),
-            "problems": ["warpz"], "hide_from_tasks": False}).status_code, 200)
+            "problems": ["warpz"], "hide_from_tasks": False},
+            headers=BROWSER).status_code, 200)
         self.login(STUDENT_A)
         self.assertIn("warpz", [p["id"] for p in
                                 self.client.get("/api/problems").json()["problems"]])
@@ -624,8 +802,8 @@ class ApiE2E(unittest.TestCase):
         self.assertNotIn("hanoi", [r["problem"] for r in public_hist])
 
         self.login(ADMIN)
-        self.client.delete("/api/contests/cup-only")
-        self.client.delete("/api/contests/cup-open")
+        self.client.delete("/api/contests/cup-only", headers=BROWSER)
+        self.client.delete("/api/contests/cup-open", headers=BROWSER)
 
     def test_config_hidden_problem_is_private(self):
         prob = server.PROBLEMS["mirror_pair"]
@@ -641,7 +819,8 @@ class ApiE2E(unittest.TestCase):
                          "/api/problems/mirror_pair/pdf"):
                 self.assertEqual(self.client.get(path).status_code, 404, path)
             r = self.client.post("/api/submit", data={
-                "problem": "mirror_pair", "language": "python", "code": "print(1)"})
+                "problem": "mirror_pair", "language": "python", "code": "print(1)"},
+                headers=BROWSER)
             self.assertEqual(r.status_code, 404, r.text)
             self.login(ADMIN)
             self.assertEqual(self.client.get("/api/problems/mirror_pair").status_code, 200)
@@ -660,7 +839,8 @@ class ApiE2E(unittest.TestCase):
             sid = job["result"]["id"]
 
             self.login(ADMIN)
-            r = self.client.post("/api/admin/rejudge", json={"problem": "thai_time", "limit": 50})
+            r = self.client.post("/api/admin/rejudge", json={"problem": "thai_time", "limit": 50},
+                                 headers=BROWSER)
             self.assertEqual(r.status_code, 200, r.text)
             self.assertEqual(r.json()["queued"], 1, "batch must be clamped to the queue budget")
             self.wait_job(r.json()["jobs"][0])
@@ -707,10 +887,11 @@ class ApiE2E(unittest.TestCase):
         self.login(ADMIN)
         created = self.client.post("/api/contests", json={
             "id": "num-cup", "title": "Num Cup", "starts_at": _iso(-5), "ends_at": _iso(30),
-            "problems": ["19"], "hide_from_tasks": False})
+            "problems": ["19"], "hide_from_tasks": False}, headers=BROWSER)
         self.assertEqual(created.status_code, 200, created.text)
         self.assertEqual(created.json()["contest"]["problems"], [pid])
-        self.assertEqual(self.client.delete("/api/contests/num-cup").status_code, 200)
+        self.assertEqual(self.client.delete("/api/contests/num-cup",
+                                            headers=BROWSER).status_code, 200)
 
     def test_contest_registration_locks_problems(self):
         # Codeforces lifecycle: register before the start, problems open at the
@@ -720,7 +901,7 @@ class ApiE2E(unittest.TestCase):
         created = self.client.post("/api/contests", json={
             "id": "cf-style", "title": "CF Style",
             "starts_at": _iso(10), "ends_at": _iso(70),
-            "problems": ["hanoi"], "hide_from_tasks": True})
+            "problems": ["hanoi"], "hide_from_tasks": True}, headers=BROWSER)
         self.assertEqual(created.status_code, 200, created.text)
 
         self.login(STUDENT_A)
@@ -733,15 +914,16 @@ class ApiE2E(unittest.TestCase):
         self.assertEqual(self.client.get("/api/problems/hanoi").status_code, 404)
         early = self.client.post("/api/submit", data={
             "problem": "hanoi", "language": "python",
-            "code": "print(1)", "contest": "cf-style"})
+            "code": "print(1)", "contest": "cf-style"}, headers=BROWSER)
         self.assertEqual(early.status_code, 404, early.text)   # problem not open yet
-        self.client.post("/api/contests/cf-style/register", json={})
+        self.client.post("/api/contests/cf-style/register", json={}, headers=BROWSER)
         still_early = self.client.post("/api/submit", data={
             "problem": "hanoi", "language": "python",
-            "code": "print(1)", "contest": "cf-style"})
+            "code": "print(1)", "contest": "cf-style"}, headers=BROWSER)
         self.assertEqual(still_early.status_code, 404, still_early.text)
 
-        reg = self.client.post("/api/contests/cf-style/register", json={})
+        reg = self.client.post("/api/contests/cf-style/register", json={},
+                               headers=BROWSER)
         self.assertEqual(reg.status_code, 200, reg.text)
         self.assertTrue(reg.json()["registered"])
         self.assertEqual(reg.json()["participants"], 1)
@@ -750,17 +932,18 @@ class ApiE2E(unittest.TestCase):
         self.assertEqual(self.client.get("/api/problems/hanoi").status_code, 404)
         self.assertFalse(self.client.get("/api/contests/cf-style").json()["problems_open"])
 
-        unreg = self.client.delete("/api/contests/cf-style/register")
+        unreg = self.client.delete("/api/contests/cf-style/register", headers=BROWSER)
         self.assertEqual(unreg.status_code, 200, unreg.text)
         self.assertFalse(unreg.json()["registered"])
-        self.client.post("/api/contests/cf-style/register", json={})   # register again
+        self.client.post("/api/contests/cf-style/register", json={},
+                         headers=BROWSER)   # register again
 
         # move the window so it is running now
         self.login(ADMIN)
         now = self.client.post("/api/contests", json={
             "id": "cf-style", "title": "CF Style",
             "starts_at": _iso(-5), "ends_at": _iso(55),
-            "problems": ["hanoi"], "hide_from_tasks": True})
+            "problems": ["hanoi"], "hide_from_tasks": True}, headers=BROWSER)
         self.assertEqual(now.status_code, 200, now.text)
         self.assertEqual(now.json()["contest"]["status"], "running")
         self.assertEqual(now.json()["contest"]["participants"], 1)
@@ -777,34 +960,37 @@ class ApiE2E(unittest.TestCase):
         # a classmate who never registered is refused
         self.login(STUDENT_B)
         refused = self.client.post("/api/submit", data={
-            "problem": "hanoi", "language": "python", "code": code, "contest": "cf-style"})
+            "problem": "hanoi", "language": "python", "code": code, "contest": "cf-style"},
+            headers=BROWSER)
         self.assertEqual(refused.status_code, 403, refused.text)
         self.assertIn("ลงทะเบียน", refused.json()["detail"])
         self.assertFalse(self.client.get("/api/contests/cf-style").json()["can_submit"])
         # but they can register while it runs, then submit
         self.assertEqual(self.client.post(
-            "/api/contests/cf-style/register", json={}).status_code, 200)
+            "/api/contests/cf-style/register", json={}, headers=BROWSER).status_code, 200)
         self.assertTrue(self.judged_contest("hanoi", code, "cf-style")["result"]["accepted"])
         self.assertEqual(self.client.delete(
-            "/api/contests/cf-style/register").status_code, 400)   # cannot leave mid-round
+            "/api/contests/cf-style/register", headers=BROWSER).status_code, 400)   # cannot leave mid-round
 
         # after the end: problems stay open for practice, submissions are closed
         self.login(ADMIN)
         self.client.post("/api/contests", json={
             "id": "cf-style", "title": "CF Style",
             "starts_at": _iso(-120), "ends_at": _iso(-60),
-            "problems": ["hanoi"], "hide_from_tasks": True})
+            "problems": ["hanoi"], "hide_from_tasks": True}, headers=BROWSER)
         self.login(STUDENT_A)
         after = self.client.get("/api/contests/cf-style").json()
         self.assertTrue(after["problems_open"])
         self.assertFalse(after["can_submit"])
         self.assertEqual(self.client.get("/api/problems/hanoi").status_code, 200)
         late = self.client.post("/api/submit", data={
-            "problem": "hanoi", "language": "python", "code": code, "contest": "cf-style"})
+            "problem": "hanoi", "language": "python", "code": code, "contest": "cf-style"},
+            headers=BROWSER)
         self.assertEqual(late.status_code, 403, late.text)
 
         self.login(ADMIN)
-        self.assertEqual(self.client.delete("/api/contests/cf-style").status_code, 200)
+        self.assertEqual(self.client.delete("/api/contests/cf-style",
+                                            headers=BROWSER).status_code, 200)
         params = self.client.get("/api/contests/cf-style").status_code
         self.assertEqual(params, 404)
 
@@ -933,7 +1119,12 @@ class ApiE2E(unittest.TestCase):
     def test_health_and_problem_listing(self):
         h = self.client.get("/api/health").json()
         self.assertTrue(h["ok"])
-        self.assertEqual(len(h["problems"]), len(server.PROBLEMS))
+        # Anonymous users see only publicly visible problems: hidden
+        # contest-only problems are filtered from health (access control,
+        # not a count bug).
+        visible = [pid for pid in server.PROBLEMS
+                   if pid not in server._hidden_pids()]
+        self.assertEqual(sorted(h["problems"]), sorted(visible))
         detail = self.client.get("/api/problems/count_islands").json()
         self.assertEqual(detail["samples"], ["03"])
         self.assertEqual(detail["hidden_tests"], detail["tests"] - 1)
@@ -988,8 +1179,11 @@ class PreMigrationFallback(unittest.TestCase):
             self.assertEqual(r.status_code, 200, r.text)
 
     def _submit_and_wait(self, problem: str, code: str) -> dict:
+        from urllib.parse import urlsplit as _urlsplit
+        _parts = _urlsplit(server.FRONTEND_URL)
         submit = self.client.post("/api/submit", data={
-            "problem": problem, "language": "python", "code": code})
+            "problem": problem, "language": "python", "code": code},
+            headers={"Origin": f"{_parts.scheme}://{_parts.hostname}"})
         self.assertEqual(submit.status_code, 202, submit.text)
         jid = submit.json()["job_id"]
         deadline = time.time() + 60
