@@ -670,9 +670,14 @@ class ApiE2E(unittest.TestCase):
 
     def test_problem_numbers_are_contiguous_and_resolve(self):
         # The repo numbering is an invariant (tools/number_problems.py keeps it):
-        # 1..N with no gaps, and any problem can be addressed by its number.
+        # public 1..P with no gaps, contest-only 1001.. with no gaps, and any
+        # problem can be addressed by its number.
         all_nos = sorted(p.no for p in server.PROBLEMS.values())
-        self.assertEqual(all_nos, list(range(1, len(all_nos) + 1)), all_nos)
+        public = [n for n in all_nos if n < 1000]
+        hidden_block = [n for n in all_nos if n >= 1000]
+        self.assertEqual(public, list(range(1, len(public) + 1)), public)
+        self.assertEqual(hidden_block, list(range(1001, 1001 + len(hidden_block))),
+                         hidden_block)
 
         self.login(STUDENT_A)
         probs = self.client.get("/api/problems").json()["problems"]
