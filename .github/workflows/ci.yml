@@ -30,6 +30,9 @@ jobs:
       - name: Check frontend id references
         run: node tools/check_frontend.js
 
+      - name: Check design tokens (no colour literals, dark-mode coverage)
+        run: node tools/check_styles.js
+
       - name: Validate problems
         run: python3 tools/validate_problem.py
 

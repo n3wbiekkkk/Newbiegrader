@@ -19,7 +19,8 @@ const state = {
   contestCache: {},
   contest: null,         // {id,title} while the task page submits into a contest
   current: null,
-  lang: "cpp",
+  jobResults: {},        // pid -> {result, secs} last verdict rendered this session
+  lang: "python",
   taskTab: "statement",
   file: null,
   user: null,
@@ -48,6 +49,168 @@ try { applyTheme(localStorage.getItem("ng_theme") || "light"); } catch (e) { app
 $("theme-btn").onclick = () =>
   applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
 
+/* ---------------- drafts, last language, last job (localStorage) ----------------
+ * Judging is async, so wandering off mid-run is normal — a student who clicks
+ * away must not lose typed code or the verdict. One draft per problem, the
+ * language choice remembered separately, and the last job per problem kept so
+ * the Submit tab can pick a run back up (the server owns the job; we keep the id).
+ */
+const DRAFT_KEY = "ng_draft_v1";
+const JOB_KEY = "ng_job_v1";
+const LANG_KEY = "ng_lang";
+const JOB_RESUME_MS = 30 * 60 * 1000;   // older than this: read it in History
+const DRAFT_MAX = 40;                   // newest N problems
+const JOB_MAX = 20;
+
+function lsJson(key) {
+  try { return JSON.parse(localStorage.getItem(key)) || {}; } catch (e) { return {}; }
+}
+function lsPut(key, obj) {
+  try { localStorage.setItem(key, JSON.stringify(obj)); } catch (e) { /* quota: fine */ }
+}
+function keepNewest(map, n) {
+  Object.keys(map)
+    .sort((a, b) => (map[b].t || 0) - (map[a].t || 0))
+    .slice(n)
+    .forEach((k) => delete map[k]);
+  return map;
+}
+function setDraftHint(saved) {
+  const el = $("draft-hint");
+  if (el) el.textContent = saved ? "บันทึกร่างอัตโนมัติแล้ว" : "";
+}
+
+function saveDraft() {
+  const ed = $("editor");
+  if (!ed || !state.current) return;
+  const d = lsJson(DRAFT_KEY);
+  if (ed.value.trim()) d[state.current] = { code: ed.value, t: Date.now() };
+  else delete d[state.current];
+  lsPut(DRAFT_KEY, keepNewest(d, DRAFT_MAX));
+  setDraftHint(!!ed.value.trim());
+}
+function draftFor(pid) {
+  return (lsJson(DRAFT_KEY)[pid] || {}).code || "";
+}
+function rememberJob(pid, jid) {
+  const m = lsJson(JOB_KEY);
+  m[pid] = { id: jid, t: Date.now() };
+  lsPut(JOB_KEY, keepNewest(m, JOB_MAX));
+}
+function forgetJob(pid) {
+  const m = lsJson(JOB_KEY);
+  if (m[pid]) { delete m[pid]; lsPut(JOB_KEY, m); }
+}
+function lastJobFor(pid) {
+  const e = lsJson(JOB_KEY)[pid];
+  return e && Date.now() - (e.t || 0) < JOB_RESUME_MS ? e : null;
+}
+function clearLocalWorkspace() {
+  try { [DRAFT_KEY, JOB_KEY].forEach((k) => localStorage.removeItem(k)); } catch (e) { /* ignore */ }
+}
+function lastLang() {
+  try { return localStorage.getItem(LANG_KEY) || ""; } catch (e) { return ""; }
+}
+
+/* ---------------- editor keys (plain textarea, no dependency) ----------------
+ * Tab has to indent instead of moving focus: losing the caret mid-line is the
+ * fastest way to make a beginner give up. Shift+Tab outdents, Enter keeps the
+ * current indentation (and opens a block after `:` or `{`), Cmd/Ctrl+Enter
+ * submits, Cmd/Ctrl+/ comments the selection out.
+ */
+const INDENT = "    ";
+
+function commentToken() {
+  return state.lang === "python" ? "#" : "//";
+}
+
+function lineRange(value, start, end) {
+  const from = value.lastIndexOf("\n", start - 1) + 1;
+  const nl = value.indexOf("\n", end);
+  return [from, nl === -1 ? value.length : nl];
+}
+
+function applyIndent(ed, outdent) {
+  const v = ed.value, s = ed.selectionStart, e = ed.selectionEnd;
+  if (s === e && !outdent) {                    // Tab with no selection: 4 spaces
+    ed.value = v.slice(0, s) + INDENT + v.slice(s);
+    ed.selectionStart = ed.selectionEnd = s + INDENT.length;
+    return;
+  }
+  const [from, to] = lineRange(v, s, e);
+  const block = v.slice(from, to).split("\n").map((line) => {
+    if (outdent) {
+      return line.startsWith(INDENT) ? line.slice(INDENT.length)
+        : line.replace(/^[ \t]{1,4}/, "");
+    }
+    return INDENT + line;
+  }).join("\n");
+  ed.value = v.slice(0, from) + block + v.slice(to);
+  if (s === e) {
+    // Caret only: keep the caret where the student left it (no selection — a
+    // selected block would be replaced by the very next keystroke).
+    const delta = block.length - (to - from);
+    const caret = Math.max(from, Math.min(from + block.length, s + delta));
+    ed.selectionStart = ed.selectionEnd = caret;
+  } else {
+    ed.selectionStart = from;
+    ed.selectionEnd = from + block.length;
+  }
+}
+
+function toggleComment(ed) {
+  const v = ed.value, s = ed.selectionStart, e = ed.selectionEnd;
+  const tok = commentToken();
+  const [from, to] = lineRange(v, s, e);
+  const lines = v.slice(from, to).split("\n");
+  const allOn = lines.every((l) => !l.trim() || l.trimStart().startsWith(tok));
+  const block = lines.map((line) => {
+    if (!line.trim()) return line;
+    if (allOn) {
+      const i = line.indexOf(tok);
+      return line.slice(0, i) + line.slice(i + tok.length).replace(/^ /, "");
+    }
+    const pad = (line.match(/^\s*/) || [""])[0];
+    return pad + tok + " " + line.slice(pad.length);
+  }).join("\n");
+  ed.value = v.slice(0, from) + block + v.slice(to);
+  ed.selectionStart = from;
+  ed.selectionEnd = from + block.length;
+}
+
+function newlineIndent(ed) {
+  const v = ed.value, s = ed.selectionStart;
+  const line = v.slice(v.lastIndexOf("\n", s - 1) + 1, s);
+  let pad = (line.match(/^[ \t]*/) || [""])[0];
+  if (/[:{]\s*$/.test(line)) pad += INDENT;      // new block: indent one level
+  const ins = "\n" + pad;
+  ed.value = v.slice(0, s) + ins + v.slice(ed.selectionEnd);
+  ed.selectionStart = ed.selectionEnd = s + ins.length;
+}
+
+function bindEditorKeys() {
+  const ed = $("editor");
+  if (!ed) return;
+  let pending = null;
+  ed.addEventListener("input", () => {           // autosave, debounced
+    clearTimeout(pending);
+    pending = setTimeout(saveDraft, 400);
+  });
+  ed.addEventListener("blur", saveDraft);
+  ed.addEventListener("keydown", (ev) => {
+    const meta = ev.metaKey || ev.ctrlKey;
+    if (ev.key === "Tab") {
+      ev.preventDefault(); applyIndent(ed, ev.shiftKey); saveDraft();
+    } else if (ev.key === "Enter" && !meta) {
+      ev.preventDefault(); newlineIndent(ed); saveDraft();
+    } else if (ev.key === "Enter" && meta) {
+      ev.preventDefault(); doSubmit();
+    } else if (meta && (ev.key === "/" || ev.key === "?")) {
+      ev.preventDefault(); toggleComment(ed); saveDraft();
+    }
+  });
+}
+
 /* ---------------- task tabs ---------------- */
 /* The code editor (#code-shared: dropzone + file chip + textarea) is ONE DOM
  * node shared by the Submit and Run tabs — it is moved between their slots on
@@ -60,8 +223,11 @@ function shareEditor(where) {
 
 function setTaskTab(tab) {
   state.taskTab = tab;
-  document.querySelectorAll(".tab-btn").forEach((b) =>
-    b.classList.toggle("active", b.dataset.tab === tab));
+  document.querySelectorAll(".tab-btn").forEach((b) => {
+    const on = b.dataset.tab === tab;
+    b.classList.toggle("active", on);
+    if (b.hasAttribute("aria-selected")) b.setAttribute("aria-selected", on ? "true" : "false");
+  });
   document.querySelectorAll(".tab-pane").forEach((p) =>
     p.classList.toggle("active", p.id === "pane-" + tab));
   if (tab === "run" || tab === "submit") shareEditor(tab);
@@ -339,6 +505,33 @@ function apiGet(path) {
   return apiFetch(path, { credentials: "include" });
 }
 
+/* Several views ask for the same history slice while rendering (the task list,
+ * "your score", the My Submissions tab). Deduplicate in-flight requests and
+ * keep the answer for a moment so one render is not four round trips.
+ * Cleared after a submission, when the answers are known to be stale. */
+const _getCache = new Map();
+const _getInflight = new Map();
+
+function apiGetCached(path, ttlMs) {
+  const hit = _getCache.get(path);
+  if (hit && Date.now() - hit.t < ttlMs) return Promise.resolve(hit.v);
+  if (_getInflight.has(path)) return _getInflight.get(path);
+  const p = apiGet(path).then((v) => {
+    _getCache.set(path, { t: Date.now(), v: v });
+    _getInflight.delete(path);
+    return v;
+  }, (e) => {
+    _getInflight.delete(path);
+    throw e;
+  });
+  _getInflight.set(path, p);
+  return p;
+}
+
+function clearGetCache() {
+  _getCache.clear();
+}
+
 function apiPostJson(path, body) {
   return apiFetch(path, {
     method: "POST", credentials: "include",
@@ -368,11 +561,14 @@ async function fetchStats() {
 function show(view) {
   document.querySelectorAll(".view").forEach((v) =>
     v.classList.toggle("active", v.id === "view-" + view));
-  document.querySelectorAll(".nav-link").forEach((a) =>
-    a.classList.toggle("active",
-      a.dataset.route === view ||
+  document.querySelectorAll(".nav-link").forEach((a) => {
+    const on = a.dataset.route === view ||
       (view === "task" && a.dataset.route === "tasks") ||
-      (view === "contest" && a.dataset.route === "contests")));
+      (view === "contest" && a.dataset.route === "contests");
+    a.classList.toggle("active", on);
+    if (on) a.setAttribute("aria-current", "page");
+    else a.removeAttribute("aria-current");
+  });
   window.scrollTo(0, 0);
 }
 
@@ -458,6 +654,45 @@ function renderHome() {
   Object.values(state.stats).forEach((s) => { subs += s.subs || 0; acc += s.accepted || 0; });
   $("stat-subs").textContent = subs;
   $("stat-accepted").textContent = acc;
+  $("stat-mine").textContent = state.user
+    ? `${Object.values(state.myBest || {}).filter((v) => v === 100).length}`
+    : "—";
+  renderResumeCard();
+}
+
+function relTime(ts) {
+  const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
+  if (s < 60) return "เมื่อสักครู่";
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m} นาทีที่แล้ว`;
+  const h = Math.round(m / 60);
+  return h < 24 ? `${h} ชั่วโมงที่แล้ว` : `${Math.round(h / 24)} วันที่แล้ว`;
+}
+
+/* "pick up where you left off": the newest draft this browser kept, plus a note
+ * when a judge run for it is still in flight. */
+function renderResumeCard() {
+  const box = $("resume-card");
+  if (!box) return;
+  const drafts = lsJson(DRAFT_KEY);
+  const newest = Object.entries(drafts).sort((a, b) => (b[1].t || 0) - (a[1].t || 0))[0];
+  if (!newest) {
+    box.classList.add("hidden");
+    box.innerHTML = "";
+    return;
+  }
+  const pid = newest[0];
+  const p = state.problems.find((x) => x.id === pid);
+  const title = p ? `${noLabel(p)} ${esc(p.title)}` : esc(pid);
+  const pending = lastJobFor(pid) ? " · งานตรวจยังไม่จบ" : "";
+  box.classList.remove("hidden");
+  box.innerHTML = `<div class="resume">
+    <div class="resume-main">
+      <div class="resume-title">ทำต่อจากที่ค้างไว้</div>
+      <div class="dim">${title} — บันทึกร่างไว้ ${esc(relTime(newest[1].t || Date.now()))}${esc(pending)}</div>
+    </div>
+    <a class="btn-primary" href="#/task/${encodeURIComponent(pid)}">เปิดโจทย์นี้</a>
+  </div>`;
 }
 
 /* ---------------- tasks (sidebar + cards) ---------------- */
@@ -543,8 +778,10 @@ function renderTasksTable() {
   list.forEach((p) => {
     const st = state.stats[p.id] || {};
     const tags = (p.tags || []).map((t) => `<span class="tag-chip">${esc(t)}</span>`).join("");
-    const card = document.createElement("div");
+    // A real link: keyboard users can reach and open a problem (Tab + Enter).
+    const card = document.createElement("a");
     card.className = "task-card";
+    card.href = "#/task/" + encodeURIComponent(p.id);
     card.innerHTML = `
       <div class="tc-main">
         <div class="tc-title">${noLabel(p)} ${esc(p.title)} <span class="dim">${esc(p.id)}</span></div>
@@ -553,8 +790,8 @@ function renderTasksTable() {
           p.hidden ? badge("ซ่อนจาก Task", "hidden") : ""}</div>
       </div>
       <div class="tc-side score-wrap">${taskScoreHtml(p.id)}</div>`;
-    card.onclick = () => { location.hash = "#/task/" + encodeURIComponent(p.id); };
     card.onmouseenter = () => prefetchDetail(p.id);
+    card.onfocus = () => prefetchDetail(p.id);
     box.appendChild(card);
   });
   if (state.user && !state.myBestLoaded) {
@@ -567,7 +804,7 @@ function renderTasksTable() {
 async function fetchMyBest() {
   state.myBestLoaded = true;
   try {
-    const h = await apiGet("/api/history?limit=100&mine=1");
+    const h = await apiGetCached("/api/history?limit=100&mine=1", 15000);
     const best = {};
     ((h.configured && h.submissions) || []).forEach((r) => {
       if (r.contest_id) return;   // contest scores belong to the contest board
@@ -807,10 +1044,13 @@ function prefetchDetail(pid) {
 }
 
 async function selectProblem(pid) {
+  saveDraft();                      // keep the draft of the problem we are leaving
   state.current = pid;
   setTaskTab("statement");
-  // fresh editor for each problem: no leftover code or attached file
-  $("editor").value = "";
+  // Per-problem workspace: this problem's draft code, no leftover attached file.
+  const draft = draftFor(pid);
+  $("editor").value = draft;
+  setDraftHint(!!draft.trim());
   state.file = null;
   fi.value = "";
   $("file-chip").classList.add("hidden");
@@ -826,11 +1066,17 @@ async function selectProblem(pid) {
     $("task-title").textContent = "Loading...";
     $("task-body").textContent = "Loading problem...";
   }
-  $("result-body").innerHTML = `<span class="dim">ส่งโค้ดแล้วผลจะขึ้นตรงนี้</span>`;
-  $("score-line").textContent = "";
+  if (state.jobResults[pid]) {      // verdict of this session's last run on this problem
+    renderResults(state.jobResults[pid].result, state.jobResults[pid].secs);
+  } else {
+    $("result-body").innerHTML = `<span class="dim">ส่งโค้ดแล้วผลจะขึ้นตรงนี้</span>`;
+    $("score-line").textContent = "";
+  }
   $("your-score-num").textContent = "—";
   $("report-status").textContent = "";
   $("report-msg").value = "";
+  const pending = lastJobFor(pid);
+  if (pending) resumeJob(pid, pending.id);   // keep waiting for an in-flight run
   try {
     const p = await apiGet(`/api/problems/${encodeURIComponent(pid)}`);
     state.detailCache[pid] = { t: Date.now(), data: p };
@@ -847,7 +1093,7 @@ async function refreshYourScore() {
     return;
   }
   try {
-    const h = await apiGet(`/api/history?limit=100&problem=${encodeURIComponent(state.current)}&mine=1`);
+    const h = await apiGetCached(`/api/history?limit=100&problem=${encodeURIComponent(state.current)}&mine=1`, 10000);
     const rows = (h.configured && h.submissions) || [];
     const best = rows.reduce((m, r) => Math.max(m, r.score || 0), 0);
     const ysn = $("your-score-num");
@@ -918,7 +1164,7 @@ async function loadTaskMine() {
   }
   body.innerHTML = `<span class="dim">กำลังโหลด...</span>`;
   try {
-    const h = await apiGet(`/api/history?limit=100&problem=${encodeURIComponent(state.current)}&mine=1`);
+    const h = await apiGetCached(`/api/history?limit=100&problem=${encodeURIComponent(state.current)}&mine=1`, 10000);
     const rows = (h.configured && h.submissions) || [];
     if (!rows.length) {
       body.innerHTML = `<span class="dim">ยังไม่เคยส่งข้อนี้ — ไปแท็บ Submit เลย</span>`;
@@ -987,8 +1233,11 @@ $("logout-btn").onclick = async () => {
     await fetch(API + "/api/auth/logout", { method: "POST", credentials: "include" });
   } catch (e) { /* ignore */ }
   // Identity changed: the cached problem list (and the solved marks) must not
-  // survive into the next session on a shared machine.
+  // survive into the next session on a shared machine. Same for drafts and
+  // remembered job ids — a school computer is shared.
   try { localStorage.removeItem(PROBLEMS_CACHE_KEY); } catch (e) { /* ignore */ }
+  clearLocalWorkspace();
+  state.jobResults = {};
   await refreshMe();
   loadHistory();
 };
@@ -1234,13 +1483,56 @@ async function pollJob(jid, onTick) {
   }
 }
 
+/* ---- reattach to a job that was already submitted ----
+ * A reload or a walk to another page must not hide a verdict: the server keeps
+ * the job, so the UI only has to keep the id and go back to waiting on it. */
+const polling = new Set();
+
+async function resumeJob(pid, jid) {
+  if (polling.has(jid)) return;
+  polling.add(jid);
+  if (state.current === pid) {
+    setTaskTab("submit");
+    setJudgeStatus("กำลังดึงผลงานที่ค้างอยู่...", true);
+  }
+  try {
+    const t0 = performance.now();
+    const done = await pollJob(jid, (j) => {
+      if (state.current === pid) {
+        setJudgeStatus(`${jobStateText(j) || "กำลังตรวจโค้ด"} — ${waitedText(t0)}`, true);
+      }
+    });
+    if (done.status === "error") throw new Error(done.error || "ตรวจไม่สำเร็จ");
+    state.jobResults[pid] = { result: done.result || {}, secs: null };
+    forgetJob(pid);
+    if (state.current === pid) {
+      renderResults(state.jobResults[pid].result, null);
+      setJudgeStatus("ผลล่าสุดของข้อนี้", false);
+    }
+  } catch (e) {
+    forgetJob(pid);            // stale id: server restarted, or the job aged out
+    if (state.current === pid) {
+      setJudgeStatus("ดึงผลงานเดิมไม่ได้แล้ว — ดูผลย้อนหลังได้ที่ History", false);
+    }
+  } finally {
+    polling.delete(jid);
+  }
+}
+
 function jobStateText(job) {
   if (job.status === "queued") {
     const n = Number(job.queued_ahead) || 0;
-    return n > 0 ? `อยู่ในคิว (${n} งานก่อนหน้า)` : "อยู่ในคิว";
+    return n > 0 ? `อยู่ในคิวตรวจ (มีงานก่อนหน้า ${n} งาน)` : "อยู่ในคิวตรวจ (ถึงคิวเป็นคนแรก)";
   }
-  if (job.status === "running") return "กำลังตรวจ...";
+  if (job.status === "running") return "กำลังตรวจโค้ด";
   return "";
+}
+
+/* Judging takes a few seconds on a shared host: show that time is passing, so
+ * nobody thinks the page hung and hits submit again. */
+function waitedText(t0) {
+  const s = Math.max(0, Math.round((performance.now() - t0) / 1000));
+  return `รอมาแล้ว ${s} วินาที`;
 }
 
 function setJudgeStatus(msg, busy) {
@@ -1254,6 +1546,7 @@ $("submit-btn").onclick = doSubmit;
 
 async function doSubmit() {
   if (!state.current) return;
+  const pid = state.current;   // judging is async: the student may navigate away
   const btn = $("submit-btn");
   const code = $("editor").value;
   if (!state.user) {
@@ -1280,21 +1573,31 @@ async function doSubmit() {
   try {
     // 202 {job_id, status:"queued", ...} — judging happens in the background.
     const job = await apiPostForm("/api/submit", fd);
+    rememberJob(pid, job.job_id);   // survives reload and navigation
     setJudgeStatus(jobStateText(job) || "อยู่ในคิว", true);
     const done = await pollJob(job.job_id, (j) => {
-      setJudgeStatus(jobStateText(j) || "กำลังตรวจ...", true);
+      setJudgeStatus(`${jobStateText(j) || "กำลังตรวจโค้ด"} — ${waitedText(t0)}`, true);
     });
     if (done.status === "error") {
-      $("result-body").innerHTML =
-        `<div class="score-big bad">ตรวจไม่สำเร็จ</div>` +
-        `<pre class="dim">${esc(done.error || "unknown error")}</pre>`;
-      setJudgeStatus(`error: ${done.error || "unknown"}`, false);
+      forgetJob(pid);
+      if (state.current === pid) {
+        $("result-body").innerHTML =
+          `<div class="score-big bad">ตรวจไม่สำเร็จ</div>` +
+          `<pre class="dim">${esc(done.error || "unknown error")}</pre>`;
+        setJudgeStatus(`error: ${done.error || "unknown"}`, false);
+      }
       return;
     }
     const secs = (performance.now() - t0) / 1000;
     const result = done.result || {};
-    renderResults(result, secs);
-    setJudgeStatus(`เสร็จใน ${secs.toFixed(2)}s — ${result.score}/100 คะแนน`, false);
+    // Keep the verdict for this problem: coming back must not lose it.
+    state.jobResults[pid] = { result: result, secs: secs };
+    forgetJob(pid);
+    clearGetCache();     // history/stats answers changed with this submission
+    if (state.current === pid) {
+      renderResults(result, secs);
+      setJudgeStatus(`เสร็จใน ${secs.toFixed(2)}s — ${result.score}/100 คะแนน`, false);
+    }
     await fetchStats();
     state.myBestLoaded = false;
     renderTasksTable();
@@ -1303,6 +1606,11 @@ async function doSubmit() {
     if (state.taskTab === "mine") loadTaskMine();
     if (document.querySelector("#view-history.active")) loadHistory();
   } catch (e) {
+    // A timeout means the job is still queued/running server-side: keep the id
+    // so returning to this problem picks the run back up.
+    if (e.timeout && e.job_id) rememberJob(pid, e.job_id);
+    else forgetJob(pid);
+    if (state.current !== pid) return;   // student moved on: nothing to show here
     if (e.timeout) {
       $("result-body").innerHTML =
         `<div class="score-big bad">หมดเวลารอผล</div>` +
@@ -1327,26 +1635,67 @@ async function doSubmit() {
   }
 }
 
+/* Verdicts read in Thai first, with the acronym kept as a tooltip for anyone
+ * who has seen a judge before. */
+const VERDICT_TH = {
+  AC: "ผ่าน", WA: "คำตอบไม่ตรง", TLE: "ช้าเกินเวลา", MLE: "แรมเกิน",
+  OLE: "พิมพ์ผลเกิน", RE: "โปรแกรมพังตอนรัน", CE: "คอมไพล์ไม่ผ่าน",
+  OK: "รันผ่าน", SKIP: "ข้าม", "": "—",
+};
+
 function badgeVerdict(v) {
-  return badge(v, v);
+  return `<span class="badge b-${esc(v)}" title="${esc(v)}">${esc(VERDICT_TH[v] || v)}</span>`;
+}
+
+/* Colour the unified diff ourselves: the server strips ANSI now, and a student
+ * scanning for the first wrong line should not have to read the whole block. */
+function diffHtml(text) {
+  const lines = String(text || "").split("\n").map((line) => {
+    const cls = line.startsWith("+") && !line.startsWith("+++") ? "d-add"
+      : line.startsWith("-") && !line.startsWith("---") ? "d-del"
+      : line.startsWith("@@") ? "d-hunk" : "d-ctx";
+    return `<span class="${cls}">${esc(line)}</span>`;
+  });
+  return `<pre class="diff-pre">${lines.join("\n")}</pre>`;
+}
+
+/* One sentence that answers "แล้วฉันต้องแก้ตรงไหน" before the test table. */
+function verdictSummary(d) {
+  const rows = d.results || [];
+  if (d.verdict === "CE") {
+    return `<p class="verdict-sum bad">คอมไพล์ไม่ผ่าน — ดูข้อความ error ข้างล่างนี้ก่อนส่งใหม่</p>`;
+  }
+  const bad = rows.filter((r) => r.verdict !== "AC");
+  if (!bad.length) return `<p class="verdict-sum ok">ผ่านครบทุกเทสต์</p>`;
+  const first = bad[0];
+  const where = first.hidden ? "เทสต์ลับข้อแรก" : `เทสต์ ${first.test} (ตัวอย่าง)`;
+  const kinds = Object.keys(d.counts || {}).filter((k) => k !== "AC");
+  const scope = kinds.length > 1
+    ? kinds.map((k) => `${VERDICT_TH[k] || k} ${d.counts[k]} ข้อ`).join(" · ")
+    : `${bad.length} จาก ${rows.length} ข้อ`;
+  return `<p class="verdict-sum">เริ่มแก้ที่ <strong>${esc(where)}</strong> — ` +
+    `${esc(VERDICT_TH[first.verdict] || first.verdict)}` +
+    ` <span class="dim">(${esc(scope)})</span>` +
+    `<br><span class="dim">${esc(verdictHint(first))}</span></p>`;
 }
 
 function renderResults(d, secs) {
-  $("score-line").textContent =
-    `${d.passed}/${d.total} — ${d.score}/100 — ${secs.toFixed(2)}s`;
+  $("score-line").textContent = `${d.passed}/${d.total} — ${d.score}/100` +
+    (secs == null ? "" : ` — ${secs.toFixed(2)}s`);
   let html = "";
   if (d.verdict === "CE") {
-    html += `<div class="score-big bad">COMPILE ERROR</div>`;
-    html += `<div class="detail-cell"><pre>${esc(d.compile_error || "(no message)")}</pre></div>`;
+    html += `<div class="score-big bad">คอมไพล์ไม่ผ่าน</div>`;
+    html += `<div class="detail-cell"><pre>${esc(d.compile_error || "(ไม่มีข้อความ)")}</pre></div>`;
   } else {
     const ok = d.accepted;
-    html += `<div class="score-big ${ok ? "ok" : "bad"}">${ok ? "ACCEPTED" : "REJECTED"}</div>`;
+    html += `<div class="score-big ${ok ? "ok" : "bad"}">${ok ? "ผ่านทั้งหมด" : "ยังไม่ผ่าน"}</div>`;
     if (d.author || d.language) {
-      html += `<div class="meta">by ${esc(d.author || "—")} · ${esc(d.language || "")}${d.filename ? ` · ${esc(d.filename)}` : ""}</div>`;
+      html += `<div class="meta">โดย ${esc(d.author || "—")} · ${esc(d.language || "")}${d.filename ? ` · ${esc(d.filename)}` : ""}</div>`;
     }
+    html += verdictSummary(d);
     const counts = Object.entries(d.counts || {})
-      .map(([k, n]) => `${esc(k)}:${n}`).join("  ");
-    html += `<div class="meta">${esc(counts)} &nbsp;|&nbsp; ${limitsMeta(d)} checker ${esc(d.checker)}</div>`;
+      .map(([k, n]) => `${VERDICT_TH[k] || k}:${n}`).join("  ");
+    html += `<div class="meta">${esc(counts)} &nbsp;|&nbsp; ${limitsMeta(d)} ตัวตรวจคำตอบ ${esc(d.checker)}</div>`;
     if (d.samples != null || d.hidden_tests != null) {
       const nS = Array.isArray(d.samples) ? d.samples.length : (Number(d.samples) || 0);
       const nH = d.hidden_tests != null
@@ -1354,13 +1703,16 @@ function renderResults(d, secs) {
       html += `<div class="meta">ตัวอย่างสาธารณะ ${nS} ข้อ · เทสต์ลับ ${nH} ข้อ</div>`;
     }
     if (d.build_warnings) {
-      html += `<div class="detail-cell"><p class="dim">build warnings:</p><pre>${esc(d.build_warnings)}</pre></div>`;
+      html += `<div class="detail-cell"><p class="dim">คำเตือนตอนคอมไพล์:</p><pre>${esc(d.build_warnings)}</pre></div>`;
     }
     html += `<table class="tests"><thead><tr>
-      <th>#</th><th>test</th><th>verdict</th><th>wall</th><th>cpu</th><th>peak</th>
+      <th>#</th><th>เทสต์</th><th>ผล</th>
+      <th title="เวลาที่ใช้จริง (วินาที)">เวลา</th>
+      <th title="เวลา CPU (วินาที)">ซีพียู</th>
+      <th title="หน่วยความจำสูงสุด">แรม</th>
     </tr></thead><tbody>`;
     (d.results || []).forEach((r, i) => {
-      html += `<tr class="test-row" data-i="${i}">
+      html += `<tr class="test-row" data-i="${i}" tabindex="0" role="button" aria-expanded="false">
         <td>${String(i + 1).padStart(2, "0")}</td>
         <td>${esc(r.test)}${r.hidden ? " " + badge("เทสต์ลับ", "hidden") : ""}</td>
         <td>${badgeVerdict(r.verdict)}</td><td>${r.wall_s}s</td><td>${r.cpu_s}s</td><td>${r.peak_mb}MB</td>
@@ -1368,6 +1720,7 @@ function renderResults(d, secs) {
       html += `<tr class="detail-row hidden" data-i="${i}"><td colspan="6" class="detail-cell">${detailHtml(r)}</td></tr>`;
     });
     html += `</tbody></table>`;
+    html += `<p class="dim">คลิกแถวเพื่อดูรายละเอียดของเทสต์นั้น</p>`;
   }
   if (d.code) {
     html += `<details class="code-view"><summary>ดูโค้ดที่ส่ง (${esc(String(d.code).split("\n").length)} บรรทัด)</summary><pre>${highlightCode(d.code, d.language)}</pre></details>`;
@@ -1376,48 +1729,56 @@ function renderResults(d, secs) {
   body.classList.remove("dim");
   body.innerHTML = html;
   body.querySelectorAll("tr.test-row").forEach((tr) => {
-    tr.onclick = () => {
+    const toggle = () => {
       const det = body.querySelector(`tr.detail-row[data-i="${tr.dataset.i}"]`);
-      if (det) det.classList.toggle("hidden");
+      if (!det) return;
+      const open = det.classList.toggle("hidden");
+      tr.setAttribute("aria-expanded", open ? "false" : "true");
+    };
+    tr.onclick = toggle;
+    tr.onkeydown = (ev) => {
+      if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggle(); }
     };
   });
 }
 
 function detailHtml(r) {
   if (r.hidden) return hiddenDetailHtml(r);
-  if (r.verdict === "AC") return `<span class="dim">ผ่าน — คลิกแถวเพื่อย่อ</span>`;
+  if (r.verdict === "AC") return `<span class="dim">ผ่านเทสต์นี้</span>`;
   if (r.verdict === "TLE")
-    return `<span class="dim">Time Limit Exceeded (wall ${esc(String(r.wall_s))}s). Hint: O(n^2) จะไม่รอด test ใหญ่สุด</span>`;
+    return `<p class="dim">ใช้เวลา ${esc(String(r.wall_s))}s เกิน limit — ถ้าเขียนซ้ำซ้อนเป็น O(n²) ให้ลองหาวิธีที่เร็วกว่า หรือเลิกอ่าน input ทีละบรรทัด</p>`;
   if (r.verdict === "MLE")
-    return `<pre>${esc(r.detail || "Memory Limit Exceeded")}</pre>`;
+    return `<p class="dim">ใช้หน่วยความจำเกิน limit</p><pre>${esc(r.detail || "")}</pre>`;
   if (r.verdict === "OLE")
-    return `<span class="dim">Output Limit Exceeded (${esc(r.detail || "")}) — print loop รึเปล่า?</span>`;
+    return `<p class="dim">พิมพ์ผลลัพธ์ออกมามากเกินไป (${esc(r.detail || "")}) — ตรวจว่ามี print ในลูปไม่รู้จบหรือเปล่า</p>`;
   if (r.verdict === "WA") {
-    return `<p><strong>diff (·=space, →=tab):</strong></p><pre>${esc(r.diff || "")}</pre>
-      <p><strong>input:</strong></p><pre>${esc(r.input || "")}</pre>
-      <p><strong>expected:</strong></p><pre>${esc(r.expected || "")}</pre>
-      <p><strong>actual:</strong></p><pre>${esc(r.actual || "")}</pre>`;
+    return `<p class="io-title">ส่วนต่าง (· = ช่องว่าง, → = แท็บ) — <span class="d-del">บรรทัดสีแดงคือคำตอบที่ถูก</span> / <span class="d-add">สีเขียวคือที่โปรแกรมพิมพ์</span></p>${diffHtml(r.diff || "")}
+      <div class="io-grid">
+        ${ioBlockHtml("input (ตัวอย่างสาธารณะ)", r.input || "")}
+        ${ioBlockHtml("expected", r.expected || "")}
+      </div>
+      ${ioBlockHtml("actual (ที่โปรแกรมพิมพ์)", r.actual || "")}`;
   }
-  return `<pre>${esc(r.detail || r.verdict)}</pre>`;
+  return `<pre>${esc(r.detail || VERDICT_TH[r.verdict] || r.verdict)}</pre>`;
 }
 
 /* Hidden tests arrive without input/expected/actual/diff — never render any of
  * them (even if a payload ever carried them), and never try to fetch them. */
 function hiddenDetailHtml(r) {
-  let html = `<p><strong>เทสต์ลับ (ซ่อนโจทย์)</strong> — ข้อนี้ไม่แสดง input / expected / diff</p>`;
+  let html = `<p><strong>เทสต์ลับ</strong> — ข้อนี้ไม่แสดง input / expected / ส่วนต่างของคำตอบ</p>`;
   html += `<p class="dim">${esc(verdictHint(r))}</p>`;
   if (r.detail) html += `<pre>${esc(r.detail)}</pre>`;
   return html;
 }
 
 function verdictHint(r) {
-  if (r.verdict === "AC") return "ผ่านเทสต์ลับข้อนี้";
-  if (r.verdict === "OK") return "รันจบแบบไม่มี error";
-  if (r.verdict === "TLE") return `Time Limit Exceeded (wall ${r.wall_s}s) — ลด complexity หรือ optimise I/O`;
-  if (r.verdict === "MLE") return `Memory Limit Exceeded (peak ${r.peak_mb}MB) — ใช้หน่วยความจำน้อยลง`;
-  if (r.verdict === "OLE") return "Output Limit Exceeded — ปริ้นต์ออกมามากเกินไป";
-  if (r.verdict === "RE") return "Runtime Error — ตรวจ index / การหารด้วยศูนย์ / ชนิดข้อมูล";
-  if (r.verdict === "WA") return "คำตอบไม่ตรงกับเทสต์ลับข้อนี้";
+  if (r.verdict === "AC") return "ผ่านเทสต์นี้";
+  if (r.verdict === "OK") return "รันจบโดยไม่มี error";
+  if (r.verdict === "TLE") return `ใช้เวลา ${r.wall_s}s เกิน limit — มักเกิดจากอัลกอริทึมช้า (O(n²)) หรืออ่าน input ช้า`;
+  if (r.verdict === "MLE") return `ใช้หน่วยความจำสูงสุด ${r.peak_mb}MB เกิน limit — ลดขนาด array หรือเก็บข้อมูลน้อยลง`;
+  if (r.verdict === "OLE") return "พิมพ์ผลลัพธ์ยาวเกินกำหนด";
+  if (r.verdict === "RE") return "โปรแกรมพังตอนรัน — เช็ก index ของ array, การหารด้วยศูนย์, ชนิดข้อมูล";
+  if (r.verdict === "WA") return "คำตอบไม่ตรงกับเทสต์นี้ — เทียบทีละบรรทัดกับ expected";
   return String(r.verdict || "");
 }
 
@@ -1497,18 +1858,33 @@ function renderRunResult(d) {
 }
 
 /* ---------------- history ---------------- */
+/* A stored row only has AC / a failure verdict / counts: pick the label the
+ * student can act on instead of painting every failure as WA. */
+function rowVerdictCode(r) {
+  if (r.accepted) return "AC";
+  if (r.verdict && r.verdict !== "AC" && VERDICT_TH[r.verdict]) return r.verdict;
+  const counts = r.counts || {};
+  return ["CE", "RE", "MLE", "TLE", "OLE", "WA"].find((k) => counts[k]) || "WA";
+}
+
+function shortTime(iso) {
+  const t = Date.parse(iso);
+  if (!t) return iso || "";
+  const d = new Date(t);
+  const opts = { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" };
+  if (d.getFullYear() !== new Date().getFullYear()) opts.year = "2-digit";
+  return d.toLocaleString("th-TH", opts);
+}
+
 function historyTable(rows, showProblem) {
   let html = `<table class="tests"><thead><tr>
     <th>เวลา</th>${showProblem ? "<th>ข้อ</th>" : ""}<th>ชื่อ</th><th>ภาษา</th><th>ผล</th><th>คะแนน</th><th></th>
   </tr></thead><tbody>`;
   rows.forEach((r) => {
-    const when = new Date(r.created_at).toLocaleString();
-    const cls = r.accepted ? "AC" : (r.verdict === "CE" ? "CE" : "WA");
-    const label = r.accepted ? "AC" : (r.verdict || "REJECTED");
     html += `<tr>
-      <td>${esc(when)}</td>${showProblem ? `<td>${problemCell(r.problem)}</td>` : ""}<td>${esc(r.name || "—")}</td><td>${esc(r.language)}</td>
-      <td>${badge(label, cls)}</td><td>${r.passed}/${r.total} (<span class="${scoreCls(r.score)}">${r.score}</span>)</td>
-      <td><button class="icon-btn" data-view="${esc(r.id)}" title="ดูผล">${icon("eye")}</button></td>
+      <td title="${esc(r.created_at || "")}">${esc(shortTime(r.created_at))}</td>${showProblem ? `<td>${problemCell(r.problem)}</td>` : ""}<td>${esc(r.name || "—")}</td><td>${esc(r.language || "—")}</td>
+      <td>${badgeVerdict(rowVerdictCode(r))}</td><td>${r.passed}/${r.total} (<span class="${scoreCls(r.score)}">${r.score}</span>)</td>
+      <td><button class="icon-btn" data-view="${esc(r.id)}" title="ดูผลการตรวจ" aria-label="ดูผลการตรวจ">${icon("eye")}</button></td>
     </tr>`;
   });
   return html + `</tbody></table>`;
@@ -1551,8 +1927,29 @@ async function loadHistory() {
       body.innerHTML = `<span class="dim">ยังไม่มีการส่ง</span>`;
       return;
     }
+    const vf = ($("hist-verdict") || {}).value || "";
+    const shown = rows.filter((r) =>
+      vf === "pass" ? r.accepted : vf === "fail" ? !r.accepted : true);
+    if (!shown.length) {
+      body.innerHTML = `<span class="dim">ไม่มีการส่งที่ตรงกับตัวกรอง</span>`;
+      return;
+    }
     body.classList.remove("dim");
-    body.innerHTML = historyTable(rows, true);
+    if ($("hist-group") && $("hist-group").checked) {
+      const byProblem = new Map();
+      shown.forEach((r) => {
+        if (!byProblem.has(r.problem)) byProblem.set(r.problem, []);
+        byProblem.get(r.problem).push(r);
+      });
+      body.innerHTML = Array.from(byProblem.entries()).map(([pid, list]) => {
+        const best = list.reduce((m, r) => Math.max(m, r.score || 0), 0);
+        const nPass = list.filter((r) => r.accepted).length;
+        return `<h3 class="pane-h">${problemCell(pid)} — ส่ง ${list.length} ครั้ง · ผ่าน ${nPass} · ดีสุด ${best}/100</h3>` +
+          historyTable(list, false);
+      }).join("");
+    } else {
+      body.innerHTML = historyTable(shown, true);
+    }
     bindViewButtons(body);
   } catch (e) {
     body.innerHTML = `<span class="dim">ดูประวัติไม่ได้: ${esc(e.message)}</span>`;
@@ -1577,7 +1974,7 @@ async function viewSubmission(sid) {
       results: r.results || [],
       code: r.code || "", filename: r.filename || "", language: r.language || "",
       author: r.name || "",
-    }, 0);
+    }, null);
     document.querySelector("#pane-submit").scrollIntoView({ behavior: "smooth" });
   } catch (e) {
     // 403 = someone else's submission: the payload never reaches the DOM, so no
@@ -1855,10 +2252,15 @@ function renderContestBanner() {
 }
 
 /* ---------------- settings ---------------- */
-function setLang(lang) {  if (!["python", "c", "cpp"].includes(lang)) return;
+function setLang(lang) {
+  if (!["python", "c", "cpp"].includes(lang)) return;
   state.lang = lang;
-  document.querySelectorAll(".lang-btn").forEach((x) =>
-    x.classList.toggle("active", x.dataset.lang === lang));
+  try { localStorage.setItem(LANG_KEY, lang); } catch (e) { /* ignore */ }
+  document.querySelectorAll(".lang-btn").forEach((x) => {
+    const on = x.dataset.lang === lang;
+    x.classList.toggle("active", on);
+    if (x.hasAttribute("aria-checked")) x.setAttribute("aria-checked", on ? "true" : "false");
+  });
 }
 
 async function renderSettings() {
@@ -2200,12 +2602,34 @@ const TAGS = [
   "NP", "Recursive", "Linear Algebra", "Matching",
 ];
 
+const TAG_SHOWN = 8;              // tags before the "ดูทั้งหมด" toggle
+let tagsExpanded = false;
+
 function renderTagList() {
   const box = $("tag-list");
   if (!box) return;
-  box.innerHTML = TAGS.map((t) =>
+  // Rank by how many problems carry the tag: the useful ones come first instead
+  // of opening the sidebar with 28 equal chips.
+  const counts = {};
+  state.problems.forEach((p) => (p.tags || []).forEach((t) => {
+    counts[t] = (counts[t] || 0) + 1;
+  }));
+  const ranked = TAGS.slice().sort((a, b) =>
+    (counts[b] || 0) - (counts[a] || 0) || a.localeCompare(b));
+  const shown = tagsExpanded ? ranked : ranked.slice(0, TAG_SHOWN);
+  // never hide the tag that is currently filtering the list
+  if (!tagsExpanded && state.filter.tag && !shown.includes(state.filter.tag)) {
+    shown.push(state.filter.tag);
+  }
+  box.innerHTML = shown.map((t) =>
     `<button class="tag-row${state.filter.tag === t ? " on" : ""}" data-tag="${esc(t)}">${esc(t)}</button>`
   ).join("");
+  if (ranked.length > TAG_SHOWN) {
+    box.insertAdjacentHTML("beforeend",
+      `<button class="tag-row tag-more" id="tag-more" type="button">${
+        tagsExpanded ? "ย่อรายการ" : `ดูทั้งหมด (${ranked.length})`}</button>`);
+    $("tag-more").onclick = () => { tagsExpanded = !tagsExpanded; renderTagList(); };
+  }
   box.querySelectorAll("[data-tag]").forEach((b) => {
     b.onclick = () => setTagFilter(b.dataset.tag);
   });
@@ -2249,6 +2673,9 @@ function buildFilterOptions() {
 
 /* ---------------- init ---------------- */
 async function init() {
+  bindEditorKeys();
+  setLang(lastLang() || state.lang);   // remember the language, default Python
+  window.addEventListener("beforeunload", saveDraft);
   const fd = $("f-diff"), hf = $("hist-filter"), fs = $("f-sort");
   try {
     const saved = localStorage.getItem("ng_sort");
@@ -2272,6 +2699,8 @@ async function init() {
   });
   $("tag-clear-side").onclick = () => setTagFilter(state.filter.tag);
   hf.onchange = loadHistory;
+  if ($("hist-verdict")) $("hist-verdict").onchange = loadHistory;
+  if ($("hist-group")) $("hist-group").onchange = loadHistory;
   $("hist-refresh").onclick = loadHistory;
   $("auth-go").onclick = doPasswordAuth;
   $("auth-pass").onkeydown = (e) => { if (e.key === "Enter") doPasswordAuth(); };

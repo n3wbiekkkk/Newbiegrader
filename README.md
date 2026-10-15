@@ -8,7 +8,13 @@ Grader แบบ stdlib-only (ไม่ต้องลง lib) รองรั�
 
 Stack: FastAPI + Uvicorn (backend) + HTML/CSS/JS ไม่ต้อง build (frontend).
 รองรับ Python / C / C++ ส่งได้ 2 แบบ: วางโค้ดใน editor หรือแนบไฟล์ (คลิก/ลากไฟล์ลง dropzone)
-หน้าเว็บมีวิว: Home (สถิติ) / Tasks (การ์ดโจทย์ + sidebar All/Tried/Solved/Tag Filter) / Task (Statement/Submit/Submissions/My/Run + Your Score) / Contests (+ scoreboard) / Archive / Leaderboard / History (ของตัวเอง) / Settings (รวมเครื่องมือ admin) / Login
+หน้าเว็บมีวิว: หน้าแรก (สถิติ + การ์ด "ทำต่อจากที่ค้าง") / โจทย์ (การ์ดโจทย์ + sidebar All/Tried/Solved/Tag Filter) / หน้าข้อ (โจทย์/ส่งโค้ด/ทดลองรัน/การส่งทั้งหมด/ของฉัน/แจ้งปัญหา) / การแข่ง (+ scoreboard) / หมวดโจทย์ / จัดอันดับ / ประวัติ / ตั้งค่า / ผู้ดูแล (admin)
+
+UX ที่ออกแบบไว้ให้เด็กมัธยมใช้จริง:
+- **ร่างโค้ดไม่หาย**: พิมพ์ค้างไว้แล้วปิด/เปลี่ยนหน้า กลับมาโค้ดยังอยู่ (ต่อโจทย์, เก็บใน localStorage) และงานที่ยังตรวจไม่จบจะกลับมาต่อเองพร้อมผลลัพธ์
+- **editor ใช้คีย์บอร์ดได้**: Tab/Shift+Tab ย่อ-ลดย่อหน้า, Enter ต่อ indent ให้เอง, Cmd/Ctrl+Enter = ส่ง, Cmd/Ctrl+/ = คอมเมนต์
+- **ผลตรวจเป็นภาษาไทย**: ป้ายผล (ผ่าน / คำตอบไม่ตรง / ช้าเกินเวลา / แรมเกิน / โปรแกรมพังตอนรัน / คอมไพล์ไม่ผ่าน) + บรรทัด "เริ่มแก้ที่..." + diff ระบายสีบรรทัดที่ต่าง (เทสต์ลับยังไม่เปิด input/expected)
+- **design token เดียวทั้งเว็บ**: สี/ตัวอักษร/ระยะ/รัศมีอยู่ใน `styles.css` บล็อก `:root` + `[data-theme="dark"]` — ตรวจด้วย `node tools/check_styles.js` (คอนทราสต์ผ่าน AA ทั้ง light/dark)
 
 ```bash
 pip3 install --user -r requirements.txt
@@ -237,7 +243,8 @@ supabase/schema.sql            # schema + migration ทั้งหมด
 tests/                         # E2E API test (fake Supabase, ไม่แตะข้อมูลจริง)
 tools/validate_problem.py      # ตรวจโจทย์ทั้งชุด (config/tests/ตัวอย่าง/ref ต้อง AC)
 tools/plagiarism.py            # ตรวจการก็อปโค้ด (winnowing)
-tools/check_frontend.js        # เช็ค id ที่ app.js อ้างถึงว่ามีจริง
+tools/check_frontend.js     เช็ค id ที่ app.js อ้างถึงว่ามีจริง
+tools/check_styles.js       เช็ค design token (ห้ามสี hardcode, สีทุกตัวมีค่า dark)
 tools/make_statement_tex.py    # สร้าง statement.pdf (LaTeX)
 .github/workflows/ci.yml       # CI: compile + syntax + id check + validate โจทย์ + E2E test
 agent.md                       # คู่มือ AI
@@ -249,7 +256,7 @@ requirements.txt               # fastapi, uvicorn, python-multipart, supabase, i
 python3 tools/validate_problem.py          # 47 ข้อ: config/tests/ตัวอย่าง/ref ต้อง AC ครบ
 python3 tools/plagiarism.py                # self-test ของตัวตรวจการก็อป
 python3 -m unittest discover -s tests -v    # E2E API (คิวงาน/สิทธิ์/คอนเทสต์/quota/redact)
-node --check static/app.js && node tools/check_frontend.js
+node --check static/app.js && node tools/check_frontend.js && node tools/check_styles.js
 ```
 CI (`.github/workflows/ci.yml`) รันทั้งชุดนี้อัตโนมัติทุก push/PR เข้า `main`
 (validator รันแบบ jobs=1 ตั้งใจ — รัน ref หลายข้อพร้อมกันจะได้ TLE ปลอมจากการแย่ง CPU)

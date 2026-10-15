@@ -18,7 +18,7 @@
 8. หลังเพิ่ม/แก้โจทย์ ต้อง **restart server** (problems โหลดตอน boot)
 9. เปลี่ยน DB ต้อง append ลง `supabase/schema.sql` (`if not exists` เสมอ) แล้ว **ให้ user รันใน SQL Editor** (agent รัน DDL เองไม่ได้)
 10. Deploy: `git push origin main` (frontend) + `git push deploy HEAD:deploy` (backend, build 3-5 นาที) — deploy **backend ก่อน** ถ้า frontend พึ่ง API ใหม่
-11. ก่อน commit: `python3 -m unittest discover -s tests -v` + `python3 tools/validate_problem.py` + `node --check static/app.js && node tools/check_frontend.js`
+11. ก่อน commit: `python3 -m unittest discover -s tests -v` + `python3 tools/validate_problem.py` + `node --check static/app.js && node tools/check_frontend.js && node tools/check_styles.js`
 12. ถ้าติดปัญหา ให้ดูข้อ 15 "กับดักที่เจอแล้ว" — เกือบทุกอาการแปลก ๆ ที่เจอมา อยู่ในนั้นแล้ว
 
 ---
@@ -82,6 +82,7 @@ tools/problem_visibility.py ตั้ง hidden/public ของโจทย์ 
 tools/number_problems.py   จัดการเลขโจทย์ (--list/--assign/--renumber/--set/--check)
 tools/plagiarism.py        ตรวจการก็อปโค้ด (winnowing, stdlib) + self-test ใน __main__
 tools/check_frontend.js    เช็ค $("id") ใน app.js ว่ามีจริงใน index.html หรือใน template literal
+tools/check_styles.js     เช็ค design token: ห้ามสี hardcode นอกบล็อก token, var() ต้องมีจริง, สีทุกตัวต้องมีค่า dark
 tools/make_statement_tex.py สร้าง statement.pdf (LaTeX/tectonic + TH Sarabun, build นิ่ง byte-identical)
 tools/fonts/               ฟอนต์สำหรับ PDF
 tests/fake_supabase.py     in-memory stand-in ของ supabase client (ตาราง + view + column whitelist)
@@ -334,8 +335,13 @@ graph LR
 - identity-dependent view: หลัง `refreshMe()` ใน `init()` ต้องเรียก `currentRouteRender()` (เคยเป็นบั๊ก: เปิด `#/settings` ตรง ๆ แล้วการ์ด admin หาย)
 - cache: `localStorage["ng_problems_v1"]` (TTL 1 ชม.) — **ห้าม cache รายการแบบ admin** (มีโจทย์ที่ซ่อน) และต้อง `removeItem` ตอน logout
 - หลังแก้visibility ของโจทย์ (สร้าง/ลบคอนเทสต์) ต้องเรียก `refreshProblems()` ไม่งั้นลิสต์ค้าง
-- ตรวจก่อน commit: `node --check static/app.js` + `node tools/check_frontend.js` (`$("id")` ทุกตัวต้องมีจริง/อยู่ใน template literal)
-- dark mode ผ่าน CSS vars (`--field`, `--on-acc`, `--muted`, `--border`, `--surface`, `--link`, `--dim`) — ห้าม hardcode สี
+- ตรวจก่อน commit: `node --check static/app.js` + `node tools/check_frontend.js` (`$("id")` ทุกตัวต้องมีจริง/อยู่ใน template literal) + `node tools/check_styles.js`
+- **Design token**: สี/ขนาดตัวอักษร/ระยะห่าง/รัศมี/เงา อยู่ในบล็อก `:root` + `[data-theme="dark"]` ของ `styles.css` เท่านั้น — ห้าม hardcode hex/rgba ใน selector (CI ฟ้อง) สีทุกตัวต้องมีค่า dark ถ้าสีนั้นควรต่าง (ยกเว้นชิปทึบที่ผ่าน contrast ทั้งสองธีมแล้ว — อยู่ใน allowlist ของ `tools/check_styles.js`)
+- **คำใน UI เป็นไทยก่อน**: verdict ใช้ `VERDICT_TH` ผ่าน `badgeVerdict()` (เก็บตัวย่อ AC/WA/TLE ไว้เป็น `title`), วันที่ผ่าน `shortTime()`, เวลาผ่าน `relTime()` — อย่าเพิ่มคำอังกฤษใหม่ในหน้าเว็บ
+- **งานที่พิมพ์ค้างต้องไม่หาย**: ร่างโค้ดเก็บใน `localStorage.ng_draft_v1` (ต่อโจทย์) · job ที่ยังตรวจไม่จบเก็บใน `ng_job_v1` แล้ว `resumeJob()` กลับมาต่อเอง — อย่าลบ/เปลี่ยนชื่อคีย์โดยไม่ย้ายข้อมูล
+- **คีย์บอร์ด**: ทุกปุ่มกดได้ด้วย Tab, การ์ดโจทย์เป็น `<a>` จริง (`app.js` renderTasksTable) และแถวเทสต์ในผลตรวจมี `role=button` + Enter/Space — เพิ่ม element ที่กดได้ใหม่ต้องทำแบบเดียวกัน
+- `?v=` ต้อง bump ทุกครั้งที่แก้ `app.js`/`styles.css`/`config.js` และ bump `?v=` ของ `logo-icon*.png` ด้วยถ้าเปลี่ยนไฟล์รูป
+- dark mode ผ่าน CSS vars (`--bg`, `--card`, `--panel2`, `--field`, `--border`, `--text`, `--dim`, `--link`, `--acc`, `--on-acc`, `--green/--yellow/--red`, `--ok-bg/--warn-bg/--err-bg`, `--tk-*`) — ห้าม hardcode สี
 
 ---
 
@@ -408,7 +414,7 @@ curl -s https://gradernew.pages.dev/ | grep -o 'app.js?v=[0-9]*'                
 
 ```bash
 python3 -m compileall -q grader.py server.py tools tests     # syntax
-node --check static/app.js && node tools/check_frontend.js    # frontend syntax + ids
+node --check static/app.js && node tools/check_frontend.js && node tools/check_styles.js   # frontend syntax + ids + design tokens
 python3 tools/number_problems.py --check                     # เลขโจทย์ไม่ซ้ำ/ต่อเนื่อง
 python3 tools/validate_problem.py                            # 47 ข้อ: config/เทสต์/ตัวอย่าง/ref ต้อง AC (16-25 วิ)
 python3 tools/plagiarism.py                                  # self-test ของตัวตรวจการก็อป
@@ -452,7 +458,7 @@ uvicorn.run(server.app, host="127.0.0.1", port=8094, log_level="warning")
 
 ### 12.4 CI (`.github/workflows/ci.yml`)
 
-`compileall` → `node --check` → `check_frontend.js` → `validate_problem.py` → `plagiarism.py` → `unittest discover`
+`compileall` → `node --check` → `check_frontend.js` → `check_styles.js` → `validate_problem.py` → `plagiarism.py` → `unittest discover`
 รันทุก push/PR เข้า `main` (ไม่มี secrets → เทสต์ต้องไม่พึ่ง env จริง, ต้องข้ามได้เมื่อไม่มี SUPABASE_URL)
 
 ---
