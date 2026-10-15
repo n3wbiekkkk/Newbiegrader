@@ -594,7 +594,8 @@ WORKER_ID = f"{os.getpid()}-{uuid.uuid4()}"
 
 async def _queue_rpc(name: str, **params):
     if _sb is None:
-        raise HTTPException(status_code=503, detail="judge database unavailable")
+        raise HTTPException(status_code=503, detail="judge database unavailable",
+                            headers={"Retry-After": "30"})
     try:
         response = await asyncio.to_thread(
             lambda: _sb.rpc("judge_queue_" + name, params).execute())

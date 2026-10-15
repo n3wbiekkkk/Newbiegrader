@@ -93,6 +93,14 @@ class QueueAdmission(unittest.IsolatedAsyncioTestCase):
                 await server._load_job("not-cached")
         self.assertEqual(raised.exception.status_code, 503)
 
+    async def test_create_job_503_when_database_unavailable_has_retry_after(self):
+        with patch.object(server, "_sb", None), patch.object(server, "QUEUE_MODE", "database"):
+            with self.assertRaises(server.HTTPException) as raised:
+                await server._create_job(job())
+        self.assertEqual(raised.exception.status_code, 503)
+        self.assertIn("Retry-After", raised.exception.headers)
+        self.assertTrue(raised.exception.headers["Retry-After"].isdigit())
+
     async def test_status_is_authoritative(self):
         queued = await server._create_job(job())
         self.fake.rows("judge_jobs")[0].update(status="done", result={"score": 100})
