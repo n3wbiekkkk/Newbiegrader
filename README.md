@@ -105,7 +105,7 @@ The people who write and maintain this repository.
 | Role | Person | Scope |
 |---|---|---|
 | Maintainer | [@n3wbiekkkk](https://github.com/n3wbiekkkk) | Repository owner: judging engine, HTTP API, frontend, problem set, deployment |
-| Contributors | [@Piyaph4t](https://github.com/Piyaph4t) | Contributor guide (`AGENTS.md`), judge-worker split (`judge_runner.py`/`worker.py`), queue test coverage |
+| Contributors | [@Piyaph4t](https://github.com/Piyaph4t) | Judge-worker split (`judge_runner.py`/`worker.py`), queue test coverage |
 
 Contributors are credited here once their work is merged, and the copyright line in the licence names
 them collectively. To be listed, open a pull request — see *Contributing* above. For anything
