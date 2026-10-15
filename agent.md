@@ -329,7 +329,7 @@ graph LR
 - ห้าม emoji ใน UI · icon ใช้ SVG sprite (`<symbol id="i-*">` ใน index.html + helper `icon(name, cls)`)
 - โครง JS: `state` กลาง (ที่ต้นไฟล์) · router = hash (`router()` + `currentRouteRender()`) · fetch ผ่าน `apiFetch/apiGet/apiPostJson/apiPostForm/apiDelete` (แนบ `detail` ของ server มาเสมอ) · `pollJob(jid, onTick)` สำหรับงาน async (700ms, เพดาน 4 นาที) · `esc()` ก่อนแทรก HTML เสมอ · `badge()/icon()/scoreCls()/limitsMeta()`
 - เลขโจทย์: `noLabel(p)` = chip `#19` ใช้บนการ์ด/หัวข้อ/ตาราง; ช่องค้นหารับ `19` และ `#19`; `#/task/19` เปิดด้วยเลข (router ใช้ `resolveTaskToken()`/`openTaskByToken()` — เลขที่ไม่พบในลิสต์จะลองยิง API ต่อ เช่นโจทย์ชุดคอนเทสต์); เรียงได้ 3 แบบผ่าน `#f-sort` (`state.filter.sort` + `sortProblemList()`, จำค่าใน `localStorage.ng_sort`)
-- หน้า **admin แยกจาก Settings**: route `#/admin` + `renderAdmin()` (การ์ด overview/reports/rejudge/plagiarism/คอนเทสต์); nav link `#nav-admin` ซ่อนจนกว่า `state.is_admin` และ non-admin ที่เปิด `#/admin` จะถูกดีดกลับ `#/`; Settings เหลือโปรไฟล์เท่านั้น
+- หน้า **admin แยกจาก Settings**: route `#/admin` + `renderAdmin()` — ลำดับการ์ด: ภาพรวม → **จัดการคอนเทสต์** → รีพอร์ต → rejudge/plagiarism (คอนเทสต์อยู่ใต้อภิมรรวมตามที่ผู้ใช้ต้องการ); nav link `#nav-admin` ซ่อนจนกว่า `state.is_admin` และ non-admin ที่เปิด `#/admin` จะถูกดีดกลับ `#/`; Settings เหลือโปรไฟล์เท่านั้น
 - routes: `#/` `#/tasks` `#/task/<pid|no>` `#/archive` `#/leaderboard` `#/contests` `#/contests/<id>` `#/history` `#/settings` `#/admin` `#/login` `#/login/register`
 - identity-dependent view: หลัง `refreshMe()` ใน `init()` ต้องเรียก `currentRouteRender()` (เคยเป็นบั๊ก: เปิด `#/settings` ตรง ๆ แล้วการ์ด admin หาย)
 - cache: `localStorage["ng_problems_v1"]` (TTL 1 ชม.) — **ห้าม cache รายการแบบ admin** (มีโจทย์ที่ซ่อน) และต้อง `removeItem` ตอน logout
@@ -338,6 +338,14 @@ graph LR
 - dark mode ผ่าน CSS vars (`--field`, `--on-acc`, `--muted`, `--border`, `--surface`, `--link`, `--dim`) — ห้าม hardcode สี
 
 ---
+
+### 8.1 อย่าเปิดเผยจำนวนโจทย์ทั้งหมดใน UI (นโยบายผู้ใช้)
+
+- header แสดงแค่ `online` (ไม่ใช่ `online - 47 ข้อ`) — `init()` ใน `app.js`
+- หน้า Home ไม่มีการ์ด "โจทย์ทั้งหมด"
+- `#filter-count` แสดงผลก็ต่อเมื่อ **มี filter/ค้นหาอยู่** (`พบ N ข้อ`) ถ้าไม่กรองก็ปล่อยว่าง
+- ค่าที่ admin เห็น (เช่น "มี N ข้อซ่อนจากผู้ใช้ทั่วไป") เปิดได้เพราะเป็น admin-only
+- ที่ยังเปิดเผยตัวเลขอยู่: หน้า Archive โชว์ `solved/total` ต่อระดับ (เป็นฟีเจอร์ progress) — ถ้าผู้ใช้ขอ ให้เปลี่ยนเป็นเปอร์เซ็นต์อย่างเดียว
 
 ## 9. Workflow: แก้ backend (`server.py` / `grader.py`)
 

@@ -454,7 +454,6 @@ window.addEventListener("hashchange", router);
 
 /* ---------------- home ---------------- */
 function renderHome() {
-  $("stat-problems").textContent = state.problems.length;
   let subs = 0, acc = 0;
   Object.values(state.stats).forEach((s) => { subs += s.subs || 0; acc += s.accepted || 0; });
   $("stat-subs").textContent = subs;
@@ -521,7 +520,11 @@ function taskScoreHtml(pid) {
 function renderTasksTable() {
   const list = filteredProblems();
   const hiddenCount = state.problems.filter((p) => p.hidden).length;
-  $("filter-count").textContent = `${list.length}/${state.problems.length} ข้อ` +
+  // The total problem count is not published: show how many matched only while a
+  // filter/search is active (otherwise the number is just the total in disguise).
+  const f = state.filter;
+  const filtering = !!(f.q.trim() || f.diff || f.tag || (f.status && f.status !== "all"));
+  $("filter-count").textContent = (filtering ? `พบ ${list.length} ข้อ` : "") +
     (state.is_admin && hiddenCount ? ` (มี ${hiddenCount} ข้อซ่อนจากผู้ใช้ทั่วไป)` : "");
   const box = $("task-cards");
   box.innerHTML = "";
@@ -1941,7 +1944,7 @@ function renderAdmin() {
     location.hash = "#/";
     return;
   }
-  ["overview-card", "admin-card", "admin-tools-card"].forEach((id) => {
+  ["overview-card", "contest-card", "admin-card", "admin-tools-card"].forEach((id) => {
     const el = $(id);
     if (el) el.classList.remove("hidden");
   });
@@ -2310,7 +2313,7 @@ async function init() {
   // 2. health gates everything else
   try {
     const h = await apiGet("/api/health");
-    $("health").textContent = `online - ${h.problems.length} ข้อ`;
+    $("health").textContent = "online";
     $("health").classList.add("ok");
   } catch (e) {
     $("health").textContent = "offline";

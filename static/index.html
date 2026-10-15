@@ -72,7 +72,6 @@
         <a class="btn-ghost" href="#/history">ดูประวัติการส่ง</a>
       </div>
       <div class="stat-strip">
-        <div class="stat"><div class="stat-num" id="stat-problems">0</div><div class="stat-label">โจทย์ทั้งหมด</div></div>
         <div class="stat"><div class="stat-num" id="stat-subs">0</div><div class="stat-label"> submissions</div></div>
         <div class="stat"><div class="stat-num" id="stat-accepted">0</div><div class="stat-label">ผ่านแล้ว</div></div>
       </div>
@@ -354,40 +353,7 @@
       <h3 class="pane-h">ล่าสุด 10 รายการ</h3>
       <div id="overview-recent" class="dim">—</div>
     </div>
-    <div class="card hidden" id="admin-card" style="margin-top:16px">
-      <h3 class="pane-h">Reports ทั้งหมด (admin)</h3>
-      <div id="admin-reports" class="dim">—</div>
-    </div>
-    <div class="card hidden" id="admin-tools-card" style="margin-top:16px">
-      <h3 class="pane-h">ตรวจซ้ำ (rejudge)</h3>
-      <div class="settings-row">
-        <label for="rejudge-problem">ข้อที่จะตรวจซ้ำ</label>
-        <select id="rejudge-problem"></select>
-      </div>
-      <div class="settings-row">
-        <label for="rejudge-limit">จำนวนการส่งล่าสุด</label>
-        <input id="rejudge-limit" type="number" min="1" max="200" value="10">
-      </div>
-      <div class="submit-row">
-        <button id="rejudge-btn" type="button" class="ghost-btn"><svg class="ic"><use href="#i-refresh"/></svg><span>ตรวจซ้ำล่าสุด</span></button>
-      </div>
-      <div id="rejudge-status" class="status dim" role="status" aria-live="polite"></div>
-
-      <h3 class="pane-h">จับโค้ดคล้ายกัน (plagiarism)</h3>
-      <div class="settings-row">
-        <label for="plag-problem">ข้อที่จะสแกน</label>
-        <select id="plag-problem"></select>
-      </div>
-      <div class="settings-row">
-        <label for="plag-threshold">threshold ความคล้าย <span id="plag-threshold-val" class="mono-num">0.60</span></label>
-        <input id="plag-threshold" type="range" min="0.05" max="1" step="0.05" value="0.6">
-      </div>
-      <div class="submit-row">
-        <button id="plag-btn" type="button" class="ghost-btn"><svg class="ic"><use href="#i-search"/></svg><span>สแกนหาคู่ที่คล้ายกัน</span></button>
-      </div>
-      <div id="plag-status" class="status dim" role="status" aria-live="polite"></div>
-      <div id="plag-body" class="dim">—</div>
-
+    <div class="card hidden" id="contest-card" style="margin-top:16px">
       <h3 class="pane-h">จัดการคอนเทสต์ (admin)</h3>
       <div class="settings-row">
         <label for="ct-id">id (slug: a-z 0-9 _ -)</label>
@@ -427,6 +393,41 @@
       <h3 class="pane-h">คอนเทสต์ทั้งหมด</h3>
       <div id="ct-list" class="dim">—</div>
     </div>
+    <div class="card hidden" id="admin-card" style="margin-top:16px">
+      <h3 class="pane-h">Reports ทั้งหมด (admin)</h3>
+      <div id="admin-reports" class="dim">—</div>
+    </div>
+    <div class="card hidden" id="admin-tools-card" style="margin-top:16px">
+      <h3 class="pane-h">ตรวจซ้ำ (rejudge)</h3>
+      <div class="settings-row">
+        <label for="rejudge-problem">ข้อที่จะตรวจซ้ำ</label>
+        <select id="rejudge-problem"></select>
+      </div>
+      <div class="settings-row">
+        <label for="rejudge-limit">จำนวนการส่งล่าสุด</label>
+        <input id="rejudge-limit" type="number" min="1" max="200" value="10">
+      </div>
+      <div class="submit-row">
+        <button id="rejudge-btn" type="button" class="ghost-btn"><svg class="ic"><use href="#i-refresh"/></svg><span>ตรวจซ้ำล่าสุด</span></button>
+      </div>
+      <div id="rejudge-status" class="status dim" role="status" aria-live="polite"></div>
+
+      <h3 class="pane-h">จับโค้ดคล้ายกัน (plagiarism)</h3>
+      <div class="settings-row">
+        <label for="plag-problem">ข้อที่จะสแกน</label>
+        <select id="plag-problem"></select>
+      </div>
+      <div class="settings-row">
+        <label for="plag-threshold">threshold ความคล้าย <span id="plag-threshold-val" class="mono-num">0.60</span></label>
+        <input id="plag-threshold" type="range" min="0.05" max="1" step="0.05" value="0.6">
+      </div>
+      <div class="submit-row">
+        <button id="plag-btn" type="button" class="ghost-btn"><svg class="ic"><use href="#i-search"/></svg><span>สแกนหาคู่ที่คล้ายกัน</span></button>
+      </div>
+      <div id="plag-status" class="status dim" role="status" aria-live="polite"></div>
+      <div id="plag-body" class="dim">—</div>
+
+    </div>
   </section>
 
   <!-- HISTORY -->
@@ -452,6 +453,6 @@
 </footer>
 
 <script src="/config.js?v=4"></script>
-<script src="/app.js?v=14"></script>
+<script src="/app.js?v=16"></script>
 </body>
 </html>
