@@ -126,6 +126,7 @@ class _Query:
             rows.append(row)
             return _Resp([copy.deepcopy(row)])
         if self._op == "update":
+            self.db.check_columns(self.table, self._payload.keys())
             touched = []
             for row in rows:
                 if self._match(row):
@@ -133,6 +134,7 @@ class _Query:
                     touched.append(copy.deepcopy(row))
             return _Resp(touched)
         if self._op == "delete":
+            self.db.check_columns(self.table, set())
             keep = [r for r in rows if not self._match(r)]
             gone = len(rows) - len(keep)
             rows[:] = keep
