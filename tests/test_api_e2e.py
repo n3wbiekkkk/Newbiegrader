@@ -278,8 +278,13 @@ class ApiE2E(unittest.TestCase):
         self.login(STUDENT_A)
         slow = "import time\ntime.sleep(1.2)\nprint('x')\n"
         first = self.submit("thai_time", slow)
-        second = self.submit("thai_time", slow, expect=409)
+        second_resp = self.client.post("/api/submit", data={
+            "problem": "thai_time", "language": "python", "code": slow},
+            headers=BROWSER)
+        self.assertEqual(second_resp.status_code, 409, second_resp.text)
+        second = second_resp.json()
         self.assertIn("already have a submission", second["detail"])
+        self.assertIn("Retry-After", second_resp.headers)
         job = self.wait_job(first["job_id"])
         self.assertEqual(job["status"], "done")
 
