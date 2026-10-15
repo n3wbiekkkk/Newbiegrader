@@ -105,7 +105,7 @@ The people who write and maintain this repository.
 | Role | Person | Scope |
 |---|---|---|
 | Maintainer | [@sphetpitak-sudo](https://github.com/sphetpitak-sudo) | Repository owner: judging engine, HTTP API, frontend, problem set, deployment |
-| Contributors | — | None yet: every commit in the history is the maintainer's |
+| Contributors | Piyaphat Jaiboon | Contributor guide (`AGENTS.md`), judge-worker split (`judge_runner.py`/`worker.py`), queue test coverage |
 
 Contributors are credited here once their work is merged, and the copyright line in the licence names
 them collectively. To be listed, open a pull request — see *Contributing* above. For anything
