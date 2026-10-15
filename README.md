@@ -16,7 +16,7 @@
 
   ### [Try the live demo](https://newbiegrader.pages.dev)
 
-  [Report a bug](../../issues) · [Adding a problem](#-adding-a-problem) · [Deploying](#-deploy)
+  [Report a bug](../../issues) · [Discord community](https://discord.gg/7NQDHFBpf6) · [Adding a problem](#-adding-a-problem) · [Deploying](#-deploy)
 </div>
 
 ---
@@ -107,7 +107,8 @@ Two invariants are non-negotiable:
 1. **One judge only** — everything judges through `grader.run_one` / `grader.judge_test` / `grader.prepare_command`, never inside a request handler.
 2. **Never disclose test data** — anything carrying test data passes through `_redact_results()`, on the response path and on the path to the database.
 
-To join the Team table, open a pull request.
+To join the Team table, open a pull request. Chat with other users, report broken
+problems or request new ones on [Discord](https://discord.gg/7NQDHFBpf6).
 
 | Role | Person | Scope |
 |---|---|---|
