@@ -9,7 +9,8 @@ Checks, per problem:
      `samples` is a list of test-name strings (canonical); an int (first N tests
      public) is accepted too since grader.load_problem supports it.
   2. statement.md (non-empty) and statement.pdf (>1KB; missing = warning)
-  3. tests/        count >= 10, contiguous 01..NN numbering, no orphans,
+  3. tests/        count >= 10, samples numbered 01.. (small) + hidden tests
+                   numbered contiguously from 1001 up, no orphans,
                    UTF-8, no CR, .in non-empty
   4. statement samples: every fenced `input:` / `output:` pair should match a
      shipped test under token comparison; when it does not, the statement
@@ -221,16 +222,23 @@ def validate_problem(pid: str) -> dict:
 
         stems = sorted(ins)
         if stems:
-            expected = [f"{i:02d}" for i in range(1, len(stems) + 1)]
-            if stems != expected:
-                missing = [s for s in expected if s not in ins]
-                extra = [s for s in stems if s not in expected]
-                detail = []
-                if missing:
-                    detail.append(f"missing {missing}")
-                if extra:
-                    detail.append(f"unexpected numbering {extra}")
-                fail("tests are not a contiguous 01..NN sequence: " + "; ".join(detail))
+            # Naming scheme: the number itself tells the status apart —
+            # public samples keep small numbers (01, 02, ...) while every
+            # hidden test is numbered from 1001 up. So a small-numbered test
+            # must be a declared sample, and hidden names must be contiguous.
+            raw = cfg.get("samples") if isinstance(cfg, dict) else None
+            declared = set(raw) if isinstance(raw, list) else set()
+            big = [s for s in stems if len(s) == 4 and s.startswith("10")]
+            small = [s for s in stems if s not in big]
+            bad_small = [s for s in small if s not in declared]
+            if bad_small:
+                fail(f"tests {bad_small} are not declared in config.samples — "
+                     "small numbers are public samples only, hidden tests must "
+                     "be numbered 1001..")
+            want_big = [str(1000 + i) for i in range(1, len(big) + 1)]
+            if big != want_big:
+                fail(f"hidden tests must be contiguous 1001..{1000 + len(big)} "
+                     f"(got {big})")
         if len(stems) < MIN_TESTS:
             fail(f"only {len(stems)} tests, need at least {MIN_TESTS}")
 
