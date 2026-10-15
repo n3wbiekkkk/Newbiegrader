@@ -511,13 +511,15 @@ function apiGet(path) {
  * Cleared after a submission, when the answers are known to be stale. */
 const _getCache = new Map();
 const _getInflight = new Map();
+let _getGen = 0;   // bumped on logout: late responses must not repopulate the cache
 
 function apiGetCached(path, ttlMs) {
   const hit = _getCache.get(path);
   if (hit && Date.now() - hit.t < ttlMs) return Promise.resolve(hit.v);
   if (_getInflight.has(path)) return _getInflight.get(path);
+  const gen = _getGen;
   const p = apiGet(path).then((v) => {
-    _getCache.set(path, { t: Date.now(), v: v });
+    if (gen === _getGen) _getCache.set(path, { t: Date.now(), v: v });
     _getInflight.delete(path);
     return v;
   }, (e) => {
@@ -529,7 +531,9 @@ function apiGetCached(path, ttlMs) {
 }
 
 function clearGetCache() {
+  _getGen++;
   _getCache.clear();
+  _getInflight.clear();
 }
 
 function apiPostJson(path, body) {
@@ -1075,14 +1079,17 @@ async function selectProblem(pid) {
   $("your-score-num").textContent = "—";
   $("report-status").textContent = "";
   $("report-msg").value = "";
+  const mySeq = (state.taskSeq = (state.taskSeq || 0) + 1);
   const pending = lastJobFor(pid);
   if (pending) resumeJob(pid, pending.id);   // keep waiting for an in-flight run
   try {
     const p = await apiGet(`/api/problems/${encodeURIComponent(pid)}`);
+    if (mySeq !== state.taskSeq) return;   // user moved to another problem: stale response
     state.detailCache[pid] = { t: Date.now(), data: p };
     fillTaskDetail(p);
     refreshYourScore();
   } catch (e) {
+    if (mySeq !== state.taskSeq) return;
     if (!hit) $("task-body").textContent = "โหลดโจทย์ไม่สำเร็จ: " + e.message;
   }
 }
@@ -1236,6 +1243,7 @@ $("logout-btn").onclick = async () => {
   // survive into the next session on a shared machine. Same for drafts and
   // remembered job ids — a school computer is shared.
   try { localStorage.removeItem(PROBLEMS_CACHE_KEY); } catch (e) { /* ignore */ }
+  clearGetCache();   // GET cache holds per-user answers (history?mine=1): must not leak to the next login
   clearLocalWorkspace();
   state.jobResults = {};
   await refreshMe();
@@ -1419,6 +1427,9 @@ document.querySelectorAll(".lang-btn").forEach((b) => {
 const dz = $("dropzone");
 const fi = $("file-input");
 dz.onclick = () => fi.click();
+dz.onkeydown = (e) => {
+  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fi.click(); }
+};
 ["dragover", "dragenter"].forEach((ev) =>
   dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add("over"); })
 );
@@ -1463,6 +1474,7 @@ const POLL_MS = 700;
 const POLL_MIN_MS = 500;
 const POLL_CAP_MS = 5000;
 const POLL_MAX_MS = 4 * 60 * 1000;
+const POLL_NET_RETRIES = 8;   // transient network blips: retry, don't drop the job id
 const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 
 /* Poll one job until it is done/error. onTick sees every state so the caller
@@ -1472,6 +1484,7 @@ async function pollJob(jid, onTick) {
   const t0 = Date.now();
   let delay = POLL_MS;
   let previous = null;
+  let netFails = 0;
   const timeout = () => {
     const err = new Error(
       "รอผลนานเกิน 4 นาที — งานยังตรวจอยู่เบื้องหลัง กลับมาดูผลได้ที่ History");
@@ -1481,7 +1494,23 @@ async function pollJob(jid, onTick) {
   };
   for (;;) {
     if (Date.now() - t0 >= POLL_MAX_MS) throw timeout();
-    const job = await apiGet(`/api/jobs/${encodeURIComponent(jid)}`);
+    let job;
+    try {
+      job = await apiGet(`/api/jobs/${encodeURIComponent(jid)}`);
+      netFails = 0;
+    } catch (e) {
+      if (e && e.status !== undefined) throw e;   // HTTP error: contract unchanged
+      if (++netFails > POLL_NET_RETRIES) {
+        const lost = new Error(
+          "เครือข่ายขัดข้อง — งานยังตรวจอยู่เบื้องหลัง กลับมาดูผลได้ที่ History");
+        lost.keepJob = true;
+        lost.job_id = jid;
+        throw lost;
+      }
+      await sleep(Math.min(POLL_MAX_MS - (Date.now() - t0),
+        Math.min(POLL_CAP_MS, 1000 * 2 ** (netFails - 1))));
+      continue;
+    }
     if (onTick) onTick(job);
     if (job.status === "done" || job.status === "error") return job;
     const remaining = POLL_MAX_MS - (Date.now() - t0);
@@ -1505,29 +1534,32 @@ const polling = new Set();
 async function resumeJob(pid, jid) {
   if (polling.has(jid)) return;
   polling.add(jid);
-  if (state.current === pid) {
-    setTaskTab("submit");
+  // Never yank the user to the submit tab: they may have opened this problem
+  // just to read the statement. The status line only shows on the submit tab.
+  const onSubmitTab = () => state.current === pid && state.taskTab === "submit";
+  if (onSubmitTab()) {
     setJudgeStatus("กำลังดึงผลงานที่ค้างอยู่...", true);
   }
   try {
     const t0 = performance.now();
     const done = await pollJob(jid, (j) => {
-      if (state.current === pid) {
+      if (onSubmitTab()) {
         setJudgeStatus(`${jobStateText(j) || "กำลังตรวจโค้ด"} — ${waitedText(t0)}`, true);
       }
     });
     if (done.status === "error") throw new Error(done.error || "ตรวจไม่สำเร็จ");
     state.jobResults[pid] = { result: done.result || {}, secs: null };
     forgetJob(pid);
-    if (state.current === pid) {
+    if (onSubmitTab()) {
       renderResults(state.jobResults[pid].result, null);
       setJudgeStatus("ผลล่าสุดของข้อนี้", false);
     }
   } catch (e) {
-    if (e.timeout) rememberJob(pid, jid);
+    if (e.timeout || e.keepJob) rememberJob(pid, jid);
     else forgetJob(pid);       // stale id: server restarted, or the job aged out
-    if (state.current === pid) {
-      setJudgeStatus(e.timeout ? e.message : "ดึงผลงานเดิมไม่ได้แล้ว — ดูผลย้อนหลังได้ที่ History", false);
+    if (onSubmitTab()) {
+      setJudgeStatus(e.timeout || e.keepJob ? (e.message || "รอดูผลได้ที่ History")
+        : "ดึงผลงานเดิมไม่ได้แล้ว — ดูผลย้อนหลังได้ที่ History", false);
     }
   } finally {
     polling.delete(jid);
@@ -1621,12 +1653,12 @@ async function doSubmit() {
     if (state.taskTab === "mine") loadTaskMine();
     if (document.querySelector("#view-history.active")) loadHistory();
   } catch (e) {
-    // A timeout means the job is still queued/running server-side: keep the id
-    // so returning to this problem picks the run back up.
-    if (e.timeout && e.job_id) rememberJob(pid, e.job_id);
+    // A timeout (or a lost network) means the job is still queued/running
+    // server-side: keep the id so returning to this problem picks it back up.
+    if ((e.timeout || e.keepJob) && e.job_id) rememberJob(pid, e.job_id);
     else forgetJob(pid);
     if (state.current !== pid) return;   // student moved on: nothing to show here
-    if (e.timeout) {
+    if (e.timeout || e.keepJob) {
       $("result-body").innerHTML =
         `<div class="score-big bad">หมดเวลารอผล</div>` +
         `<pre class="dim">${esc(e.message)}${e.job_id ? `\njob: ${esc(String(e.job_id))}` : ""}</pre>`;
@@ -2064,7 +2096,7 @@ async function renderContests() {
     body.innerHTML = `<table class="tests"><thead><tr>
       <th>#</th><th>คอนเทสต์</th><th>สถานะ</th><th>ช่วงเวลา (เวลาไทย)</th><th>โจทย์</th><th>ผู้ลงทะเบียน</th>
     </tr></thead><tbody>` + rows.map((c, i) =>
-      `<tr class="test-row" data-contest="${esc(c.id)}">
+      `<tr class="test-row" data-contest="${esc(c.id)}" tabindex="0" role="link" aria-label="${esc("เปิดคอนเทสต์ " + (c.title || c.id))}">
         <td>${String(i + 1).padStart(2, "0")}</td>
         <td><strong>${esc(c.title || c.id)}</strong> <span class="dim">${esc(c.id)}</span></td>
         <td>${contestStatusBadge(c.status)}${c.registered ? ` ${badge("ลงทะเบียนแล้ว", "OK")}` : ""}</td>
@@ -2073,8 +2105,12 @@ async function renderContests() {
         <td>${c.participants || 0} คน</td>
       </tr>`).join("") + `</tbody></table>`;
     body.querySelectorAll("tr[data-contest]").forEach((tr) => {
-      tr.onclick = () => {
+      const open = () => {
         location.hash = "#/contests/" + encodeURIComponent(tr.dataset.contest);
+      };
+      tr.onclick = open;
+      tr.onkeydown = (e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
       };
     });
   } catch (e) {

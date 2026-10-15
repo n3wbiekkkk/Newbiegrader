@@ -8,13 +8,20 @@ const BACKEND = "https://grader.n.onjrnm.vip";
 export async function onRequest(context) {
   const url = new URL(context.request.url);
   const target = BACKEND + url.pathname + url.search;
-  const init = {
-    method: context.request.method,
-    headers: context.request.headers,
-    redirect: "manual",
-  };
+  // Never forward hop-by-hop headers: content-length/connection from the
+  // eyeball connection do not describe the backend connection (stale
+  // content-length breaks POST submit on Workers).
+  const HOP_BY_HOP = new Set(["connection", "keep-alive", "proxy-authenticate",
+    "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade",
+    "content-length", "host"]);
+  const headers = new Headers();
+  context.request.headers.forEach((v, k) => {
+    if (!HOP_BY_HOP.has(k.toLowerCase())) headers.append(k, v);
+  });
+  const init = { method: context.request.method, headers, redirect: "manual" };
   if (context.request.method !== "GET" && context.request.method !== "HEAD") {
     init.body = context.request.body;
+    init.duplex = "half";   // required by Workers when forwarding a stream body
   }
   const res = await fetch(target, init);
   // Rebuild headers explicitly so multiple Set-Cookie headers survive.
