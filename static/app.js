@@ -461,7 +461,9 @@ function taskScoreHtml(pid) {
 
 function renderTasksTable() {
   const list = filteredProblems();
-  $("filter-count").textContent = `${list.length}/${state.problems.length} ข้อ`;
+  const hiddenCount = state.problems.filter((p) => p.hidden).length;
+  $("filter-count").textContent = `${list.length}/${state.problems.length} ข้อ` +
+    (state.is_admin && hiddenCount ? ` (มี ${hiddenCount} ข้อซ่อนจากผู้ใช้ทั่วไป)` : "");
   const box = $("task-cards");
   box.innerHTML = "";
   $("tasks-empty").classList.toggle("hidden", list.length > 0);
@@ -485,7 +487,8 @@ function renderTasksTable() {
       <div class="tc-main">
         <div class="tc-title">${esc(p.title)} <span class="dim">${esc(p.id)}</span></div>
         ${showTag ? `<div class="tc-tags">${tags || '<span class="dim">—</span>'}</div>` : ""}
-        <div class="tc-meta">${diffBadge(p.difficulty)}<span class="dim">${p.tests} tests · Solved ${st.solvers ?? 0}</span></div>
+        <div class="tc-meta">${diffBadge(p.difficulty)}<span class="dim">${p.tests} tests · Solved ${st.solvers ?? 0}</span>${
+          p.hidden ? badge("ซ่อนจาก Task", "hidden") : ""}</div>
       </div>
       <div class="tc-side score-wrap">${taskScoreHtml(p.id)}</div>`;
     card.onclick = () => { location.hash = "#/task/" + encodeURIComponent(p.id); };
@@ -950,6 +953,21 @@ async function loadOverview() {
       `<tr><td>${esc(k)}</td><td>${pp[k].subs}</td><td>${pp[k].accepted}</td><td>${pp[k].best}</td></tr>`
     ).join("") + `</tbody></table>`;
     const rows = d.recent || [];
+    const hid = $("overview-hidden");
+    const hidList = d.problems_contest_only || [];
+    if (hid) {
+      hid.classList.remove("dim");
+      hid.innerHTML = hidList.length
+        ? `<table class="tests"><thead><tr><th>ข้อ</th><th>ชื่อ</th><th>ที่มา</th><th></th></tr></thead><tbody>` +
+          hidList.map((h) =>
+            `<tr><td>${esc(h.id)}</td><td>${esc(h.title)}</td>` +
+            `<td>${h.config_hidden ? "config hidden" : ""}${h.config_hidden && h.contest_hidden ? " + " : ""}` +
+            `${h.contest_hidden ? (h.in_contest ? "ในคอนเทสต์" : "คอนเทสต์ (ไม่มีแล้ว?)") : ""}</td>` +
+            `<td><a class="tlink" href="#/task/${encodeURIComponent(h.id)}">เปิด</a></td></tr>`
+          ).join("") + `</tbody></table>` +
+          `<p class="dim">โจทย์พวกนี้ไม่ขึ้นในหน้า Task ของผู้ใช้ทั่วไป — เข้าถึงได้จากหน้าคอนเทสต์และจากตรงนี้</p>`
+        : `<span class="dim">ไม่มี (โจทย์ทุกข้อขึ้นในหน้า Task)</span>`;
+    }
     recent.classList.remove("dim");
     recent.innerHTML = rows.length ? `<table class="tests"><thead><tr>
       <th>เวลา</th><th>ข้อ</th><th>ชื่อ</th><th>ผล</th><th>คะแนน</th>
@@ -1596,7 +1614,8 @@ async function renderContest(cid) {
     title.textContent = d.title || d.id;
     meta.textContent =
       `${d.id} · ${contestWindowText(d)} · แช่แข็ง ${d.freeze_minutes || 0} นาที · ` +
-      (d.show_samples ? "เปิดตัวอย่าง" : "ปิดตัวอย่างระหว่างแข่ง");
+      (d.show_samples ? "เปิดตัวอย่าง" : "ปิดตัวอย่างระหว่างแข่ง") +
+      (d.hide_from_tasks ? " · โจทย์ชุดนี้ไม่โชว์ในหน้า Task" : "");
     $("contest-status-chip").innerHTML = contestStatusBadge(d.status);
     if (d.frozen) $("contest-freeze").classList.remove("hidden");
     renderContestProblems(d);
@@ -1786,8 +1805,15 @@ async function renderSettings() {
 function buildProblemSelect(sel, multiple) {
   if (!sel) return;
   const prev = multiple ? null : sel.value;
-  sel.innerHTML = state.problems.map((p) =>
-    `<option value="${esc(p.id)}">${esc(p.id)} — ${esc(p.title)}</option>`).join("");
+  // Contest-only problems first in the multi-select, and marked, so the admin can
+  // tell the "thrown in" set apart from the public Tasks.
+  const list = multiple
+    ? [...state.problems].sort((a, b) => (b.hidden ? 1 : 0) - (a.hidden ? 1 : 0))
+    : state.problems;
+  sel.innerHTML = list.map((p) => {
+    const tag = p.hidden ? " [ซ่อนจาก Task]" : "";
+    return `<option value="${esc(p.id)}">${esc(p.id)} — ${esc(p.title)}${esc(tag)}</option>`;
+  }).join("");
   if (!multiple && prev && [...sel.options].some((o) => o.value === prev)) sel.value = prev;
 }
 
@@ -1818,7 +1844,8 @@ async function loadAdminContests() {
     box.classList.remove("dim");
     box.innerHTML = state.contests.map((c) =>
       `<div class="report-item"><strong>${esc(c.title || c.id)}</strong> ` +
-      `<span class="dim">${esc(c.id)} · ${esc(contestWindowText(c))} · ${(c.problems || []).length} ข้อ</span> ` +
+      `<span class="dim">${esc(c.id)} · ${esc(contestWindowText(c))} · ${(c.problems || []).length} ข้อ` +
+      `${c.hide_from_tasks ? " · ซ่อนจาก Task" : ""}</span> ` +
       `${contestStatusBadge(c.status)} ` +
       `<button class="ghost-btn" type="button" data-del-contest="${esc(c.id)}">ลบ</button></div>`
     ).join("");
@@ -1960,6 +1987,7 @@ $("ct-save").onclick = async () => {
     problems,
     freeze_minutes: Math.max(0, Number($("ct-freeze").value) || 0),
     show_samples: $("ct-samples").checked,
+    hide_from_tasks: $("ct-hide").checked,
   };
   if (!payload.id || !payload.starts_at || !payload.ends_at) {
     st.textContent = "กรอก id / เริ่มแข่ง / จบแข่ง ให้ครบก่อน";

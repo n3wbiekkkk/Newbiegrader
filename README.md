@@ -103,11 +103,32 @@ alter table reports enable row level security;
 
 - **Contest mode**: `GET /api/contests`, `GET /api/contests/{id}` (มี scoreboard), `POST /api/contests`
   (admin, upsert), `DELETE /api/contests/{id}` — ตาราง `contests` เก็บ `starts_at/ends_at`,
-  `problems` (jsonb), `freeze_minutes`, `show_samples`
+  `problems` (jsonb), `freeze_minutes`, `show_samples`, `hide_from_tasks`
   - ส่งงานเข้าคอนเทสต์: เพิ่มฟิลด์ `contest=<id>` ใน `/api/submit` (โจทย์ต้องอยู่ในคอนเทสต์ และ
     ต้องอยู่ในช่วงเวลา ไม่ใช่ admin)
   - scoreboard แช่แข็ง: คนทั่วไปเห็นเฉพาะผลก่อน `ends_at - freeze_minutes` ระหว่างแข่ง (admin เห็นสด)
   - `show_samples=false` → ระหว่างแข่งแม้แต่ตัวอย่างสาธารณะก็ไม่โชว์ input/expected
+
+### โจทย์ชุดคอนเทสต์ (ไม่โชว์ในหน้า Task)
+
+ผู้ใช้ทั่วไปจะเห็นโจทย์เฉพาะข้อที่ "เปิด" — ข้อที่ซ่อนจะเข้าถึงได้ทางหน้าคอนเทสต์ที่ระบุไว้ และทางหน้า admin เท่านั้น
+(`/api/problems`, `/api/health`, `/api/version`, `/api/history` สาธารณะ และ `POST /api/submit` ถูกกรองทั้งหมด;
+admin เห็นครบพร้อมป้าย `hidden`)
+
+วิธีทำเครื่องหมายมี 2 ทาง เลือกอย่างใดอย่างหนึ่ง:
+
+| วิธี | ใช้เมื่อ | คำสั่ง |
+|---|---|---|
+| ธงในไฟล์โจทย์ `"hidden": true` | ชุดคอนเทสต์ถาวร (ข้อสอบจริง) — ซ่อนตลอดไม่ว่าคอนเทสต์จะจบหรือถูกลบ | `python3 tools/problem_visibility.py --id <pid> --hidden` (ดูทั้งหมด: `--list`, กลับเป็นสาธารณะ: `--public`) |
+| ติ๊ก "ซ่อนโจทย์ชุดนี้จากหน้า Task" ตอนสร้างคอนเทสต์ (`contests.hide_from_tasks`, ค่าเริ่มต้นเปิด) | คอนเทสต์ที่หยิบโจทย์สาธารณะมาใช้ชั่วคราว — ลบคอนเทสต์หรือปิดติ๊กแล้วโจทย์กลับขึ้นใน Task เอง | หน้า Settings → admin → ฟอร์มคอนเทสต์ |
+
+ขั้นตอน "โยนไฟล์ให้" (โจทย์ชุดคอนเทสต์): สร้าง `problems/<id>/` ตามปกติ (statement.md/pdf + tests + ref)
+→ ตั้ง `hidden` → `python3 tools/validate_problem.py <id>` (ต้อง 0 FAIL; บรรทัด OK จะขึ้น
+`[contest-only: ไม่โชว์ในหน้า Task]`) → สร้างคอนเทสต์ในหน้า admin แล้วเลือกโจทย์ (ข้อที่ซ่อนจะถูกจัดไว้บนสุด
+พร้อมป้าย `[ซ่อนจาก Task]`) → restart backend เพื่อโหลดโจทย์ใหม่
+
+หมายเหตุ: คอลัมน์ `contests.hide_from_tasks` ต้องรัน `supabase/schema.sql` ใหม่ (ถ้าไม่รัน การสร้างคอนเทสต์จะได้
+ข้อความบอกให้รัน ไม่ใช่ 500)
 - **ตรวจซ้ำ (rejudge)**: `POST /api/admin/rejudge` body `{"ids":[...]}` หรือ `{"problem":"x","limit":50}`
   → คืน `job_id` ให้ poll เหมือน submit (อัปเดตแถวเดิม ไม่สร้างใหม่) — ใช้หลังแก้เทสต์
 - **ตรวจการก็อป**: `GET /api/admin/plagiarism?problem=<id>&threshold=0.6&limit=300` (admin)

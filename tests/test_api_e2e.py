@@ -70,6 +70,9 @@ class ApiE2E(unittest.TestCase):
         server._account_tries.clear()
         server._quota_hits.clear()
         server._cache.clear()
+        server._contest_pid_cache["at"] = 0.0
+        server._contest_pid_cache["all"] = set()
+        server._contest_pid_cache["hide"] = set()
 
     def login(self, email: str, name: str = "Tester") -> None:
         self.client.cookies.clear()
@@ -285,7 +288,8 @@ class ApiE2E(unittest.TestCase):
         r = self.client.post("/api/contests", json={
             "id": "test-cup", "title": "Test Cup",
             "starts_at": _iso(-5), "ends_at": _iso(55),
-            "problems": ["thai_time"], "freeze_minutes": 60, "show_samples": False})
+            "problems": ["thai_time"], "freeze_minutes": 60, "show_samples": False,
+            "hide_from_tasks": False})
         self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual(r.json()["contest"]["status"], "running")
 
@@ -502,6 +506,84 @@ class ApiE2E(unittest.TestCase):
         self.assertGreaterEqual(thai["subs"], thai["accepted"])
         self.assertGreaterEqual(thai["best"], 0)
 
+    def test_contest_problems_are_hidden_from_the_task_list(self):
+        # The admin drops in a problem set for a contest: it must vanish from the
+        # public Task list but stay reachable from the contest page and admin.
+        self.login(STUDENT_A)
+        before = [p["id"] for p in self.client.get("/api/problems").json()["problems"]]
+        self.assertIn("hanoi", before)
+
+        self.login(ADMIN)
+        created = self.client.post("/api/contests", json={
+            "id": "cup-only", "title": "Cup Only",
+            "starts_at": _iso(-5), "ends_at": _iso(55),
+            "problems": ["hanoi"], "hide_from_tasks": True})
+        self.assertEqual(created.status_code, 200, created.text)
+        self.assertTrue(created.json()["contest"]["hide_from_tasks"])
+
+        self.login(STUDENT_A)
+        student_list = self.client.get("/api/problems").json()["problems"]
+        self.assertNotIn("hanoi", [p["id"] for p in student_list])
+        self.assertNotIn("hanoi", self.client.get("/api/health").json()["problems"])
+        self.assertNotIn("hanoi", self.client.get("/api/version").json()["tests"])
+        # ...but the contest page still opens it (that is the only way in)
+        self.assertEqual(self.client.get("/api/problems/hanoi").status_code, 200)
+        sample = server.PROBLEMS["hanoi"].samples[0]
+        self.assertEqual(
+            self.client.get(f"/api/problems/hanoi/sample/{sample}").status_code, 200)
+        contest = self.client.get("/api/contests/cup-only").json()
+        self.assertIn("hanoi", [p["id"] for p in contest["problem_details"]])
+        job = self.judged_contest("hanoi", (ROOT / "examples" / "hanoi_ref.py").read_text(), "cup-only")
+        self.assertEqual(job["result"]["score"], 100)
+
+        self.login(ADMIN)
+        admin_list = self.client.get("/api/problems").json()["problems"]
+        admin_hanoi = [p for p in admin_list if p["id"] == "hanoi"][0]
+        self.assertTrue(admin_hanoi["hidden"])
+        self.assertTrue(admin_hanoi["contest_hidden"])
+        overview = self.client.get("/api/admin/overview").json()
+        self.assertIn("hanoi", [h["id"] for h in overview["problems_contest_only"]])
+        self.assertEqual(
+            self.client.get(f"/api/problems/hanoi/sample/{sample}").status_code, 200)
+
+        # a contest that reuses public problems keeps them in Tasks
+        self.assertEqual(self.client.post("/api/contests", json={
+            "id": "cup-open", "title": "Open", "starts_at": _iso(-5), "ends_at": _iso(55),
+            "problems": ["warpz"], "hide_from_tasks": False}).status_code, 200)
+        self.login(STUDENT_A)
+        self.assertIn("warpz", [p["id"] for p in
+                                self.client.get("/api/problems").json()["problems"]])
+        public_hist = self.client.get("/api/history?limit=50").json()["submissions"]
+        self.assertNotIn("hanoi", [r["problem"] for r in public_hist])
+
+        self.login(ADMIN)
+        self.client.delete("/api/contests/cup-only")
+        self.client.delete("/api/contests/cup-open")
+
+    def test_config_hidden_problem_is_private(self):
+        prob = server.PROBLEMS["mirror_pair"]
+        original = prob.hidden
+        prob.hidden = True
+        try:
+            self.login(STUDENT_A)
+            ids = [p["id"] for p in self.client.get("/api/problems").json()["problems"]]
+            self.assertNotIn("mirror_pair", ids)
+            mp_sample = server.PROBLEMS["mirror_pair"].samples[0]
+            for path in ("/api/problems/mirror_pair",
+                         f"/api/problems/mirror_pair/sample/{mp_sample}",
+                         "/api/problems/mirror_pair/pdf"):
+                self.assertEqual(self.client.get(path).status_code, 404, path)
+            r = self.client.post("/api/submit", data={
+                "problem": "mirror_pair", "language": "python", "code": "print(1)"})
+            self.assertEqual(r.status_code, 404, r.text)
+            self.login(ADMIN)
+            self.assertEqual(self.client.get("/api/problems/mirror_pair").status_code, 200)
+            self.assertIn("mirror_pair",
+                          [p["id"] for p in self.client.get("/api/problems").json()["problems"]])
+            self.assertIn("mirror_pair", self.client.get("/api/version").json()["hidden_problems"])
+        finally:
+            prob.hidden = original
+
     def test_rejudge_is_capped_by_queue_budget(self):
         original = server.QUEUE_MAX
         server.QUEUE_MAX = 1        # one worker, one job at a time
@@ -557,6 +639,9 @@ class PreMigrationFallback(unittest.TestCase):
         server._account_tries.clear()
         server._quota_hits.clear()
         server._cache.clear()
+        server._contest_pid_cache["at"] = 0.0
+        server._contest_pid_cache["all"] = set()
+        server._contest_pid_cache["hide"] = set()
 
     def _register(self, email: str, name: str) -> None:
         self.client.cookies.clear()

@@ -335,6 +335,8 @@
       <div id="overview-stats" class="stat-strip"></div>
       <h3 class="pane-h">รายข้อ</h3>
       <div id="overview-problems" class="dim">—</div>
+      <h3 class="pane-h">โจทย์ชุดคอนเทสต์ (ไม่โชว์ในหน้า Task)</h3>
+      <div id="overview-hidden" class="dim">—</div>
       <h3 class="pane-h">ล่าสุด 10 รายการ</h3>
       <div id="overview-recent" class="dim">—</div>
     </div>
@@ -397,7 +399,11 @@
         <label class="check-row" for="ct-samples"><input id="ct-samples" type="checkbox" checked> เปิดตัวอย่างสาธารณะระหว่างแข่ง</label>
       </div>
       <div class="settings-row">
-        <label for="ct-problems">โจทย์ในคอนเทสต์ (เลือกได้หลายข้อ)</label>
+        <label class="check-row" for="ct-hide"><input id="ct-hide" type="checkbox" checked>
+          ซ่อนโจทย์ชุดนี้จากหน้า Task (เห็นเฉพาะในคอนเทสต์นี้กับหน้า admin)</label>
+      </div>
+      <div class="settings-row">
+        <label for="ct-problems">โจทย์ในคอนเทสต์ (เลือกได้หลายข้อ) <span class="dim">— ข้อที่ขึ้นว่า "ซ่อนจาก Task" คือโจทย์ชุดคอนเทสต์</span></label>
         <select id="ct-problems" multiple size="8"></select>
       </div>
       <div class="submit-row">
@@ -432,6 +438,6 @@
 </footer>
 
 <script src="/config.js?v=4"></script>
-<script src="/app.js?v=10"></script>
+<script src="/app.js?v=11"></script>
 </body>
 </html>

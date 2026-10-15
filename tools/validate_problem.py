@@ -118,7 +118,7 @@ def tokens(text: str) -> list[str]:
 
 def validate_problem(pid: str) -> dict:
     res: dict = {"pid": pid, "failures": [], "warnings": [],
-                 "tests": 0, "slowest": None, "ref": ""}
+                 "tests": 0, "slowest": None, "ref": "", "hidden": False}
     pdir = PROBLEMS_DIR / pid
 
     def fail(msg: str) -> None:
@@ -338,6 +338,11 @@ def validate_problem(pid: str) -> dict:
     if tmpdir is not None:
         tmpdir.cleanup()
 
+    # visibility (contest-only problems are kept out of the public Task list)
+    try:
+        res["hidden"] = bool(grader.load_problem(pid).hidden)
+    except SystemExit:
+        res["hidden"] = False
     return res
 
 
@@ -386,7 +391,8 @@ def main(argv: list[str] | None = None) -> int:
         else:
             slow = res["slowest"]
             slow_s = f"{slow:.3f}s" if slow is not None else "-"
-            print(f"OK   {pid:<22} tests={res['tests']:<3} slowest={slow_s:<8} ref={res['ref']}")
+            print(f"OK   {pid:<22} tests={res['tests']:<3} slowest={slow_s:<8} ref={res['ref']}"
+                  + ("  [contest-only: ไม่โชว์ในหน้า Task]" if res.get("hidden") else ""))
 
     ok = len(ids) - n_fail
     print("-" * 64)

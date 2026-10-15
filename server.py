@@ -1018,6 +1018,59 @@ def _problem_or_404(pid: str) -> grader.Problem:
     return p
 
 
+# ---- problem visibility (contest-only sets) ----
+# A problem can be kept out of the public Task list in two ways:
+#   * config.json -> "hidden": true                (always private to contests/admin)
+#   * listed in a contest with hide_from_tasks      (set from the admin form)
+# Hidden problems stay reachable through their contest page (that is how students
+# open them), through the admin panel, and are gated everywhere else.
+_contest_pid_cache: Dict[str, object] = {"at": 0.0, "all": set(), "hide": set()}
+
+
+def _contest_problem_sets() -> tuple:
+    """(pids listed in any contest, pids a contest hides from Tasks)."""
+    now = time.monotonic()
+    if _contest_pid_cache["at"] and now - float(_contest_pid_cache["at"]) < 20:
+        return _contest_pid_cache["all"], _contest_pid_cache["hide"]
+    all_pids: set = set()
+    hidden: set = set()
+    if _sb is not None:
+        try:
+            for row in _contest_rows():
+                pids = {str(x) for x in (row.get("problems") or [])}
+                all_pids |= pids
+                if row.get("hide_from_tasks", True):
+                    hidden |= pids
+        except Exception as e:
+            print(f"[web] contest problem lookup failed: {e}", file=sys.stderr)
+    _contest_pid_cache.update({"at": now, "all": all_pids, "hide": hidden})
+    return all_pids, hidden
+
+
+def _hidden_pids() -> set:
+    listed, hidden_by_contest = _contest_problem_sets()
+    return hidden_by_contest | {pid for pid, p in PROBLEMS.items() if p.hidden}
+
+
+def _visible_to(pid: str, email: str) -> bool:
+    """Public Task entry, or reachable because the problem belongs to a contest."""
+    if pid not in PROBLEMS:
+        return False
+    if _is_admin(email):
+        return True
+    if pid not in _hidden_pids():
+        return True
+    listed, _ = _contest_problem_sets()
+    return pid in listed
+
+
+def _visible_problem_or_404(pid: str, email: str) -> grader.Problem:
+    p = _problem_or_404(pid)
+    if not _visible_to(pid, email):
+        raise HTTPException(status_code=404, detail=f"unknown problem: {pid}")
+    return p
+
+
 def _host_limits() -> dict:
     return {"cpu_quota": CPU_QUOTA, "host_memory_mb": RAM_MB,
             "judge_workers": JUDGE_WORKERS, "judge_jobs": JUDGE_JOBS,
@@ -1176,8 +1229,14 @@ def _run_playground(prob: Optional[grader.Problem], ext: str, source: str,
 
 
 @app.get("/api/health")
-def health() -> dict:
-    return {"ok": True, "problems": sorted(PROBLEMS.keys())}
+def health(request: Request) -> dict:
+    email = (request.session.get("user") or {}).get("email", "")
+    if _is_admin(email):
+        ids = sorted(PROBLEMS.keys())
+    else:
+        hidden = _hidden_pids()
+        ids = sorted(pid for pid in PROBLEMS if pid not in hidden)
+    return {"ok": True, "problems": ids, "count": len(ids)}
 
 
 @app.get("/api/languages")
@@ -1189,23 +1248,40 @@ def languages() -> dict:
 
 
 @app.get("/api/problems")
-def list_problems() -> dict:
+def list_problems(request: Request) -> dict:
     order = {"easy": 0, "medium": 1, "hard": 2}
+    email = (request.session.get("user") or {}).get("email", "")
+    admin = _is_admin(email)
+    hidden = _hidden_pids()
+    listed, contest_hidden = _contest_problem_sets()
     ranked = sorted(PROBLEMS.values(),
                     key=lambda p: (order.get((p.difficulty or "").lower(), 99), p.pid))
-    return {"problems": [
-        {"id": p.pid, "title": p.title, "time_limit": p.time_limit,
-         "memory_limit": p.memory_limit, "checker": p.checker,
-         "difficulty": p.difficulty, "tags": p.tags,
-         "tests": len(p.tests), "samples": len(p.samples)}
-        for p in ranked
-    ]}
+    out = []
+    for p in ranked:
+        is_hidden = p.pid in hidden
+        if is_hidden and not admin:
+            continue  # contest-only problem: reachable from its contest page, not Tasks
+        item = {
+            "id": p.pid, "title": p.title, "time_limit": p.time_limit,
+            "memory_limit": p.memory_limit, "checker": p.checker,
+            "difficulty": p.difficulty, "tags": p.tags,
+            "tests": len(p.tests), "samples": len(p.samples),
+        }
+        if admin:
+            item["hidden"] = is_hidden
+            item["contest_only"] = p.pid in listed
+            item["config_hidden"] = p.hidden
+            item["contest_hidden"] = p.pid in contest_hidden
+        out.append(item)
+    return {"problems": out}
 
 
 @app.get("/api/problems/{pid}")
-def problem_detail(pid: str) -> dict:
-    p = _problem_or_404(pid)
-    return {"id": p.pid, "title": p.title, "time_limit": p.time_limit,
+def problem_detail(request: Request, pid: str) -> dict:
+    email = (request.session.get("user") or {}).get("email", "")
+    p = _visible_problem_or_404(pid, email)
+    listed, contest_hidden = _contest_problem_sets()
+    body = {"id": p.pid, "title": p.title, "time_limit": p.time_limit,
             "memory_limit": p.memory_limit, "checker": p.checker,
             "difficulty": p.difficulty, "tags": p.tags,
             "notice": p.notice,
@@ -1214,12 +1290,19 @@ def problem_detail(pid: str) -> dict:
             "hidden_tests": len(p.tests) - len(p.samples),
             "tests_hash": grader.tests_hash(p),
             "has_pdf": (grader.PROBLEMS_DIR / p.pid / "statement.pdf").is_file()}
+    if _is_admin(email):
+        body["hidden"] = p.pid in _hidden_pids()
+        body["contest_only"] = p.pid in listed
+        body["config_hidden"] = p.hidden
+        body["contest_hidden"] = p.pid in contest_hidden
+    return body
 
 
 @app.get("/api/problems/{pid}/sample/{name}")
-def problem_sample(pid: str, name: str) -> dict:
+def problem_sample(request: Request, pid: str, name: str) -> dict:
     """Public sample test data (statement examples) — hidden tests are never served."""
-    p = _problem_or_404(pid)
+    email = (request.session.get("user") or {}).get("email", "")
+    p = _visible_problem_or_404(pid, email)
     if name not in grader.sample_names(p):
         raise HTTPException(status_code=404,
                             detail="not a public sample (hidden tests are not served)")
@@ -1231,8 +1314,9 @@ def problem_sample(pid: str, name: str) -> dict:
 
 
 @app.get("/api/problems/{pid}/pdf")
-def problem_pdf(pid: str):
-    p = _problem_or_404(pid)
+def problem_pdf(request: Request, pid: str):
+    email = (request.session.get("user") or {}).get("email", "")
+    p = _visible_problem_or_404(pid, email)
     f = grader.PROBLEMS_DIR / p.pid / "statement.pdf"
     if not f.is_file():
         raise HTTPException(status_code=404, detail="no PDF statement for this problem")
@@ -1292,6 +1376,8 @@ async def submit(
     if not user.get("email"):
         raise HTTPException(status_code=401, detail="login first")
     email = user["email"]
+    if not _visible_to(problem, email):
+        raise HTTPException(status_code=404, detail=f"unknown problem: {problem}")
 
     contest_obj: Optional[dict] = None
     if contest:
@@ -1354,17 +1440,26 @@ async def job_status(request: Request, jid: str) -> dict:
 
 
 @app.get("/api/version")
-def version() -> dict:
+def version(request: Request) -> dict:
     """Which judging semantics + test set a verdict comes from."""
-    return {
+    email = (request.session.get("user") or {}).get("email", "")
+    admin = _is_admin(email)
+    hidden = _hidden_pids()
+    tests = {pid: {"hash": grader.tests_hash(p), "tests": len(p.tests),
+                   "samples": list(p.samples)}
+             for pid, p in sorted(PROBLEMS.items())
+             if admin or pid not in hidden}
+    body = {
         "version": grader.GRADER_VERSION,
-        "problems": len(PROBLEMS),
+        "problems": len(tests),
         "languages": sorted(LANGS.keys()),
         "system": _host_limits(),
-        "tests": {pid: {"hash": grader.tests_hash(p), "tests": len(p.tests),
-                        "samples": list(p.samples)}
-                  for pid, p in sorted(PROBLEMS.items())},
+        "tests": tests,
     }
+    if admin:
+        body["hidden_problems"] = sorted(hidden)
+        body["problems_total"] = len(PROBLEMS)
+    return body
 
 
 @app.post("/api/run")
@@ -1382,9 +1477,9 @@ async def run_custom(
     if not user.get("email"):
         raise HTTPException(status_code=401, detail="login first")
     _quota_check("run", user["email"], RUN_QUOTA)
-    prob = PROBLEMS.get(problem) if problem else None
-    if problem and prob is None:
-        raise HTTPException(status_code=404, detail=f"unknown problem: {problem}")
+    prob = None
+    if problem:
+        prob = _visible_problem_or_404(problem, user["email"])
     source, _filename = await _read_source(language, code, file)
     if len(input.encode("utf-8")) > RUN_INPUT_MAX:
         raise HTTPException(status_code=413,
@@ -1413,6 +1508,8 @@ def history(request: Request, problem: Optional[str] = None, limit: int = 20,
     if _sb is None:
         return {"configured": False, "submissions": []}
     limit = max(1, min(limit, 100))
+    u = request.session.get("user") or {}
+    email = u.get("email", "")
     try:
         q = _sb.table("submissions").select(
             "id,created_at,problem,language,name,filename,verdict,accepted,passed,total,score,counts"
@@ -1420,16 +1517,20 @@ def history(request: Request, problem: Optional[str] = None, limit: int = 20,
         if problem:
             q = q.eq("problem", problem)
         if mine:
-            u = request.session.get("user") or {}
-            if not u.get("email"):
+            if not email:
                 raise HTTPException(status_code=401, detail="login required")
-            q = q.eq("user_email", u["email"])
+            q = q.eq("user_email", email)
         res = q.execute()
     except HTTPException:
         raise
     except Exception as e:
         raise _db_err(e)
-    return {"configured": True, "submissions": res.data or []}
+    rows = res.data or []
+    if not mine and not _is_admin(email):
+        # The public feed must not advertise contest-only problems.
+        hidden = _hidden_pids()
+        rows = [r for r in rows if (r.get("problem") or "") not in hidden]
+    return {"configured": True, "submissions": rows}
 
 
 @app.get("/api/history/{sid}")
@@ -1569,8 +1670,18 @@ def admin_overview(request: Request) -> dict:
         if r.get("accepted"):
             p["accepted"] += 1
         p["best"] = max(p["best"], r.get("score") or 0)
+    hidden = sorted(_hidden_pids())
+    listed, contest_hidden = _contest_problem_sets()
     return {
         "problems": len(PROBLEMS),
+        "problems_public": len(PROBLEMS) - len(hidden),
+        "problems_contest_only": [
+            {"id": pid, "title": PROBLEMS[pid].title,
+             "config_hidden": PROBLEMS[pid].hidden,
+             "contest_hidden": pid in contest_hidden,
+             "in_contest": pid in listed}
+            for pid in hidden if pid in PROBLEMS
+        ],
         "users": n_users,
         "submissions": len(subs),
         "accepted": sum(1 for r in subs if r.get("accepted")),
@@ -1776,6 +1887,7 @@ def _contest_public(row: dict) -> dict:
         "starts_at": row.get("starts_at"), "ends_at": row.get("ends_at"),
         "freeze_minutes": row.get("freeze_minutes") or 0,
         "show_samples": row.get("show_samples", True),
+        "hide_from_tasks": row.get("hide_from_tasks", True),
         "status": _contest_window(row),
         "problems": [str(x) for x in (row.get("problems") or [])],
     }
@@ -1833,12 +1945,17 @@ async def upsert_contest(request: Request) -> dict:
         "id": cid, "title": title, "starts_at": starts, "ends_at": ends,
         "problems": problems, "freeze_minutes": freeze,
         "show_samples": bool(body.get("show_samples", True)),
+        "hide_from_tasks": bool(body.get("hide_from_tasks", True)),
         "created_by": user["email"],
     }
     try:
         _sb.table("contests").upsert(row, on_conflict="id").execute()
     except Exception as e:
+        if "hide_from_tasks" in str(e):
+            raise HTTPException(status_code=400,
+                                detail="contests table is missing hide_from_tasks — run supabase/schema.sql")
         raise _db_err(e)
+    _contest_pid_cache["at"] = 0.0   # visibility changed
     return {"ok": True, "contest": _contest_public(row)}
 
 
@@ -1853,6 +1970,7 @@ def delete_contest(request: Request, cid: str) -> dict:
         _sb.table("contests").delete().eq("id", cid).execute()
     except Exception as e:
         raise _db_err(e)
+    _contest_pid_cache["at"] = 0.0   # visibility changed
     return {"ok": True}
 
 
