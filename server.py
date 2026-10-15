@@ -848,7 +848,8 @@ async def _create_job(row: dict, track_active: bool = True) -> dict:
     with _admission_lock:
         email = row.get("user_email") or ""
         if track_active and _active_jobs.get(email):
-            raise HTTPException(status_code=409, detail="you already have a submission judging, please wait")
+            raise HTTPException(status_code=409, detail="you already have a submission judging, please wait",
+                                headers={"Retry-After": "30"})
         if _queue_depth() >= QUEUE_MAX:
             raise HTTPException(status_code=503, detail="judge queue is full — try again in a moment",
                                 headers={"Retry-After": "30"})
@@ -2401,7 +2402,8 @@ async def run_custom(
             return current["result"]
         if current and current.get("status") == "error":
             error = current.get("error") or "internal run error"
-            raise HTTPException(status_code=504 if "timed out" in error else 500, detail=error)
+            raise HTTPException(status_code=504 if "timed out" in error else 500,
+                                detail=_sanitize_compile_error(error))
         await asyncio.sleep(0.1)
     raise HTTPException(status_code=504, detail="run timed out waiting for judge")
 

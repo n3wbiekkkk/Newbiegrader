@@ -1817,7 +1817,7 @@ async function doSubmit() {
       // 409 (job in flight) / 429 (quota) / 400 / 403: show detail verbatim
       $("result-body").innerHTML =
         `<div class="score-big bad">ส่งไม่สำเร็จ</div><pre class="dim">${esc(e.message)}</pre>`;
-      const extra = e.status === 429 && e.retryAfter
+      const extra = (e.status === 409 || e.status === 429) && e.retryAfter
         ? ` (ลองใหม่ใน ${esc(String(e.retryAfter))} วินาที)` : "";
       setJudgeStatus(`error: ${e.message}${extra}`, false);
     }
