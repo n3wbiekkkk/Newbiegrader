@@ -11,8 +11,10 @@ website sorts and searches by it, and `#/task/<no>` opens the problem by number.
     python3 tools/number_problems.py --check                 # ตรวจซ้ำ/ผิดรูปแบบ
 
 Numbering rules:
-  * 1..N, ห้ามซ้ำ, ห้าม 0 (0 = ยังไม่กำหนด)
-  * `--assign` ต่อเลขจากมากสุด+1 ตามลำดับ easy → medium → hard แล้วชื่อ id
+  * public 1..P ต่อเนื่อง (ไม่มี gap), hidden 1001.. ต่อเนื่อง — สองช่วงห้ามปนกัน
+  * hidden = ข้อคอนเทสต์ (`hidden: true`) เท่านั้น เริ่ม 1001 เสมอ
+  * ห้าม 0 (0 = ยังไม่กำหนด)
+  * `--assign` ต่อเลขในblockของตัวเอง (public ต่อท้าย public, hidden ต่อท้าย hidden)
   * `--set` ใช้เมื่ออยากย้ายข้อไปอยู่เลขที่ต้องการ (เลขที่ว่างเท่านั้น เว้นแต่ --force)
 """
 from __future__ import annotations
@@ -64,6 +66,9 @@ def cmd_list(probs: list) -> int:
     return 0
 
 
+HIDDEN_BASE = 1001  # contest-only problems live here, never mixed with public
+
+
 def cmd_check(probs: list) -> int:
     seen: dict = {}
     dupes, missing = [], []
@@ -81,14 +86,25 @@ def cmd_check(probs: list) -> int:
         print(f"WARN ยังไม่มีเลข {len(missing)} ข้อ: {', '.join(sorted(missing))}")
     if dupes:
         return 1
-    nums = sorted(seen)
-    if nums:
-        gaps = [n for n in range(1, max(nums) + 1) if n not in seen]
-        print(f"OK  {len(seen)} เลขไม่ซ้ำ (1..{max(nums)})"
-              + (f" · เลขที่ว่าง: {gaps}" if gaps else " · ต่อเนื่องครบ"))
-    else:
-        print("OK  ยังไม่มีข้อไหนมีเลข")
-    return 0
+    pub = sorted(n for n in seen if n < HIDDEN_BASE)
+    hid = sorted(n for n in seen if n >= HIDDEN_BASE)
+    bad = False
+    if pub != list(range(1, len(pub) + 1)):
+        print(f"FAIL public ไม่ต่อเนื่อง 1..{len(pub)}: มี {pub[:8]}{'...' if len(pub) > 8 else ''}")
+        bad = True
+    if hid != list(range(HIDDEN_BASE, HIDDEN_BASE + len(hid))):
+        print(f"FAIL hidden ไม่ต่อเนื่อง {HIDDEN_BASE}..: มี {hid}")
+        bad = True
+    cross = [p.pid for p in probs
+             if (p.hidden and 0 < p.no < HIDDEN_BASE) or (not p.hidden and p.no >= HIDDEN_BASE)]
+    if cross:
+        print(f"FAIL ข้อ public/hidden อยู่ผิดช่วง: {', '.join(sorted(cross))}")
+        bad = True
+    if not bad:
+        print(f"OK  public 1..{len(pub)} + hidden {HIDDEN_BASE}..{HIDDEN_BASE + len(hid) - 1} "
+              f"({len(seen)} เลขไม่ซ้ำ)" if hid else
+              f"OK  {len(seen)} เลขไม่ซ้ำ (1..{len(pub)}) · ต่อเนื่องครบ")
+    return 1 if bad else 0
 
 
 def assign_order(probs: list) -> list:
@@ -109,19 +125,28 @@ def cmd_assign(probs: list, renumber: bool = False) -> int:
         print(f"ล้างเลขเดิมของ {len(probs)} ข้อ แล้วเริ่มให้ใหม่ตามลำดับ "
               "(public easy→medium→hard, ข้อคอนเทสต์ต่อท้าย)")
     used = {p.no for p in probs if p.no > 0}
-    nxt = max(used) + 1 if used else 1
     todo = [p for p in assign_order(probs) if not p.no]
     if not todo:
         print("ทุกข้อมีเลขแล้ว")
         return 0
+    # public and hidden draw from separate blocks so the ranges never mix
+    nxt_pub = max([n for n in used if n < HIDDEN_BASE] or [0]) + 1
+    nxt_hid = max([n for n in used if n >= HIDDEN_BASE] or [HIDDEN_BASE - 1]) + 1
     for p in todo:
-        while nxt in used:
-            nxt += 1
-        set_no(p.pid, nxt)
-        print(f"{p.pid:<24} -> เลข {nxt}  ({p.difficulty or '—'}"
-              f"{', contest-only' if p.hidden else ''})")
-        used.add(nxt)
-        nxt += 1
+        if p.hidden:
+            while nxt_hid in used:
+                nxt_hid += 1
+            set_no(p.pid, nxt_hid)
+            print(f"{p.pid:<24} -> เลข {nxt_hid}  ({p.difficulty or '—'}, contest-only)")
+            used.add(nxt_hid)
+            nxt_hid += 1
+        else:
+            while nxt_pub in used:
+                nxt_pub += 1
+            set_no(p.pid, nxt_pub)
+            print(f"{p.pid:<24} -> เลข {nxt_pub}  ({p.difficulty or '—'})")
+            used.add(nxt_pub)
+            nxt_pub += 1
     print(f"\nให้เลข {len(todo)} ข้อ — รัน `python3 tools/number_problems.py --check` แล้ว "
           "`python3 tools/validate_problem.py` ต่อ")
     return 0
