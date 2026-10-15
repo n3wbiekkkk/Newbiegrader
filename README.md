@@ -82,16 +82,17 @@ cookie stays first-party. Bump the `?v=N` stamp whenever a versioned asset chang
 
 ## Contributing
 
-[`agent.md`](agent.md) is the contributor manual — architecture, workflows, the complete
-environment-variable reference, and a catalogue of pitfalls. Read it before touching `grader.py`,
-`server.py` or `app.js`.
-
 Two invariants are non-negotiable:
 
 1. **One judge only.** All judging passes through `grader.run_one`, `grader.judge_test` and
    `grader.prepare_command`; never inline judging into a request handler.
 2. **Never disclose test data.** Everything carrying test data passes through `_redact_results()`, both
    on the response path and on the path to the database.
+
+A problem is a directory under `problems/`; `tools/validate_problem.py` is the gate — it checks the
+configuration, the sample wiring, and requires every reference solution in `examples/` to be accepted
+on every test. The operational manual (hosts, deployment, environment variables, the catalogue of
+pitfalls) is maintained privately and is not part of this repository.
 
 ## License
 

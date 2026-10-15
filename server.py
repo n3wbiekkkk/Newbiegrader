@@ -1204,7 +1204,7 @@ def _host_limits() -> dict:
             "sample_interval_ms": round(grader.SAMPLE_INTERVAL * 1000, 2),
             "compile_timeout_s": grader.COMPILE_TIMEOUT,
             # memory policy: peak-RSS threshold = declared x allowance, enforced
-            # RLIMIT_AS ceiling = threshold + virtual headroom (see agent.md §4.4.1)
+            # RLIMIT_AS ceiling = threshold + virtual headroom (grader.py)
             "mem_allowance": grader.LANG_MEM_MULTIPLIER,
             "mem_headroom_mb": grader.LANG_MEM_HEADROOM_MB}
 
