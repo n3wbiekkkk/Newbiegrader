@@ -1785,6 +1785,7 @@ async function doSubmit() {
     clearGetCache();     // history/stats answers changed with this submission
     if (state.current === pid) {
       renderResults(result, secs);
+      $("result-body").scrollIntoView({ behavior: "smooth", block: "start" });
       setJudgeStatus(`เสร็จใน ${secs.toFixed(2)}s — ${result.score}/100 คะแนน`, false);
       toast(`ตรวจเสร็จ: ${result.score}/100 คะแนน`, result.score === 100 ? "t-ok" : "");
     }
