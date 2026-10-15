@@ -2,7 +2,7 @@
 
 **An online judge for Thai competitive-programming instruction.**
 
-[![CI](https://github.com/sphetpitak-sudo/Newbiegrader/actions/workflows/ci.yml/badge.svg)](https://github.com/sphetpitak-sudo/Newbiegrader/actions/workflows/ci.yml)
+[![CI](https://github.com/n3wbiekkkk/Newbiegrader/actions/workflows/ci.yml/badge.svg)](https://github.com/n3wbiekkkk/Newbiegrader/actions/workflows/ci.yml)
 ![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue)
 
 Newbiegrader runs submitted code under enforced time and memory limits, judges it against a test set
@@ -104,7 +104,7 @@ The people who write and maintain this repository.
 
 | Role | Person | Scope |
 |---|---|---|
-| Maintainer | [@sphetpitak-sudo](https://github.com/sphetpitak-sudo) | Repository owner: judging engine, HTTP API, frontend, problem set, deployment |
+| Maintainer | [@n3wbiekkkk](https://github.com/n3wbiekkkk) | Repository owner: judging engine, HTTP API, frontend, problem set, deployment |
 | Contributors | [@Piyaph4t](https://github.com/Piyaph4t) | Contributor guide (`AGENTS.md`), judge-worker split (`judge_runner.py`/`worker.py`), queue test coverage |
 
 Contributors are credited here once their work is merged, and the copyright line in the licence names
@@ -120,7 +120,7 @@ published by the Free Software Foundation. The full text is in [`LICENSE`](LICEN
 
 **Network use (AGPL section 13).** Operating a modified version and letting users interact with it over
 a network requires offering those users the Corresponding Source of the running version. For this
-deployment that source is <https://github.com/sphetpitak-sudo/Newbiegrader>, linked from the footer of
+deployment that source is <https://github.com/n3wbiekkkk/Newbiegrader>, linked from the footer of
 every page; any other instance must make an equivalent offer.
 
 **Bundled and linked third-party components.** The Thai typeface used to typeset statement PDFs is
