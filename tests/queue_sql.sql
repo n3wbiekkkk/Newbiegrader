@@ -59,6 +59,14 @@ begin
         2, true, 0, 0);
     if (answer->>'status_code')::int is distinct from 503 then raise exception 'full queue was not rejected: %', answer; end if;
 
+    -- Deterministic claim order: the whole test runs in one transaction, so
+    -- created_at default now() is identical for every admitted job and the
+    -- claim's (created_at, id) tiebreak falls back to random uuid order.
+    -- Pin sql-a as oldest so first_claim is always its job (quota assertions
+    -- below depend on it). Production is unaffected (separate transactions).
+    update public.judge_jobs set created_at = now() - interval '2 seconds'
+        where user_email = 'sql-a@example.test';
+
     first_claim := public.judge_queue_claim('sql-worker-a', 60);
     second_claim := public.judge_queue_claim('sql-worker-b', 60);
     if first_claim->>'id' is null or second_claim->>'id' is null
