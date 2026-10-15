@@ -118,6 +118,24 @@ def _env_int(name: str, auto: int) -> int:
             print(f"[web] warning: bad {name}={raw!r}, using auto", file=sys.stderr)
     return auto
 
+def _sanitize_compile_error(text: str) -> str:
+    """Redact host paths and compiler version banners from toolchain output
+    before returning it to clients. Keeps diagnostics useful for students."""
+    # 1. Redact absolute host paths (/tmp, /app, /root, /home, /usr, /var, /etc).
+    text = re.sub(
+        r"(/tmp|/app|/root|/home|/usr|/var|/etc)(?:/\S*)?(?=\s|$)",
+        "[path]",
+        text,
+    )
+    # 2. Redact compiler version banners to just "<tool> (compiler)".
+    text = re.sub(
+        r"(?m)^[ \t]*(gcc|g\+\+|javac|java|node|go|rustc).*$",
+        lambda m: m.group(1) + " (compiler)",
+        text,
+    )
+    # 4. Truncate to 4000 chars as a safety net.
+    return text[:4000]
+
 
 def _derive_capacity(cpu: float, ram: int) -> dict:
     # Reserve API/interpreter memory, then budget each supervisor and the larger
@@ -1976,14 +1994,14 @@ def run_submission(prob: grader.Problem, ext: str, source: str,
                 "problem": prob.pid, "verdict": "CE", "accepted": False,
                 "passed": 0, "total": len(prob.tests), "score": 0,
                 "counts": {"CE": len(prob.tests)},
-                "build_warnings": "", "compile_error": str(e)[:4000],
+                "compile_error": _sanitize_compile_error(str(e))[:4000],
                 "limits": limits, "memory_capped": limits["capped"],
                 "checker": prob.checker, "results": [], "samples": len(samples),
                 "tests_hash": _tests_hash(prob.pid),
                 "grader_version": grader.GRADER_VERSION,
             }
         except SystemExit as e:
-            return {"error": str(e)}
+            return {"error": _sanitize_compile_error(str(e))}
 
         results: List[dict] = []
         lang = grader.detect_language(Path("solution" + ext))
@@ -2049,14 +2067,14 @@ def _run_playground(prob: Optional[grader.Problem], ext: str, source: str,
         try:
             cmd, _disp, warnings = grader.prepare_command(src, workdir)
         except grader.CompileError as e:
-            return {"verdict": "CE", "stdout": "", "stderr": str(e)[:4000],
+            return {"verdict": "CE", "stdout": "", "stderr": _sanitize_compile_error(str(e))[:4000],
                     "wall_s": round(time.perf_counter() - started, 4),
                     "cpu_s": 0.0, "peak_mb": 0.0, "reason": "compile-error",
                     "build_warnings": "",
                     "limits": _effective(prob, time_limit, memory_mb)[2],
                     "memory_capped": memory_mb > MEMORY_CAP_MB}
         except SystemExit as e:
-            return {"error": str(e)}
+            return {"error": _sanitize_compile_error(str(e))}
         _tl, eff_mem, limits = _effective(prob, time_limit, memory_mb)
         res = grader.run_one(cmd, stdin_data, time_limit, eff_mem,
                              grader.detect_language(src))
