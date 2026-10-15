@@ -498,7 +498,17 @@
   </div>
 </div>
 
+<div id="toast-stack" aria-live="polite"></div>
+
+<div id="palette-overlay" class="hidden">
+  <div class="palette-box" role="dialog" aria-modal="true" aria-label="ข้ามไปโจทย์">
+    <input id="palette-input" type="text" placeholder="พิมพ์เลข / id / ชื่อโจทย์…  (Enter เปิด, Esc ปิด)" autocomplete="off">
+    <div id="palette-list" class="palette-list" role="listbox"></div>
+    <div class="palette-hint dim">กด Ctrl/⌘+K เปิดจากที่ไหนก็ได้ · ↑↓ เลือก · Enter เปิด</div>
+  </div>
+</div>
+
 <script src="/config.js?v=4"></script>
-<script src="/app.js?v=25"></script>
+<script src="/app.js?v=26"></script>
 </body>
 </html>
