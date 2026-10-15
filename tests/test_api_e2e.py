@@ -342,6 +342,18 @@ class ApiE2E(unittest.TestCase):
         self.assertIn("clang++: [path]", clean)
         self.assertIn("(compiler)", clean)
 
+    def test_delete_rejects_unknown_filter_column(self):
+        """fake_supabase delete must validate filter column keys against whitelist."""
+        from fake_supabase import FakeSupabase
+        db = FakeSupabase(columns={"submissions": {"id", "user_email", "problem"}})
+        db.table("submissions").insert({"user_email": "a@example.com", "problem": "p1"}).execute()
+        with self.assertRaises(Exception) as ctx:
+            db.table("submissions").delete().eq("nonexistent_col", 1).execute()
+        self.assertIn("does not exist", str(ctx.exception))
+        # known column still works
+        db.table("submissions").delete().eq("problem", "p1").execute()
+        self.assertEqual(len(db.tables["submissions"]), 0)
+
     def test_history_detail_is_owner_or_admin_only(self):
         self.login(STUDENT_A)
         job = self.judged("thai_time", THAI_REF)
