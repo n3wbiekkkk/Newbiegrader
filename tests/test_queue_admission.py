@@ -82,6 +82,8 @@ class QueueAdmission(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(server.HTTPException) as raised:
             await server._create_job(job())
         self.assertEqual(raised.exception.status_code, 503)
+        self.assertIn("Retry-After", raised.exception.headers)
+        self.assertTrue(raised.exception.headers["Retry-After"].isdigit())
         self.assertFalse(server._jobs)
         self.assertFalse(server._active_jobs)
 
@@ -199,6 +201,8 @@ class QueueAdmission(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(server.HTTPException) as raised:
             await server._create_job(job("third@example.com", "rejudge"), track_active=False)
         self.assertEqual(raised.exception.status_code, 503)
+        self.assertIn("Retry-After", raised.exception.headers)
+        self.assertTrue(raised.exception.headers["Retry-After"].isdigit())
 
 
 class DatabaseOwnership(unittest.TestCase):
