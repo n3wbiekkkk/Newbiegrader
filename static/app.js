@@ -920,6 +920,9 @@ $("logout-btn").onclick = async () => {
   try {
     await fetch(API + "/api/auth/logout", { method: "POST", credentials: "include" });
   } catch (e) { /* ignore */ }
+  // Identity changed: the cached problem list (and the solved marks) must not
+  // survive into the next session on a shared machine.
+  try { localStorage.removeItem(PROBLEMS_CACHE_KEY); } catch (e) { /* ignore */ }
   await refreshMe();
   loadHistory();
 };
@@ -1857,6 +1860,7 @@ async function loadAdminContests() {
         try {
           await apiDelete(`/api/contests/${encodeURIComponent(cid)}`);
           $("ct-status").textContent = `ลบ ${cid} แล้ว`;
+          await refreshProblems();
           loadAdminContests();
         } catch (e) {
           $("ct-status").textContent = "ลบไม่สำเร็จ: " + e.message;
@@ -2001,6 +2005,8 @@ $("ct-save").onclick = async () => {
   try {
     const d = await apiPostJson("/api/contests", payload);
     st.textContent = `บันทึกแล้ว: ${(d.contest && d.contest.id) || payload.id}`;
+    // Visibility changed for the problems in this contest: refresh both lists.
+    await refreshProblems();
     loadAdminContests();
     if (document.querySelector("#view-contests.active")) renderContests();
   } catch (e) {
@@ -2025,10 +2031,31 @@ function loadProblemsCache() {
 }
 
 function saveProblemsCache() {
+  // The admin list carries contest-only problems (hidden/contest_only flags and
+  // the extra rows). Never persist it: browsers are often shared, and a cached
+  // admin list would flash those titles at the next user of the machine.
+  if (state.is_admin) {
+    try { localStorage.removeItem(PROBLEMS_CACHE_KEY); } catch (e) { /* ignore */ }
+    return;
+  }
   try {
     localStorage.setItem(PROBLEMS_CACHE_KEY,
       JSON.stringify({ t: Date.now(), data: state.problems }));
   } catch (e) { /* ignore */ }
+}
+
+async function refreshProblems() {
+  try {
+    const d = await apiGet("/api/problems");
+    if (d && Array.isArray(d.problems)) {
+      state.problems = d.problems;
+      saveProblemsCache();
+      buildFilterOptions();
+      if (document.querySelector("#view-tasks.active")) renderTasksTable();
+      return true;
+    }
+  } catch (e) { /* keep whatever we have */ }
+  return false;
 }
 
 /* Canonical tag taxonomy (mirrors KNOWN_TAGS in grader.py). */
