@@ -53,24 +53,9 @@ pip3 install -r requirements.txt
 python3 server.py                 # http://127.0.0.1:8000, serves the API and static/
 ```
 
-Everything runs on one machine, with no cloud and no database:
-
-```bash
-python3 tools/dev_server.py       # same server, against an in-memory database
-```
-
-That variant makes registration, submissions, verdicts, history, contests and the admin pages work
-locally — nothing is persisted, and the data disappears when the process stops. Sign in with the email
-and password form (any address works; `--admin <address>` decides who gets administrator rights).
-Google sign-in works locally too once `http://localhost:8000/api/auth/callback` is registered as a
-redirect URI for the OAuth client.
-
-To serve other machines on your network, add `--host 0.0.0.0` and point the server at a real database —
-the in-memory stand-in is for development, not for a class.
-
 Browsing problems and using the CLI need neither an account nor a database. A hosted SQL database —
 apply the schema script shipped in the repository — is required only for history, statistics,
-leaderboards and contests in production.
+leaderboards and contests.
 
 The judge also runs standalone:
 
