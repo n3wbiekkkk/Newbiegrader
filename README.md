@@ -2,7 +2,7 @@
 
 # Newbiegrader
 
-**เว็บสนามสอบเขียนโปรแกรมสำหรับเด็กไทย — ตรวจโหด โปร่งใส พร้อมแข่งจริง**
+**An online judge for Thai competitive-programming instruction — strict, transparent, contest-ready.**
 
 [![CI](https://github.com/n3wbiekkkk/Newbiegrader/actions/workflows/ci.yml/badge.svg)](https://github.com/n3wbiekkkk/Newbiegrader/actions/workflows/ci.yml)
 ![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue)
@@ -10,25 +10,25 @@
 ![Tests](https://img.shields.io/badge/test_cases-801-yellow)
 ![No build step](https://img.shields.io/badge/frontend-vanilla_JS_%2B_no_build-lightgrey)
 
-[เข้าใช้งานจริง](https://newbiegrader.pages.dev) · [รายงานบั๊ก](../../issues) · [วิธีลงโจทย์](#-adding-a-problem)
+[Live demo](https://newbiegrader.pages.dev) · [Report a bug](../../issues) · [Adding a problem](#-adding-a-problem)
 
 </div>
 
-> ส่งโค้ด Python / C / C++ แล้วระบบตรวจให้อัตโนมัติภายใต้ลิมิตเวลาจริง หน่วยความจำจริง และชุดเทสต์ลับที่ไม่เปิดเผย —
-> พร้อมโหมดคอนเทสต์ ประวัติการส่ง ลีดเดอร์บอร์ด และเครื่องมือจับโค้ดก็อปสำหรับครู
+> Submit Python / C / C++ and get judged automatically under real time limits, real memory limits, and an
+> undisclosed test set — with contests, submission history, leaderboards, and plagiarism tooling for teachers.
 
-## ทำไมต้อง Newbiegrader
+## Why Newbiegrader
 
 | | |
 |---|---|
-| **ลิมิตจริง ไม่ใช่ประมาณ** | จับเวลาด้วย wall-clock + `RLIMIT_CPU` หน่วยความจำวัดจาก peak RSS ภาษาตีความได้ allowance ตามเอกสาร (×2.5) ส่วน C/C++ โดนลิมิตเต็มตามโจทย์ประกาศ เวิร์ดิกต์ครบ `AC · WA · TLE · MLE · OLE · RE · CE` |
-| **เทสต์ลับ 801 ข้อ** | โจทย์ 55 ข้อ ข้อละ 10–18 เทสต์ นักเรียนเห็นแค่ตัวอย่างสาธารณะ input/expected/diff ของเทสต์ลับไม่เคยออกจากเซิร์ฟเวอร์ (redact ทั้งตอนตอบและตอนเก็บลงฐานข้อมูล) |
-| **ตรวจแบบ async ไม่หาย** | `POST /api/submit` ตอบ `202 + job_id` แล้วตรวจเบื้องหลัง รีเฟรช เปลี่ยนหน้า หรือเซิร์ฟเวอร์รีสตาร์ท งานก็ไม่หาย กลับมา poll ต่อได้ |
-| **พร้อมจัดแข่ง** | คอนเทสต์สไตล์ Codeforces: ลงทะเบียนก่อนแข่ง โจทย์เปิดเมื่อเริ่ม ตรึงสกอร์บอร์ดระหว่างแข่ง คะแนนในแข่งไม่ปนบอร์ดกลาง |
-| **เครื่องมือครู** | ประวัติทุกการส่งพร้อมโค้ด (เจ้าของ + แอดมินเท่านั้น) สถิติรายข้อ rejudge ยกชุด ตรวจจับโค้ดคล้าย (winnowing) รับรีพอร์ตโจทย์พัง |
-| **ฝั่งนักเรียนไม่เสียงาน** | ดราฟต์โค้ดเซฟอัตโนมัติรายข้อ งานที่ตรวจไม่จบจำไว้กลับมาอ่านต่อได้ รองรับคีย์บอร์ด โหมดมืดผ่าน WCAG AA |
+| **Real limits, not estimates** | Wall-clock timeout plus `RLIMIT_CPU`; memory verdicts from measured peak RSS. Interpreted runtimes get a documented allowance (×2.5) so students are judged on their algorithm, not their runtime's per-value overhead, while C/C++ face the full declared limit. Full verdict set: `AC · WA · TLE · MLE · OLE · RE · CE` |
+| **801 undisclosed tests** | 55 problems with 10–18 tests each. Students only ever see the declared samples — hidden input, expected output and diffs never leave the server (redacted both in responses and before database writes) |
+| **Async judging that never loses work** | `POST /api/submit` returns `202 + job_id` and judges in the background. Reloads, navigation and even server restarts neither lose the run nor its verdict — just poll and pick it back up |
+| **Ready to run contests** | Codeforces-style rounds: pre-contest registration, problems unlock at start, frozen scoreboard mid-round, contest scores kept off the permanent ranking |
+| **Teacher tooling** | Full submission history with source (owner + admin only), per-problem statistics, batch rejudge, winnowing-based similarity detection, broken-problem reports |
+| **Students never lose work** | Per-problem draft autosave, in-flight runs remembered across reloads, keyboard operable, dark mode at WCAG AA contrast |
 
-## สถาปัตยกรรม
+## Architecture
 
 ```mermaid
 graph LR
@@ -43,24 +43,24 @@ graph LR
   S --> DB
 ```
 
-| ชั้น | ของ |
+| Layer | What |
 |---|---|
-| เอนจินตัดสิน | `grader.py` — สแตนด์อโลน ใช้แค่ Python standard library (`v2.0.0`) |
-| API + คิวงาน | `server.py` — HTTP API, คิว durable, โควตารายบัญชี, นโยบายเฉลย |
-| หน้าเว็บ | `static/` — HTML/CSS/JS ล้วน **ไม่มี build step** |
-| โจทย์ | `problems/<id>/` — `config.json` + `statement.pdf/md` + `tests/*.in|*.out` (เลขโจทย์ `no` ใช้เรียง/ค้นหา/เปิดด้วยเลข) |
-| เฉลยอ้างอิง | `examples/<id>_ref.py` — single source of truth ตอนสร้างเทสต์ |
-| ฐานข้อมูล | `supabase/schema.sql` — schema + migration แบบ append-only (รันซ้ำปลอดภัย) |
+| Judging engine | `grader.py` — standalone, Python standard library only (`v2.0.0`) |
+| API + job queue | `server.py` — HTTP API, durable queue, per-account quotas, reveal policy |
+| Frontend | `static/` — plain HTML/CSS/JS, **no build step** |
+| Problems | `problems/<id>/` — `config.json` + `statement.pdf/md` + `tests/*.in\|*.out` (numeric `no` drives ordering, search and numeric URLs) |
+| Reference solutions | `examples/<id>_ref.py` — single source of truth when generating tests |
+| Database | `supabase/schema.sql` — schema plus append-only migrations (safe to re-run) |
 
-## เริ่มใช้งาน (local)
+## Getting started (local)
 
 ```bash
 pip3 install -r requirements.txt
-python3 server.py                 # http://127.0.0.1:8000 ทั้ง API และหน้าเว็บ
+python3 server.py                 # http://127.0.0.1:8000 serves both API and frontend
 ```
 
-ดูโจทย์กับใช้ CLI ไม่ต้องมีบัญชีหรือฐานข้อมูล ฐานข้อมูลแบบโฮสต์ (รัน `supabase/schema.sql` ใน SQL Editor)
-จำเป็นเฉพาะ history / สถิติ / ลีดเดอร์บอร์ด / คอนเทสต์
+Browsing problems and using the CLI need neither an account nor a database. A hosted SQL database (apply
+`supabase/schema.sql` in its SQL editor) is only required for history, statistics, leaderboards and contests.
 
 ```bash
 python3 grader.py list
@@ -68,40 +68,40 @@ python3 grader.py run warpz examples/warpz_ref.py
 python3 grader.py run mana_crystal examples/mana_crystal_ref.py --strict --stop-on-fail
 ```
 
-## ตรวจก่อน commit
+## Verifying a change
 
 ```bash
 python3 -m compileall -q grader.py server.py tools tests
 node --check static/app.js && node tools/check_frontend.js && node tools/check_styles.js
-python3 tools/validate_problem.py          # 55 ข้อ: config, เทสต์, ตัวอย่าง, ref ต้อง AC
-python3 -m unittest discover -s tests -v  # ไม่ต้องมีเซิร์ฟเวอร์หรือฐานข้อมูลจริง
+python3 tools/validate_problem.py          # 55 problems: config, tests, samples, reference AC
+python3 -m unittest discover -s tests -v   # no live server or database needed
 ```
 
-ชุดเดียวกันนี้รันใน CI ทุก push/PR เข้า `main`
+The same sequence runs in CI on every push and pull request to `main`.
 
 ## Adding a problem
 
-1. วางโจทย์เป็น `problems/<id>/statement.pdf` (`id` snake_case ตัวเล็ก)
-2. เขียน `statement.md` ภาษาไทย: เรื่องราว + `## Input` + `## Output` + `## ตัวอย่าง` (บล็อก `input:`/`output:`) + `## Limits` — ห้ามมีเฉลย/ใบ้
-3. ปั้น PDF ด้วย `python3 tools/make_statement_tex.py <id>` แล้วเปิดดูทุกข้อ
-4. เติม `config.json` (ดู `config.json` ข้ออื่นเป็นตัวอย่าง) + เทสต์ `tests/NN.in|NN.out` 10 ข้อขึ้นไป (ตัวอย่างใน statement ต้องตรงเป๊ะ + edge + random + max constraint) + `examples/<id>_ref.py`
-5. ให้เลขโจทย์ `python3 tools/number_problems.py --assign` (เลขคือลำดับง่าย→ยาก ห้ามซ้ำ)
-6. `python3 grader.py run <id> examples/<id>_ref.py` ต้อง `ACCEPTED` ทั้งหมด + ลองโค้ดผิดต้องตก + `python3 tools/validate_problem.py <id>` ต้อง 0 FAIL
+1. Drop the statement as `problems/<id>/statement.pdf` (`id` is lowercase snake_case)
+2. Write a Thai `statement.md`: story + `## Input` + `## Output` + `## ตัวอย่าง` (fenced `input:`/`output:` blocks) + `## Limits` — no hints or solutions
+3. Typeset the PDF with `python3 tools/make_statement_tex.py <id>` and visually check every page
+4. Fill in `config.json` (copy a neighboring one), add 10+ tests in `tests/NN.in|NN.out` (statement samples byte-identical + edges + seeded randoms + max constraints), and `examples/<id>_ref.py`
+5. Assign the problem number with `python3 tools/number_problems.py --assign` (numbers run easy → hard, unique)
+6. `python3 grader.py run <id> examples/<id>_ref.py` must be fully `ACCEPTED`, a wrong solution must fail, and `python3 tools/validate_problem.py <id>` must report 0 FAIL
 
 ## Deploy
 
 - **Backend:** `git push <backend-remote> HEAD:deploy` (Docker: Python 3.11 + gcc/g++)
-- **Frontend:** push `main` — Pages เอา `static/` ขึ้นให้อัตโนมัติ `/api/*` วิ่งผ่าน proxy ต้นทางเดียว คุกกี้ login จึงเป็น first-party
-- แก้ `app.js`/`styles.css` ทุกครั้งต้อง bump `?v=N` ใน `static/index.html`
+- **Frontend:** push `main` — Pages publishes `static/` automatically; `/api/*` goes through the same-origin proxy so the login cookie stays first-party
+- Bump the `?v=N` stamp in `static/index.html` every time a versioned asset changes
 
 ## Contributing
 
-กติกาตายตัว 2 ข้อ:
+Two invariants are non-negotiable:
 
-1. **Judge มีที่เดียว** — การตัดสินผ่าน `grader.run_one` / `grader.judge_test` / `grader.prepare_command` เท่านั้น ห้ามตัดสินใน request handler
-2. **เทสต์ลับห้ามรั่ว** — ทุกอย่างที่มีข้อมูลเทสต์ต้องผ่าน `_redact_results()` ทั้งขาตอบและขาเก็บลง DB
+1. **One judge only.** All judging passes through `grader.run_one` / `grader.judge_test` / `grader.prepare_command` — never judge inside a request handler.
+2. **Never disclose test data.** Anything carrying test data passes through `_redact_results()`, both on the response path and on the path to the database.
 
-อยากมีชื่อในตาราง Team ให้เปิด pull request (ดู scope งานของ contributor ปัจจุบันด้านล่างเป็นตัวอย่าง)
+To be listed in the Team table below, open a pull request (the current contributor's scope is an example of the expected granularity).
 
 ## Team
 
@@ -110,7 +110,7 @@ python3 -m unittest discover -s tests -v  # ไม่ต้องมีเซิ
 | Maintainer | [@n3wbiekkkk](https://github.com/n3wbiekkkk) | Repository owner: judging engine, HTTP API, frontend, problem set, deployment |
 | Contributors | [@Piyaph4t](https://github.com/Piyaph4t) | Judge-worker split (`judge_runner.py`/`worker.py`), queue test coverage |
 
-แจ้งช่องโหว่ความปลอดภัยผ่านโปรไฟล์ maintainer โดยตรง อย่าเปิด issue สาธารณะ
+Report security issues directly through the maintainer's profile instead of opening a public issue.
 
 ## License
 
