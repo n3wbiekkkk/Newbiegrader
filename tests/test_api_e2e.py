@@ -763,8 +763,28 @@ class ApiE2E(unittest.TestCase):
                              headers={"Origin": "http://localhost"})
         self.assertEqual(r.status_code, 200, r.text)
 
+    def test_csrf_loopback_origin_127_evil_rejected(self):
+        # A hostname like "127.evil.com" starts with "127." but is NOT
+        # loopback. ipaddress.ip_address().is_loopback must reject it.
+        self.login(STUDENT_A)
+        payload = {"email": STUDENT_A, "password": PASSWORD}
+
+        # Production mode: 127.evil.com origin rejected with 403
+        os.environ["SESSION_SECURE"] = "true"
+        r = self.client.post("/api/auth/password", json=payload,
+                             headers={"Origin": "http://127.evil.com"})
+        self.assertEqual(r.status_code, 403, r.text)
+        self.assertEqual(r.json(), {"detail": "cross-origin request refused"})
+
+        # Dev mode: 127.evil.com still rejected (not real loopback)
+        os.environ["SESSION_SECURE"] = "false"
+        r = self.client.post("/api/auth/password", json=payload,
+                             headers={"Origin": "http://127.evil.com"})
+        self.assertEqual(r.status_code, 403, r.text)
+        self.assertEqual(r.json(), {"detail": "cross-origin request refused"})
+
     def test_admin_overview_reports_queue_state(self):
-        # async endpoint (DB in threads, never blocks the loop) with queue
+
         # monitor fields for the admin banner (alert at >=5 queued).
         self.login(ADMIN)
         r = self.client.get("/api/admin/overview")
