@@ -2230,7 +2230,7 @@ async def _read_source(language: str, code: str,
     source: Optional[str] = None
     filename: Optional[str] = None
     if file is not None and file.filename:
-        filename = file.filename
+        filename = Path(file.filename).name
         # Cap the read itself: don't buffer an unbounded upload into RAM.
         raw = await file.read(MAX_CODE_BYTES + 1)
         if len(raw) > MAX_CODE_BYTES:
