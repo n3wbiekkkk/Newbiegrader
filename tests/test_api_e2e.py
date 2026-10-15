@@ -1389,5 +1389,24 @@ class PreMigrationFallback(unittest.TestCase):
         self.assertIn("thai_time", body["tests"])
 
 
+
+
+class DeleteWhitelistTest(unittest.TestCase):
+    """delete must validate filter column keys against the whitelist."""
+
+    def test_delete_validates_filter_column_against_whitelist(self):
+        fake = FakeSupabase(columns={"submissions": {"id", "user_email", "problem"}})
+        fake.tables["submissions"] = [{"id": "s1", "user_email": "a@example.com",
+                                       "problem": "p1", "score": 0}]
+        with self.assertRaises(Exception) as ctx:
+            fake.table("submissions").delete().eq("nonexistent_col", 1).execute()
+        self.assertIn("nonexistent_col", str(ctx.exception))
+        # known filter column validates fine and deletes matching rows
+        res = fake.table("submissions").delete().eq("problem", "p1").execute()
+        self.assertEqual(res.data, [])
+        self.assertEqual(len(fake.rows("submissions")), 0)
+
+
 if __name__ == "__main__":
+
     unittest.main(verbosity=2)

@@ -134,7 +134,7 @@ class _Query:
                     touched.append(copy.deepcopy(row))
             return _Resp(touched)
         if self._op == "delete":
-            self.db.check_columns(self.table, set())
+            self.db.check_columns(self.table, {f[1]: True for f in self._filters})
             keep = [r for r in rows if not self._match(r)]
             gone = len(rows) - len(keep)
             rows[:] = keep
