@@ -25,7 +25,7 @@ const state = {
   user: null,
   is_admin: false,
   isAdmin: false,        // alias of is_admin (same value)
-  filter: { q: "", diff: "", tag: "", status: "all" },
+  filter: { q: "", diff: "", tag: "", status: "all", sort: "no" },
 };
 
 /* ---------------- theme ---------------- */
@@ -380,11 +380,31 @@ function show(view) {
 // resolves: a page opened directly on #/settings (or #/contests, #/task/<id>)
 // renders before /api/auth/me answers, so admin cards and "your score" would
 // otherwise stay stale until the next navigation. Never navigates.
+function resolveTaskToken(token) {
+  const byId = state.problems.find((p) => p.id === token);
+  if (byId) return byId.id;
+  if (/^\d+$/.test(token)) {
+    const byNo = state.problems.find((p) => String(p.no) === token);
+    if (byNo) return byNo.id;
+  }
+  return null;
+}
+
+async function openTaskByToken(token) {
+  const pid = resolveTaskToken(token);
+  if (pid) { show("task"); selectProblem(pid); return; }
+  try {   // contest-only problems are absent from the public list: ask the API
+    const d = await apiGet(`/api/problems/${encodeURIComponent(token)}`);
+    if (d && d.id) { show("task"); selectProblem(d.id); return; }
+  } catch (e) { /* fall through */ }
+  location.hash = "#/tasks";
+}
+
 function currentRouteRender() {
   const h = location.hash || "#/";
   if (h.startsWith("#/task/")) {
-    const pid = decodeURIComponent(h.slice("#/task/".length));
-    if (!state.problems.some((p) => p.id === pid)) return null;
+    const pid = resolveTaskToken(decodeURIComponent(h.slice("#/task/".length)));
+    if (!pid) return null;
     return () => selectProblem(pid);
   }
   if (h === "#/tasks") return () => renderTasksTable();
@@ -403,13 +423,7 @@ function currentRouteRender() {
 function router() {
   const h = location.hash || "#/";
   if (h.startsWith("#/task/")) {
-    const pid = decodeURIComponent(h.slice("#/task/".length));
-    if (state.problems.some((p) => p.id === pid)) {
-      show("task");
-      selectProblem(pid);
-    } else {
-      location.hash = "#/tasks";
-    }
+    openTaskByToken(decodeURIComponent(h.slice("#/task/".length)));
     return;
   }
   if (h === "#/tasks") { show("tasks"); renderTasksTable(); return; }
@@ -441,16 +455,54 @@ function renderHome() {
 }
 
 /* ---------------- tasks (sidebar + cards) ---------------- */
+function noLabel(p) {
+  return p && p.no ? `<span class="pno">#${esc(String(p.no))}</span>` : "";
+}
+
+function byPidOf(list, pid) {
+  return (list || []).find((p) => p.id === pid) || null;
+}
+
+function problemCell(pid) {
+  const p = byPidOf(state.problems, pid);
+  const num = p && p.no ? `#${p.no} ` : "";
+  return `<a class="tlink" href="#/task/${encodeURIComponent(pid)}">${esc(num + pid)}</a>`;
+}
+
 function filteredProblems() {
   const q = state.filter.q.trim().toLowerCase();
-  return state.problems.filter((p) => {
+  const list = state.problems.filter((p) => {
     if (state.filter.diff && (p.difficulty || "") !== state.filter.diff) return false;
     if (state.filter.tag && !(p.tags || []).includes(state.filter.tag)) return false;
-    if (q && !(`${p.id} ${p.title}`.toLowerCase().includes(q))) return false;
+    if (q) {
+      const qq = q.startsWith("#") ? q.slice(1) : q;
+      const hay = `${p.no || ""} ${p.id} ${p.title} #${p.no || ""}`.toLowerCase();
+      if (!hay.includes(q)) {
+        // numeric search: "19" should find #19 even if the slug contains 19 too
+        if (!(/^\d+$/.test(qq) && String(p.no) === qq)) return false;
+      }
+    }
     if (state.filter.status === "tried" && !(state.myBest && p.id in state.myBest)) return false;
     if (state.filter.status === "solved" && !(state.myBest && state.myBest[p.id] === 100)) return false;
     return true;
   });
+  return sortProblemList(list);
+}
+
+const DIFF_RANK = { easy: 0, medium: 1, hard: 2 };
+
+function sortProblemList(list) {
+  const byNo = (a, b) => ((a.no || 9999) - (b.no || 9999)) || a.id.localeCompare(b.id);
+  const mode = state.filter.sort || "no";
+  const copy = [...list];
+  if (mode === "difficulty") {
+    copy.sort((a, b) => ((DIFF_RANK[a.difficulty] ?? 9) - (DIFF_RANK[b.difficulty] ?? 9)) || byNo(a, b));
+  } else if (mode === "title") {
+    copy.sort((a, b) => (a.title || "").localeCompare(b.title || "", "th") || byNo(a, b));
+  } else {
+    copy.sort(byNo);
+  }
+  return copy;
 }
 
 function taskScoreHtml(pid) {
@@ -485,7 +537,7 @@ function renderTasksTable() {
     card.className = "task-card";
     card.innerHTML = `
       <div class="tc-main">
-        <div class="tc-title">${esc(p.title)} <span class="dim">${esc(p.id)}</span></div>
+        <div class="tc-title">${noLabel(p)} ${esc(p.title)} <span class="dim">${esc(p.id)}</span></div>
         ${showTag ? `<div class="tc-tags">${tags || '<span class="dim">—</span>'}</div>` : ""}
         <div class="tc-meta">${diffBadge(p.difficulty)}<span class="dim">${p.tests} tests · Solved ${st.solvers ?? 0}</span>${
           p.hidden ? badge("ซ่อนจาก Task", "hidden") : ""}</div>
@@ -618,7 +670,7 @@ async function renderLeaderboard() {
 const DETAIL_CACHE_TTL = 60 * 1000;
 
 function fillTaskDetail(p) {
-  $("task-title").textContent = `${p.id} — ${p.title}`;
+  $("task-title").innerHTML = `${noLabel(p)} ${esc(p.title)} <span class="dim">${esc(p.id)}</span>`;
   const nz = $("task-notice");
   if (p.notice) {
     nz.textContent = p.notice;
@@ -975,7 +1027,7 @@ async function loadOverview() {
     recent.innerHTML = rows.length ? `<table class="tests"><thead><tr>
       <th>เวลา</th><th>ข้อ</th><th>ชื่อ</th><th>ผล</th><th>คะแนน</th>
       </tr></thead><tbody>` + rows.map((r) =>
-      `<tr><td>${esc(new Date(r.created_at).toLocaleString())}</td><td>${esc(r.problem)}</td>` +
+      `<tr><td>${esc(new Date(r.created_at).toLocaleString())}</td><td>${problemCell(r.problem)}</td>` +
       `<td>${esc(r.name || "—")}</td><td>${badge(r.accepted ? "AC" : (r.verdict || "?"))}</td>` +
       `<td><span class="${scoreCls(r.score)}">${r.score ?? ""}</span></td></tr>`
     ).join("") + `</tbody></table>` : `<span class="dim">ยังไม่มีข้อมูล</span>`;
@@ -1440,7 +1492,7 @@ function historyTable(rows, showProblem) {
     const cls = r.accepted ? "AC" : (r.verdict === "CE" ? "CE" : "WA");
     const label = r.accepted ? "AC" : (r.verdict || "REJECTED");
     html += `<tr>
-      <td>${esc(when)}</td>${showProblem ? `<td>${esc(r.problem)}</td>` : ""}<td>${esc(r.name || "—")}</td><td>${esc(r.language)}</td>
+      <td>${esc(when)}</td>${showProblem ? `<td>${problemCell(r.problem)}</td>` : ""}<td>${esc(r.name || "—")}</td><td>${esc(r.language)}</td>
       <td>${badge(label, cls)}</td><td>${r.passed}/${r.total} (<span class="${scoreCls(r.score)}">${r.score}</span>)</td>
       <td><button class="icon-btn" data-view="${esc(r.id)}" title="ดูผล">${icon("eye")}</button></td>
     </tr>`;
@@ -1646,7 +1698,7 @@ function renderContestProblems(d) {
   </tr></thead><tbody>` + list.map((p, i) => {
     const nS = p.samples || 0;
     const nH = Math.max(0, (p.tests || 0) - nS);
-    const link = `<a class="tlink contest-open" href="#/task/${encodeURIComponent(p.id)}">${esc(p.id)}</a>`;
+    const link = `<a class="tlink contest-open" href="#/task/${encodeURIComponent(p.id)}">${esc((p.no ? "#" + p.no + " " : "") + p.id)}</a>`;
     const action = running
       ? `<button class="ghost-btn" type="button" data-enter="${esc(p.id)}">${icon("send")}<span>ส่งข้อนี้เข้าคอนเทสต์</span></button>`
       : `<a class="ghost-btn contest-open" href="#/task/${encodeURIComponent(p.id)}">${icon("eye")}<span>ดูโจทย์</span></a>`;
@@ -1815,7 +1867,8 @@ function buildProblemSelect(sel, multiple) {
     : state.problems;
   sel.innerHTML = list.map((p) => {
     const tag = p.hidden ? " [ซ่อนจาก Task]" : "";
-    return `<option value="${esc(p.id)}">${esc(p.id)} — ${esc(p.title)}${esc(tag)}</option>`;
+    const num = p.no ? `#${p.no} ` : "";
+    return `<option value="${esc(p.id)}">${esc(num + p.id)} — ${esc(p.title)}${esc(tag)}</option>`;
   }).join("");
   if (!multiple && prev && [...sel.options].some((o) => o.value === prev)) sel.value = prev;
 }
@@ -2116,9 +2169,21 @@ function buildFilterOptions() {
 
 /* ---------------- init ---------------- */
 async function init() {
-  const fd = $("f-diff"), hf = $("hist-filter");
+  const fd = $("f-diff"), hf = $("hist-filter"), fs = $("f-sort");
+  try {
+    const saved = localStorage.getItem("ng_sort");
+    if (saved) state.filter.sort = saved;
+  } catch (e) { /* ignore */ }
   $("q").oninput = (e) => { state.filter.q = e.target.value; renderTasksTable(); };
   fd.onchange = (e) => { state.filter.diff = e.target.value; renderTasksTable(); };
+  if (fs) {
+    fs.value = state.filter.sort || "no";
+    fs.onchange = (e) => {
+      state.filter.sort = e.target.value;
+      try { localStorage.setItem("ng_sort", state.filter.sort); } catch (err) { /* ignore */ }
+      renderTasksTable();
+    };
+  }
   $("show-tag").onchange = () => {
     if (document.querySelector("#view-tasks.active")) renderTasksTable();
   };

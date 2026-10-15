@@ -601,6 +601,50 @@ class ApiE2E(unittest.TestCase):
         finally:
             server.QUEUE_MAX = original
 
+    def test_problem_numbers_are_contiguous_and_resolve(self):
+        # The repo numbering is an invariant (tools/number_problems.py keeps it):
+        # 1..N with no gaps, and any problem can be addressed by its number.
+        all_nos = sorted(p.no for p in server.PROBLEMS.values())
+        self.assertEqual(all_nos, list(range(1, len(all_nos) + 1)), all_nos)
+
+        self.login(STUDENT_A)
+        probs = self.client.get("/api/problems").json()["problems"]
+        nums = [p["no"] for p in probs]
+        self.assertTrue(all(n > 0 for n in nums), "every listed problem needs a number")
+        self.assertEqual(nums, sorted(nums), "the list is ordered by number")
+        hidden = server._hidden_pids()
+        hidden_nos = {server.PROBLEMS[pid].no for pid in hidden}
+        self.assertTrue(hidden_nos.isdisjoint(set(nums)), "hidden problems stay out of the list")
+        self.assertEqual({p["id"] for p in probs},
+                         {pid for pid in server.PROBLEMS if pid not in hidden})
+
+        pid = server.PROBLEMS_BY_NO[19]
+        detail = self.client.get("/api/problems/19").json()
+        self.assertEqual(detail["id"], pid)
+        self.assertEqual(detail["no"], 19)
+        sample = server.PROBLEMS[pid].samples[0]
+        self.assertEqual(self.client.get(f"/api/problems/19/sample/{sample}").status_code, 200)
+        self.assertEqual(self.client.get("/api/problems/19/pdf").status_code,
+                         200 if (ROOT / "problems" / pid / "statement.pdf").is_file() else 404)
+
+        # submitting by number judges the same problem as by slug
+        code = (ROOT / "examples" / f"{pid}_ref.py").read_text(encoding="utf-8")
+        job = self.submit("19", code)
+        self.assertEqual(job["problem"], pid, job)
+        done = self.wait_job(job["job_id"])
+        self.assertEqual(done["status"], "done", done)
+        row = self.stored(id=done["result"]["id"])[0]
+        self.assertEqual(row["problem"], pid)
+
+        # contests accept numbers too and store canonical slugs
+        self.login(ADMIN)
+        created = self.client.post("/api/contests", json={
+            "id": "num-cup", "title": "Num Cup", "starts_at": _iso(-5), "ends_at": _iso(30),
+            "problems": ["19"], "hide_from_tasks": False})
+        self.assertEqual(created.status_code, 200, created.text)
+        self.assertEqual(created.json()["contest"]["problems"], [pid])
+        self.assertEqual(self.client.delete("/api/contests/num-cup").status_code, 200)
+
     def test_health_and_problem_listing(self):
         h = self.client.get("/api/health").json()
         self.assertTrue(h["ok"])

@@ -251,55 +251,69 @@ python3 grader.py run napprime examples/napprime_ref.cpp   # C++ ก็ได้
 `statement.pdf` (ต้นฉบับ) + `statement.md` + `config.json` + `tests/` (~10 testcases)
 หน้าเว็บมีปุ่ม open PDF statement + ระบบ filter (ค้นหา/ระดับ/tag)
 
-| id | ชื่อ | ระดับ | tests |
-|----|------|--------|-------|
-| `mana_crystal` | ย่อภาพผลึกมานา | medium | 15 |
-| `posn_server_passcode` | รหัสผ่านเซิร์ฟเวอร์ สอวน. | medium | 16 |
-| `warpz` | วาร์ปอวกาศ | easy | 15 |
-| `napprime` | Napprime นับจำนวนเฉพาะ (TL 0.5s / MEM 32MB) | easy | 16 |
-| `bake_a_cake` | อบเค้ก (TL 0.5s / MEM 32MB) | easy | 16 |
-| `min_distance` | ระยะทางรวมน้อยสุด (TL 1s / MEM 64MB) | medium | 14 |
-| `largest_rectangle` | สี่เหลี่ยมใหญ่สุดในฮิสโตแกรม (TL 1s / MEM 64MB) | medium | 15 |
-| `blood_moon` | คืนพระจันทร์สีเลือด (ใช้อะไรก็ได้ ไม่บังคับ pointer) | easy | 15 |
-| `dna` | จำลอง DNA (ใช้อะไรก็ได้ ไม่บังคับ pointer) | easy | 15 |
-| `flashback` | ไม่ได้ลืมแค่ไม่ได้เจอ | medium | 15 |
-| `rotation` | เธอหมุนรอบฉัน ฉันหมุนรอบเธอ | easy | 15 |
-| `shadow` | Shadow เงาปะทะมังกร (TL 1s / MEM 64MB) | easy | 15 |
-| `panda` | แพนด้าหาส้มโอ (TL 1s / MEM 512MB) | medium | 15 |
-| `sing_contest` | อันดับประกวดร้องเพลง | easy | 15 |
-| `candy_sales` | ยอดขายสายไหมรายวัน | easy | 15 |
-| `snack_budget` | งบจำกัดแต่อยากกินเยอะ | easy | 14 |
-| `stage_show` | ตารางการแสดงบนเวที | easy | 15 |
-| `ticket_queue` | คิวซื้อตั๋วคอนเสิร์ต | easy | 15 |
-| `club_vote` | เลือกตั้งประธานชมรมดนตรี | easy | 15 |
-| `stage_lights` | จุดไฟประดับใกล้เวทีที่สุด | easy | 15 |
-| `boat_crossing` | เรือพายข้ามคลอง | easy | 14 |
-| `find_max` | หาค่ามากที่สุดด้วยฟังก์ชัน (ใช้อะไรก็ได้) | easy | 14 |
-| `sum_even` | ผลรวมของเลขคู่ (ใช้อะไรก็ได้) | easy | 14 |
-| `prime_check` | ตรวจจำนวนเฉพาะ (ใช้อะไรก็ได้) | easy | 14 |
-| `count_even_odd` | นับเลขคู่และเลขคี่ (ใช้อะไรก็ได้) | easy | 14 |
-| `digit_sum` | ผลรวมเลขโดด (ใช้อะไรก็ได้) | easy | 14 |
-| `digital_root` | รากดิจิทัล (ใช้อะไรก็ได้) | easy | 14 |
-| `dec_to_bin` | แปลงเลขฐานสิบเป็นฐานสอง (ใช้อะไรก็ได้) | easy | 14 |
-| `dec_to_hex` | แปลงเลขฐานสิบเป็นฐานสิบหก (ใช้อะไรก็ได้) | easy | 14 |
-| `hidden_digit_sum` | ผลรวมตัวเลขที่ซ่อนในข้อความ (ใช้อะไรก็ได้) | easy | 14 |
-| `hanoi` | หอคอยฮานอย (ใช้อะไรก็ได้) | easy | 10 |
-| `power_recur` | ยกกำลังด้วยการเรียกตัวเอง (ใช้อะไรก็ได้) | easy | 14 |
-| `fib_sum` | ผลรวมลำดับฟีโบนัชชี (ใช้อะไรก็ได้) | easy | 14 |
-| `array_min_sum` | ค่าต่ำสุดและผลรวมของอาร์เรย์ (ใช้อะไรก็ได้) | easy | 14 |
-| `maze_score` | เขาวงกตเก็บคะแนน (ใช้อะไรก็ได้) | medium | 14 |
-| `swordsmith` | ช่างตีดาบแห่งวังหลวง (ใช้อะไรก็ได้) | easy | 14 |
-| `cookie_share` | แบ่งคุกกี้ ห.ร.ม. ค.ร.น. (ใช้อะไรก็ได้) | easy | 14 |
-| `mirror_pair` | เลขสะท้อนคู่ (ใช้อะไรก็ได้) | easy | 14 |
-| `collatz_max` | ลำดับคอลลาตซ์ที่ยาวที่สุด (ใช้อะไรก็ได้) | easy | 14 |
-| `library_code` | ซ่อมรหัสสมาชิกห้องสมุด (ใช้อะไรก็ได้) | easy | 14 |
-| `fraction_add` | บวกเศษส่วนให้เป็นเศษส่วนอย่างต่ำ (ใช้อะไรก็ได้) | easy | 14 |
-| `binary_strings` | สายไบนารีที่ไม่มีเลข 1 ติดกัน (ใช้อะไรก็ได้) | easy | 15 |
-| `broken_stairs` | บันไดขั้นพัง (ใช้อะไรก็ได้) | medium | 14 |
-| `exact_budget` | ซื้อของให้พอดีงบ (ใช้อะไรก็ได้) | medium | 14 |
-| `count_islands` | นับเกาะ (ใช้อะไรก็ได้) | medium | 18 |
-| `queens_holes` | ราชินีบนกระดานมีหลุม (ใช้อะไรก็ได้) | medium | 14 |
-| `thai_time` | ระบบบอกเวลาภาษาไทย | easy | 15 |
+**ทุกข้อมีเลขโจทย์ถาวร** (`config.json → "no"`) ใช้เรียงและค้นหา: พิมพ์ `19` หรือ `#19` ในช่องค้นหา,
+เปิดตรงด้วย `#/task/19`, และเรียงได้ 3 แบบ (เลข / ระดับ / ชื่อ) ผ่าน dropdown ในหน้า Tasks
+เลขเก็บในโฟลเดอร์โจทย์ (ไม่ใช่ลำดับที่คำนวณ) → ไม่เปลี่ยนเมื่อเพิ่มข้อใหม่ และใช้ได้ทั้ง CLI/validator
+จัดการด้วย:
+
+```bash
+python3 tools/number_problems.py --list                    # ตารางเลขโจทย์ทั้งหมด
+python3 tools/number_problems.py --assign                  # ให้เลขข้อที่ยังไม่มี (ต่อท้าย)
+python3 tools/number_problems.py --renumber                # ล้างแล้วให้ใหม่ (public easy→medium→hard, คอนเทสต์ท้าย)
+python3 tools/number_problems.py --set --id hanoi --no 12  # ย้ายข้อไปเลขที่ต้องการ
+python3 tools/number_problems.py --check                   # ตรวจเลขซ้ำ/ขาด
+```
+เลขต้องไม่ซ้ำ — `python3 tools/validate_problem.py` จะ FAIL ถ้าซ้ำหรือหาย (ข้อที่ตั้ง `"hidden": true` จะขึ้น `[contest-only: ไม่โชว์ในหน้า Task]` และไม่ปรากฏในตารางนี้ให้ผู้ใช้ทั่วไป)
+
+| # | id | ชื่อ | ระดับ | tests | limits |
+|---|----|------|--------|-------|--------|
+| `1` | `array_min_sum` | ค่าต่ำสุดและผลรวมของอาร์เรย์ (Array Min Sum) | easy | 14 | TL 1s / MEM 64MB |
+| `2` | `bake_a_cake` | อบเค้ก (Bake a Cake) | easy | 16 | TL 0.5s / MEM 32MB |
+| `3` | `binary_strings` | สายไบนารีที่ไม่มีเลข 1 ติดกัน (Binary Strings) | easy | 15 | TL 1s / MEM 64MB |
+| `4` | `blood_moon` | คืนพระจันทร์สีเลือด (Blood Moon) | easy | 15 | TL 1s / MEM 256MB |
+| `5` | `boat_crossing` | เรือพายข้ามคลอง (Boat Rescue) | easy | 14 | TL 1s / MEM 256MB |
+| `6` | `candy_sales` | ยอดขายสายไหมรายวัน (Daily Candy Sales) | easy | 15 | TL 1s / MEM 256MB |
+| `7` | `club_vote` | เลือกตั้งประธานชมรมดนตรี (Club Election) | easy | 15 | TL 1s / MEM 64MB |
+| `8` | `collatz_max` | ลำดับคอลลาตซ์ที่ยาวที่สุด (Collatz Max) | easy | 14 | TL 1s / MEM 64MB |
+| `9` | `cookie_share` | แบ่งคุกกี้ ห.ร.ม. ค.ร.น. (Cookie Sharing) | easy | 14 | TL 1s / MEM 64MB |
+| `10` | `count_even_odd` | นับเลขคู่และเลขคี่ (Even Odd Count) | easy | 14 | TL 1s / MEM 64MB |
+| `11` | `dec_to_bin` | แปลงเลขฐานสิบเป็นฐานสอง (Decimal to Binary) | easy | 14 | TL 1s / MEM 64MB |
+| `12` | `dec_to_hex` | แปลงเลขฐานสิบเป็นฐานสิบหก (Decimal to Hex) | easy | 14 | TL 1s / MEM 64MB |
+| `13` | `digit_sum` | ผลรวมเลขโดด (Digit Sum) | easy | 14 | TL 1s / MEM 64MB |
+| `14` | `digital_root` | รากดิจิทัล (Digital Root) | easy | 14 | TL 1s / MEM 64MB |
+| `15` | `dna` | จำลอง DNA (DNA Replication) | easy | 15 | TL 1s / MEM 256MB |
+| `16` | `fib_sum` | ผลรวมลำดับฟีโบนัชชี (Fibonacci Sum) | easy | 14 | TL 1s / MEM 64MB |
+| `17` | `find_max` | หาค่ามากที่สุดด้วยฟังก์ชัน (Find Max) | easy | 14 | TL 1s / MEM 64MB |
+| `18` | `fraction_add` | บวกเศษส่วนให้เป็นเศษส่วนอย่างต่ำ (Fraction Add) | easy | 14 | TL 1s / MEM 64MB |
+| `19` | `hanoi` | หอคอยฮานอย (Hanoi Tower) | easy | 10 | TL 1s / MEM 64MB |
+| `20` | `hidden_digit_sum` | ผลรวมตัวเลขที่ซ่อนในข้อความ (Hidden Digits) | easy | 14 | TL 1s / MEM 64MB |
+| `21` | `library_code` | ซ่อมรหัสสมาชิกห้องสมุด (Library Code) | easy | 14 | TL 1s / MEM 64MB |
+| `22` | `mirror_pair` | เลขสะท้อนคู่ (Mirror Pair) | easy | 14 | TL 1s / MEM 64MB |
+| `23` | `napprime` | นับจำนวนเฉพาะ (Napprime) | easy | 16 | TL 0.5s / MEM 32MB |
+| `24` | `power_recur` | ยกกำลังด้วยการเรียกตัวเอง (Power) | easy | 14 | TL 1s / MEM 64MB |
+| `25` | `prime_check` | ตรวจจำนวนเฉพาะ (Prime Check) | easy | 14 | TL 1s / MEM 64MB |
+| `26` | `rotation` | เธอหมุนรอบฉัน ฉันหมุนรอบเธอ (Rotation) | easy | 15 | TL 1s / MEM 256MB |
+| `27` | `shadow` | เงาปะทะมังกร (Shadow) | easy | 15 | TL 1s / MEM 64MB |
+| `28` | `sing_contest` | อันดับประกวดร้องเพลง (Singing Contest) | easy | 15 | TL 1s / MEM 256MB |
+| `29` | `snack_budget` | งบจำกัดแต่อยากกินเยอะ (Snack Budget) | easy | 14 | TL 1s / MEM 256MB |
+| `30` | `stage_lights` | จุดไฟประดับใกล้เวทีที่สุด (Stage Lights) | easy | 15 | TL 1s / MEM 256MB |
+| `31` | `stage_show` | ตารางการแสดงบนเวที (Stage Schedule) | easy | 15 | TL 1s / MEM 256MB |
+| `32` | `sum_even` | ผลรวมของเลขคู่ (Sum Even) | easy | 14 | TL 1s / MEM 64MB |
+| `33` | `swordsmith` | ช่างตีดาบแห่งวังหลวง (Swordsmith) | easy | 14 | TL 1s / MEM 64MB |
+| `34` | `thai_time` | ระบบบอกเวลาภาษาไทย (Thai Time) | easy | 15 | TL 1s / MEM 256MB |
+| `35` | `ticket_queue` | คิวซื้อตั๋วคอนเสิร์ต (Ticket Queue) | easy | 15 | TL 1s / MEM 256MB |
+| `36` | `warpz` | วาร์ปอวกาศ (Warpz) | easy | 15 | TL 1s / MEM 256MB |
+| `37` | `broken_stairs` | บันไดขั้นพัง (Broken Stairs) | medium | 14 | TL 1s / MEM 64MB |
+| `38` | `count_islands` | นับเกาะ (Count Islands) | medium | 18 | TL 1s / MEM 64MB |
+| `39` | `exact_budget` | ซื้อของให้พอดีงบ (Exact Budget) | medium | 14 | TL 1s / MEM 64MB |
+| `40` | `flashback` | ไม่ได้ลืมแค่ไม่ได้เจอ (Flashback) | medium | 15 | TL 1s / MEM 256MB |
+| `41` | `largest_rectangle` | สี่เหลี่ยมใหญ่สุดในฮิสโตแกรม (Largest Rectangle) | medium | 15 | TL 1s / MEM 64MB |
+| `42` | `mana_crystal` | ย่อภาพผลึกมานา (Mana Crystal) | medium | 15 | TL 1s / MEM 256MB |
+| `43` | `maze_score` | เขาวงกตเก็บคะแนน (Maze Score) | medium | 14 | TL 1s / MEM 64MB |
+| `44` | `min_distance` | ระยะทางรวมน้อยสุด (Min Distance) | medium | 14 | TL 1s / MEM 64MB |
+| `45` | `panda` | แพนด้าหาส้มโอ (Panda50O) | medium | 15 | TL 1s / MEM 512MB |
+| `46` | `posn_server_passcode` | รหัสผ่านเซิร์ฟเวอร์ สอวน. (POSN Passcode) | medium | 16 | TL 1s / MEM 256MB |
+| `47` | `queens_holes` | ราชินีบนกระดานมีหลุม (Queens Holes) | medium | 14 | TL 1s / MEM 64MB |
 
 ## Verdicts
 `AC` ผ่าน / `WA` + diff (·=space) / `TLE` เกินเวลา / `MLE` หน่วยความจำ /

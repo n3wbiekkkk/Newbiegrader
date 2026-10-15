@@ -118,7 +118,7 @@ def tokens(text: str) -> list[str]:
 
 def validate_problem(pid: str) -> dict:
     res: dict = {"pid": pid, "failures": [], "warnings": [],
-                 "tests": 0, "slowest": None, "ref": "", "hidden": False}
+                 "tests": 0, "slowest": None, "ref": "", "hidden": False, "no": 0}
     pdir = PROBLEMS_DIR / pid
 
     def fail(msg: str) -> None:
@@ -165,6 +165,13 @@ def validate_problem(pid: str) -> dict:
                 fail(f"config.tags has unknown tag(s) {bad}; known = {grader.KNOWN_TAGS}")
         if "notice" in cfg and not isinstance(cfg["notice"], str):
             fail(f"config.notice must be a string if present (got {type(cfg['notice']).__name__})")
+        # numeric problem id: every problem must carry one (unique, checked in main)
+        no = cfg.get("no")
+        if no is None:
+            fail("config.no is missing — assign one with "
+                 "`python3 tools/number_problems.py --assign`")
+        elif not isinstance(no, int) or isinstance(no, bool) or no < 1:
+            fail(f"config.no must be an integer >= 1 (got {no!r})")
     elif cfg is not None:
         fail(f"config.json must contain a JSON object (got {type(cfg).__name__})")
         cfg = {}
@@ -340,10 +347,22 @@ def validate_problem(pid: str) -> dict:
 
     # visibility (contest-only problems are kept out of the public Task list)
     try:
-        res["hidden"] = bool(grader.load_problem(pid).hidden)
+        prob = grader.load_problem(pid)
+        res["hidden"] = bool(prob.hidden)
+        res["no"] = int(prob.no)
     except SystemExit:
         res["hidden"] = False
     return res
+
+
+def _read_no(pid: str) -> tuple:
+    """(pid, no) from config.json, 0 when missing/invalid (cheap, no judging)."""
+    try:
+        cfg = json.loads((PROBLEMS_DIR / pid / "config.json").read_text(encoding="utf-8"))
+    except Exception:
+        return pid, 0
+    no = cfg.get("no")
+    return pid, no if isinstance(no, int) and not isinstance(no, bool) and no > 0 else 0
 
 
 # ---------------------------------------------------------------- main
@@ -374,6 +393,22 @@ def main(argv: list[str] | None = None) -> int:
         for res in pool.map(validate_problem, ids):
             results[res["pid"]] = res
 
+    # config.no must be unique across ALL problems, not just the ones requested
+    numbers: dict[int, list] = {}
+    if PROBLEMS_DIR.is_dir():
+        all_ids = [p.name for p in PROBLEMS_DIR.iterdir() if p.is_dir()]
+        with ThreadPoolExecutor(max_workers=max(1, min(jobs if jobs > 1 else 1, 8))) as pool:
+            for pid, no in pool.map(_read_no, all_ids):
+                if no:
+                    numbers.setdefault(no, []).append(pid)
+    for no, pids in sorted(numbers.items()):
+        if len(pids) > 1:
+            for pid in pids:
+                if pid in results:
+                    results[pid]["failures"].append(
+                        f"config.no {no} is also used by "
+                        f"{', '.join(p for p in pids if p != pid)}")
+
     n_fail = 0
     n_warn = 0
     for pid in ids:
@@ -391,7 +426,8 @@ def main(argv: list[str] | None = None) -> int:
         else:
             slow = res["slowest"]
             slow_s = f"{slow:.3f}s" if slow is not None else "-"
-            print(f"OK   {pid:<22} tests={res['tests']:<3} slowest={slow_s:<8} ref={res['ref']}"
+            no_s = f"#{res['no']:<3}" if res.get("no") else "#—  "
+            print(f"OK   {no_s} {pid:<22} tests={res['tests']:<3} slowest={slow_s:<8} ref={res['ref']}"
                   + ("  [contest-only: ไม่โชว์ในหน้า Task]" if res.get("hidden") else ""))
 
     ok = len(ids) - n_fail
