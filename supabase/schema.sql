@@ -374,3 +374,13 @@ create table if not exists contest_announcements (
 create index if not exists contest_announcements_contest_time
   on contest_announcements (contest_id, created_at);
 alter table contest_announcements enable row level security;
+
+-- ============================================================================
+-- 2026-10-15: history/leaderboard read path (API perf).
+-- GET /api/history orders by created_at with optional problem/user_email
+-- filters; the aggregates read via leaderboard_scores/problem_stats views.
+-- Apply with the rest of this file in the Supabase SQL Editor.
+-- Append-only: safe to re-run.
+-- ============================================================================
+create index if not exists submissions_history_filter
+  on submissions (user_email, problem, created_at desc);

@@ -1,0 +1,23 @@
+# Cloudflare Pages headers (output dir = static/).
+# Versioned assets (?v=N in index.html) are fingerprinted: immutable for a year,
+# so repeat visits skip revalidation (~0.4s + RTT per file). index.html itself
+# stays revalidated — it is the entry that points at the current ?v= stamps.
+# Meta files (vercel.json legacy, _headers itself) are never versioned: no-cache.
+/app.js
+  Cache-Control: public, max-age=31536000, immutable
+/styles.css
+  Cache-Control: public, max-age=31536000, immutable
+/config.js
+  Cache-Control: public, max-age=31536000, immutable
+/logo.png
+  Cache-Control: public, max-age=31536000, immutable
+/logo-icon.png
+  Cache-Control: public, max-age=31536000, immutable
+/logo-icon-dark.png
+  Cache-Control: public, max-age=31536000, immutable
+/logo-dark.png
+  Cache-Control: public, max-age=31536000, immutable
+/
+  Cache-Control: no-cache
+/index.html
+  Cache-Control: no-cache
