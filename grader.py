@@ -725,8 +725,6 @@ def run_one(cmd: list[str], stdin_data: str, time_limit: float, memory_mb: int,
     `lang` only affects the enforced memory ceiling (see LANG_MEM_HEADROOM_MB).
     """
     from judge_runner import run_bounded
-    use_limits = (os.name == "posix")
-    preexec = build_limits(enforced_memory_mb(memory_mb, lang), time_limit) if use_limits else None
     start = time.perf_counter()
     cpu0 = _cpu_children()
     cwd = _run_cwd(cmd)
@@ -741,8 +739,13 @@ def run_one(cmd: list[str], stdin_data: str, time_limit: float, memory_mb: int,
     if os.name == "posix":
         # A fresh interpreter applies the existing restrictions before exec.
         # No Python callback executes between fork/exec in a threaded parent.
+        # Pass the *enforced* ceiling (declared + language allowance + virtual
+        # headroom), not the declared limit: RLIMIT_AS counts virtual address
+        # space, so the declared value alone kills correct interpreted
+        # submissions on Linux. The verdict still comes from the measured peak
+        # RSS against the declared limit (see judge_test).
         command = [sys.executable, str(Path(__file__).resolve()), "--sandbox",
-                   str(memory_mb), str(time_limit), "--", *cmd]
+                   str(enforced_memory_mb(memory_mb, lang)), str(time_limit), "--", *cmd]
     peak = 0.0
 
     def sample(pid):

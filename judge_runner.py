@@ -280,9 +280,20 @@ def run_bounded(command: list[str], stdin_data: str, timeout: float, *,
 
 def _runner_env() -> dict:
     # Server import must neither read .env nor create a database client.
+    import site
     import grader
-    return grader.judge_env() | {"GRADER_RUNNER_CHILD": "1", "GRADER_ROLE": "combined",
-                                 "GRADER_QUEUE_MODE": "local", "PYTHONUTF8": "1"}
+
+    # judge_env() clears HOME so untrusted code cannot read the real one; this
+    # child is our own runner and imports the server, so it needs the
+    # interpreter's package directories — which on a development machine may be
+    # the user site (`pip install --user`), unreachable without HOME.
+    package_dirs = [p for p in (*site.getsitepackages(), site.getusersitepackages())
+                    if p and os.path.isdir(p)]
+    env = grader.judge_env() | {"GRADER_RUNNER_CHILD": "1", "GRADER_ROLE": "combined",
+                                "GRADER_QUEUE_MODE": "local", "PYTHONUTF8": "1"}
+    if package_dirs:
+        env["PYTHONPATH"] = os.pathsep.join(package_dirs)
+    return env
 
 
 async def run_isolated(kind: str, payload: dict, timeout: float) -> dict:

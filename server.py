@@ -555,6 +555,16 @@ async def _load_job(jid: str) -> Optional[dict]:
     if not rows:
         return None
     row = dict(rows[0])
+    # A status poll may refresh progress and the terminal result, never the
+    # ownership: if this process is running the job, the identity it claimed with
+    # is what the completion fence must use. Refreshing worker_id/attempt here
+    # would let a worker whose lease already expired finish the job under the new
+    # owner's identity.
+    running = _jobs.get(jid) or {}
+    if running.get("status") == "running" and running.get("worker_id"):
+        for key in ("worker_id", "attempt", "started_at"):
+            if running.get(key) is not None:
+                row[key] = running[key]
     if row.get("status") == "done" and isinstance(row.get("result"), dict):
         job = _remember_job(row)
         job["result"] = row["result"]
@@ -1411,7 +1421,7 @@ def _host_limits() -> dict:
             "compile_timeout_s": grader.COMPILE_TIMEOUT,
             "queue_mode": QUEUE_MODE, "role": GRADER_ROLE,
             "reserve_memory_mb": _capacity["reserve_mb"],
-            "memory_per_job_mb": _capacity["per_job_mb"]}
+            "memory_per_job_mb": _capacity["per_job_mb"],
             # memory policy: peak-RSS threshold = declared x allowance, enforced
             # RLIMIT_AS ceiling = threshold + virtual headroom (grader.py)
             "mem_allowance": grader.LANG_MEM_MULTIPLIER,
