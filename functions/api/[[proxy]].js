@@ -14,11 +14,11 @@ export async function onRequest(context) {
   const HOP_BY_HOP = new Set(["connection", "keep-alive", "proxy-authenticate",
     "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade",
     "content-length", "host"]);
-  const headers = new Headers();
+  const fwdHeaders = new Headers();
   context.request.headers.forEach((v, k) => {
-    if (!HOP_BY_HOP.has(k.toLowerCase())) headers.append(k, v);
+    if (!HOP_BY_HOP.has(k.toLowerCase())) fwdHeaders.append(k, v);
   });
-  const init = { method: context.request.method, headers, redirect: "manual" };
+  const init = { method: context.request.method, headers: fwdHeaders, redirect: "manual" };
   if (context.request.method !== "GET" && context.request.method !== "HEAD") {
     init.body = context.request.body;
     init.duplex = "half";   // required by Workers when forwarding a stream body
