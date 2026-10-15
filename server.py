@@ -16,6 +16,7 @@ import concurrent.futures
 import datetime as dt
 import hashlib
 import hmac
+import ipaddress
 import json
 import os
 import re
@@ -31,6 +32,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Dict, List, Optional
 from urllib.parse import urlencode
+from urllib.parse import urlsplit
 from urllib.request import Request as URLRequest
 from urllib.request import urlopen
 
@@ -38,6 +40,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.responses import RedirectResponse
@@ -215,6 +218,109 @@ async def _security_headers(request: Request, call_next):
         "frame-src 'self'; frame-ancestors 'self'; "
         "form-action 'self' https://accounts.google.com")
     return resp
+
+
+# ---- CSRF defence: Origin validation with Referer fallback (P0-6) ----
+# Browsers always attach `Origin` to unsafe methods (POST/PUT/PATCH/DELETE);
+# a cross-site page cannot forge it. Policy:
+#   * Origin present -> must match canonical trust, else 403 (Origin always
+#     wins over Referer).
+#   * Origin absent + Referer present -> Referer origin must match, else 403.
+#   * Both absent + session cookie present -> 403. A browser request that
+#     carries our cookie but neither header is either forged or stripped by
+#     a hostile intermediary — fail closed. Only the cookie NAME is checked;
+#     values are never read or logged, and session validation itself stays
+#     with the auth layers downstream.
+#   * Both absent + no session cookie -> allowed through to the existing
+#     authentication/authorization layers (non-browser clients such as curl
+#     and tools/load_test.py send neither header; unauthenticated calls are
+#     still rejected by the route handlers, never granted anything here).
+# Canonical trust = origin of FRONTEND_URL (the explicitly configured public
+# origin) + operator CORS origins + any http loopback origin (local dev, where
+# the server serves the frontend itself). Comparison is exact
+# (scheme, host, port) tuples — never substring or suffix matching.
+_CSRF_UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+# Must stay in sync with SessionMiddleware(session_cookie=...) below.
+_SESSION_COOKIE_NAME = "ng_session"
+
+
+def _origin_tuple(value: object) -> tuple | None:
+    """Normalized (scheme, host, port) or None when malformed/untrusted."""
+    try:
+        parts = urlsplit(str(value or "").strip())
+    except (ValueError, TypeError, AttributeError):
+        return None
+    scheme = (parts.scheme or "").lower()
+    if scheme not in ("http", "https"):
+        return None
+    try:
+        host = (parts.hostname or "").lower()
+        port = parts.port or (443 if scheme == "https" else 80)
+    except ValueError:
+        return None
+    if not host:
+        return None
+    return (scheme, host, port)
+
+
+def _is_loopback_origin(origin: tuple) -> bool:
+    scheme, host, _port = origin
+    if scheme != "http":
+        return False
+    return (host == "localhost" or host == "::1"
+            or host.startswith("127."))
+
+
+def _trusted_origins() -> set:
+    """Canonical origins for unsafe browser requests (computed per call so
+    tests and late env configuration are honoured)."""
+    trusted: set = set()
+    for raw in [FRONTEND_URL] + _cors_origins:
+        parsed = _origin_tuple(raw)
+        if parsed is not None:
+            trusted.add(parsed)
+    return trusted
+
+
+def _origin_allowed(value: object) -> bool:
+    origin = _origin_tuple(value)
+    if origin is None:
+        return False
+    if origin in _trusted_origins():
+        return True
+    return _is_loopback_origin(origin)
+
+
+def _has_session_cookie(request: Request) -> bool:
+    """True when the request carries our session cookie (NAME check only).
+
+    Only the cookie name is inspected — values are never read or logged.
+    """
+    for part in (request.headers.get("cookie") or "").split(";"):
+        if part.split("=", 1)[0].strip() == _SESSION_COOKIE_NAME:
+            return True
+    return False
+
+
+@app.middleware("http")
+async def _csrf_origin_check(request: Request, call_next):
+    if request.method in _CSRF_UNSAFE_METHODS:
+        origin = request.headers.get("origin")
+        if origin is not None:
+            allowed = _origin_allowed(origin)
+        else:
+            referer = request.headers.get("referer")
+            if referer is not None:
+                allowed = _origin_allowed(referer)
+            else:
+                allowed = not _has_session_cookie(request)
+        if not allowed:
+            # Log method+path only: never headers or cookie values.
+            print(f"[web] csrf refused {request.method} {request.url.path}",
+                  file=sys.stderr)
+            return JSONResponse(status_code=403,
+                                content={"detail": "cross-origin request refused"})
+    return await call_next(request)
 
 
 # Tiny in-memory cache for slow aggregate endpoints (Supabase RTT dominates).
@@ -450,6 +556,41 @@ async def _queue_rpc(name: str, **params):
                             headers={"Retry-After": "30"})
 
 
+def _judge_isolation_posture(*, role: str, strict: bool, acknowledged: bool,
+                             can_sandbox: bool, netns_ok: bool) -> str:
+    """Fail-closed boot contract for judge runtimes (pure decision, no I/O).
+
+    Production judge roles (combined/worker) must declare their isolation
+    posture explicitly; anything that would silently judge without guaranteed
+    isolation raises RuntimeError before any worker starts. `strict` always
+    wins over `acknowledged`. Returns "api" (never executes), "strict",
+    "acknowledged", or "dev".
+    """
+    if role == "api":
+        return "api"
+    if strict:
+        if not can_sandbox:
+            raise RuntimeError(
+                "GRADER_REQUIRE_NETNS=1 needs a Linux+root judge runtime "
+                "(this host cannot drop privileges or isolate networks); "
+                "refusing to boot workers")
+        if not netns_ok:
+            raise RuntimeError(
+                "GRADER_REQUIRE_NETNS=1 but unshare(CLONE_NEWNET) is unavailable "
+                "on this host; refusing to boot workers (do not grant "
+                "CAP_SYS_ADMIN as a shortcut — see grader.py)")
+        return "strict"
+    if acknowledged:
+        return "acknowledged"
+    if can_sandbox:
+        raise RuntimeError(
+            "Linux+root judge runtime must declare its isolation posture: set "
+            "GRADER_REQUIRE_NETNS=1 (public hosts; verified namespace support "
+            "required) or GRADER_ALLOW_UNISOLATED_JUDGE=1 (explicitly accept "
+            "rlimits-only judging); refusing to boot workers")
+    return "dev"
+
+
 async def validate_runtime() -> None:
     if JUDGE_WORKERS < 1:
         raise RuntimeError("host RAM cannot safely fit a judge, compiler and API reserve")
@@ -466,6 +607,27 @@ async def validate_runtime() -> None:
         raise RuntimeError("local queue mode requires a single process "
                            "(in-memory queue/quota are per-process): use "
                            "GRADER_QUEUE_MODE=database with multiple workers")
+    try:
+        _trusted_proxy_nets()
+    except ValueError as e:
+        raise RuntimeError(f"GRADER_TRUSTED_PROXY_CIDRS is invalid ({e}); "
+                           f"refusing to boot")
+    # Fail-closed isolation contract for judge roles (api never executes, so
+    # it is exempt). The namespace probe runs only when it can change the
+    # outcome: strict mode on a sandbox-capable host.
+    strict = grader._env_flag("GRADER_REQUIRE_NETNS")
+    acknowledged = grader._env_flag("GRADER_ALLOW_UNISOLATED_JUDGE")
+    can_sandbox = sys.platform.startswith("linux") and os.geteuid() == 0
+    netns_ok = False
+    if GRADER_ROLE in ("combined", "worker") and strict and can_sandbox:
+        netns_ok = await asyncio.to_thread(grader.netns_available)
+    posture = _judge_isolation_posture(
+        role=GRADER_ROLE, strict=strict, acknowledged=acknowledged,
+        can_sandbox=can_sandbox, netns_ok=netns_ok)
+    if posture == "dev":
+        print("[web] dev judge runtime: network namespaces unavailable here; "
+              "judging runs rlimits-only (set GRADER_REQUIRE_NETNS=1 on public hosts)",
+              file=sys.stderr)
     if QUEUE_MODE == "database":
         await _queue_rpc("diagnostics")  # verify migration and database before accepting traffic
 
@@ -1282,19 +1444,93 @@ _login_tries: Dict[str, list] = {}
 _account_tries: Dict[str, list] = {}
 
 
+def _trusted_proxy_nets() -> list:
+    """Immediate PEER addresses/CIDRs whose forwarding headers may be honored.
+
+    Parsed from GRADER_TRUSTED_PROXY_CIDRS (comma-separated IPs or CIDRs,
+    v4/v6). These are the network peers that physically deliver requests to
+    us — e.g. your edge proxy's egress — never addresses claimed by clients.
+    Empty (default) = trust no forwarded headers. Raises ValueError on any
+    malformed entry so misconfiguration fails at startup, never silently.
+    """
+    nets = []
+    for part in os.environ.get("GRADER_TRUSTED_PROXY_CIDRS", "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        nets.append(ipaddress.ip_network(part, strict=False))
+    return nets
+
+
+_proxy_config_warned = False
+
+
 def _client_ip(request: Request) -> str:
-    # Trust order: Cloudflare's overwritten header first, else the LAST
-    # X-Forwarded-For entry (trusted proxies append the real client IP at the
-    # end; attacker-supplied values are prepended and must be ignored), else
-    # the direct peer. Never use the FIRST XFF entry: it is spoofable and
-    # would let attackers bypass the login rate limit by rotating it.
+    """Effective client IP with peer-first proxy trust.
+
+    - Immediate peer not in GRADER_TRUSTED_PROXY_CIDRS (or no list
+      configured): forwarding headers are ignored entirely; the socket
+      peer is authoritative. Direct callers cannot spoof their identity.
+    - Peer trusted: X-Forwarded-For is resolved first using the
+      right-to-left walk (skipping entries that are themselves trusted
+      proxies); a usable XFF result always wins and a conflicting
+      CF-Connecting-IP can never override or rescue it. CF-Connecting-IP
+      is consulted only when XFF is absent, and then only as a valid,
+      untrusted address. Forged prepends are left of any selection and
+      never used; appends are impossible (the proxy appends after the
+      client). A malformed entry stops the walk at the last safe value —
+      falling back to the peer, never to the other header, never 500.
+    """
+    global _proxy_config_warned
+    peer = (request.client.host if request.client else "?") or "?"
+    try:
+        nets = _trusted_proxy_nets()
+    except ValueError as e:
+        # Misconfiguration must never silently trust everything: peer-only,
+        # warn once (boot validation rejects it outright — see below).
+        if not _proxy_config_warned:
+            _proxy_config_warned = True
+            print(f"[web] WARNING: {e}; ignoring forwarded headers",
+                  file=sys.stderr)
+        return peer[:64]
+    if not nets:
+        return peer[:64]
+    try:
+        peer_ip = ipaddress.ip_address(peer)
+    except ValueError:
+        return peer[:64]  # unparseable peer cannot be a trusted proxy
+    if not any(peer_ip in net for net in nets):
+        return peer[:64]
+    # XFF takes precedence: a usable chain result wins and CF-Connecting-IP
+    # is never consulted alongside it (a non-sanitizing proxy may forward a
+    # client-forged CF value while appending a correct XFF chain).
+    xff = [p.strip() for p in
+           request.headers.get("x-forwarded-for", "").split(",")
+           if p.strip()][-32:]  # bound attacker-controlled parsing work
+    if xff:
+        chosen = peer
+        for entry in reversed(xff):
+            try:
+                addr = ipaddress.ip_address(entry)
+            except ValueError:
+                break  # malformed entry: stop at the last safe value
+            if any(addr in net for net in nets):
+                continue  # another trusted hop: keep walking left
+            chosen = entry
+            break
+        return chosen[:64]
+    # No XFF: CF-Connecting-IP fallback, only from a trusted peer and only
+    # as a valid, untrusted address (a trusted value resolves to the peer,
+    # exactly as the chain walk would).
     cf = request.headers.get("cf-connecting-ip", "").strip()
     if cf:
-        return cf[:64]
-    fwd = request.headers.get("x-forwarded-for", "")
-    if fwd:
-        return fwd.split(",")[-1].strip()[:64]
-    return ((request.client.host if request.client else "?") or "?")[:64]
+        try:
+            addr = ipaddress.ip_address(cf)
+        except ValueError:
+            return peer[:64]
+        if not any(addr in net for net in nets):
+            return cf[:64]
+    return peer[:64]
 
 
 def _recent(store: Dict[str, list], key: str, window: int) -> list:
@@ -1715,7 +1951,12 @@ def run_submission(prob: grader.Problem, ext: str, source: str,
             futs = [ex.submit(grader.judge_test, cmd, tc, capped, False, False, lang)
                     for tc in prob.tests]
             for tc, f in zip(prob.tests, futs):
-                v, wall, cpu, mem, detail, actual = f.result()
+                try:
+                    v, wall, cpu, mem, detail, actual = f.result()
+                except grader.SandboxUnavailable:
+                    # Fail closed: no test was judged, no verdict is recorded.
+                    # The worker maps {"error": ...} to a job-level error.
+                    return {"error": "execution environment unavailable"}
                 item = {
                     "test": tc.name, "verdict": v,
                     "wall_s": round(wall, 4), "cpu_s": round(cpu, 4),
@@ -1780,6 +2021,8 @@ def _run_playground(prob: Optional[grader.Problem], ext: str, source: str,
         res = grader.run_one(cmd, stdin_data, time_limit, eff_mem,
                              grader.detect_language(src))
         reason = res.get("reason", "")
+        if reason == "sandbox-unavailable":
+            return {"error": "execution environment unavailable"}
         if reason == "timeout":
             verdict = "TLE"
         elif reason == "ole":
