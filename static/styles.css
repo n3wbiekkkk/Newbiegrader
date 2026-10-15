@@ -622,3 +622,75 @@ tr.test-row:hover td { background: var(--panel2); }
 
 /* contest join bar (Register / countdown / participants) */
 .join-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 6px 0 2px; }
+
+/* ================= visual polish (no new colours: tokens only) ============ */
+.hero {
+  background: radial-gradient(640px 220px at 12% -40px,
+    color-mix(in srgb, var(--hero-a) 10%, transparent), transparent);
+  border-radius: var(--r-lg);
+  padding-left: var(--sp-5); padding-right: var(--sp-5);
+}
+.hero h1 { font-size: clamp(30px, 5vw, 54px); }
+.hero h1 .grad {
+  background: linear-gradient(100deg, var(--hero-a), var(--hero-b));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.hero::before { width: 72px; height: 5px; box-shadow: 0 0 18px var(--hero-b); }
+.hero-btns .btn-primary, .hero-btns .btn-ghost { padding: 12px 26px; font-size: var(--fs-lg); }
+.stat {
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--r-md);
+  padding: 12px 18px; box-shadow: var(--shadow-sm);
+}
+.stat-strip { gap: 12px; }
+
+/* nav: the active page reads as a solid pill */
+.nav { align-items: center; }
+.nav-link { font-weight: 500; }
+.nav-link:hover { background: var(--panel2); }
+.nav-link.active { background: var(--acc); color: var(--on-acc); font-weight: 600; }
+.topbar { box-shadow: var(--shadow-sm); backdrop-filter: blur(12px) saturate(1.4); }
+
+/* buttons lift instead of fading */
+.btn-primary, .submit-btn, .signup-btn { box-shadow: var(--shadow-sm); }
+.btn-primary:hover, .submit-btn:hover:not(:disabled), .signup-btn:hover {
+  opacity: 1; transform: translateY(-1px); box-shadow: var(--shadow);
+}
+.btn-ghost:hover { border-color: var(--text); transform: translateY(-1px); }
+.google-btn:hover { transform: translateY(-1px); }
+
+/* cards lift on hover */
+.task-card, .archive-card { transition: transform var(--t-fast), box-shadow var(--t-fast), border-color var(--t-fast); }
+.task-card:hover, .archive-card:hover { transform: translateY(-2px); box-shadow: var(--shadow); border-color: var(--dim); }
+
+/* progress fills get a gradient */
+.score-fill, .arch-fill { background: linear-gradient(90deg, var(--link), var(--hero-b)); }
+
+/* tabs: a heavier active rule */
+.tab-btn.active { border-bottom-width: 3px; }
+
+/* inputs: visible focus ring on top of the border change */
+.filterbar input[type="search"]:focus, .settings-row input:focus, .settings-row select:focus,
+.report-row input[type="text"]:focus, #editor:focus, #run-input:focus {
+  box-shadow: 0 0 0 3px var(--sel);
+}
+
+/* countdown badge breathes while a round is live */
+.b-running { animation: pulse 2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .72; } }
+
+/* quiet scrollbars that follow the theme */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; border: 2px solid var(--bg); }
+::-webkit-scrollbar-thumb:hover { background: var(--dim); }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* small screens: scrollable nav, stacked cards */
+@media (max-width: 900px) {
+  .topbar { flex-wrap: wrap; gap: 12px; padding: 12px 16px; }
+  .nav { order: 3; flex-basis: 100%; overflow-x: auto; padding-bottom: 2px; }
+  .nav-link { white-space: nowrap; }
+  .health { margin-left: 0; }
+  .tc-side { width: 100%; }
+  .task-card { flex-direction: column; align-items: stretch; }
+  .score-wrap { justify-content: flex-start; }
+}
