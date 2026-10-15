@@ -1,0 +1,1 @@
+{"checker": "token", "difficulty": "easy", "memory_limit": 64, "no": 10, "notice": "ข้อนี้ใช้วิธีใดก็ได้ ไม่บังคับฟังก์ชัน/recursion — ส่งโปรแกรมเต็มที่อ่าน input ตาม spec", "samples": ["01", "02"], "tags": ["String", "Implementation"], "time_limit": 1.0, "title": "รหัสสีไฟประดับ (Hex to RGB)"}
