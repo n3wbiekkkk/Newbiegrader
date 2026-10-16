@@ -81,6 +81,22 @@ def invalidate_cache(slug: Optional[str] = None) -> None:
         _PDF_CACHE.pop(slug, None)
 
 
+def invalidate_stale(hashmap: Dict[str, str]) -> list:
+    """Drop cached full problems whose version changed (or row vanished).
+
+    The next access lazy-reloads them (row + Storage). Returns dropped slugs.
+    Used by the metadata-only TTL refresh so unchanged problems are never
+    re-downloaded.
+    """
+    dropped = []
+    for slug, entry in list(_PROBLEMS_CACHE.items()):
+        if hashmap.get(slug) != entry[1]:
+            _PROBLEMS_CACHE.pop(slug, None)
+            _PDF_CACHE.pop(slug, None)
+            dropped.append(slug)
+    return dropped
+
+
 def _cache_get(slug: str):
     entry = _PROBLEMS_CACHE.get(slug)
     if entry is None:

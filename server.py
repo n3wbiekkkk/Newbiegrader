@@ -1995,12 +1995,14 @@ def _tests_hash(pid: str) -> str:
 
 
 def _ensure_problems_fresh() -> None:
-    """TTL refresh for supabase mode (bounded cache, versioned by tests_hash).
+    """TTL refresh for supabase mode (metadata-only, versioned by tests_hash).
 
     Local mode: PROBLEMS are boot-loaded from disk (restart after edits).
-    Supabase mode: re-list rows; unchanged hashes stay cached (no Storage
-    re-download), changed ones refresh. Failures keep the stale cache and log;
-    callers surface an empty store as an explicit 500, never silent fallback.
+    Supabase mode: re-list ROWS only (no Storage downloads); drop cached full
+    problems whose hash changed so the next access lazy-reloads them. A refresh
+    costs two small SELECTs, never ~1700 file downloads — safe on the tiny
+    prod box. Failures keep the stale cache and log; callers surface an empty
+    store as an explicit 500, never silent fallback.
     """
     global _problems_refresh_at
     if PROBLEM_SOURCE != "supabase":
@@ -2011,14 +2013,21 @@ def _ensure_problems_fresh() -> None:
     if _sb is None:
         return
     try:
-        fresh = problem_store.load_all("supabase", client=_sb)
+        meta = problem_store.load_metadata_only(client=_sb)
+        hashmap = problem_store.load_tests_hash_map(client=_sb)
     except Exception as e:
         print(f"[web] problem refresh failed, keeping {len(PROBLEMS)} cached: {e}",
               file=sys.stderr)
         _problems_refresh_at = time.monotonic()
         return
+    dropped = problem_store.invalidate_stale(hashmap)
+    if dropped:
+        print(f"[web] problem versions changed, dropped cache: {sorted(dropped)}",
+              file=sys.stderr)
     PROBLEMS.clear()
-    PROBLEMS.update(fresh)
+    PROBLEMS.update(meta)
+    _TESTS_HASH_CACHE.clear()
+    _TESTS_HASH_CACHE.update(hashmap)
     _rebuild_problem_indexes()
     _problems_refresh_at = time.monotonic()
 

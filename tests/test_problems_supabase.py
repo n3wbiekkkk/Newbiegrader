@@ -379,6 +379,32 @@ class SupabaseProblems(unittest.TestCase):
         # No public storage URLs are ever issued by the API.
         self.assertNotIn("signed", r.text.lower()[:500])
 
+    def test_metadata_only_loads_no_hidden_bytes(self):
+        meta = problem_store.load_metadata_only(client=self.fake)
+        self.assertEqual(set(meta), set(SEED_SLUGS))
+        for slug in SEED_SLUGS:
+            local = grader.load_problem(slug)
+            self.assertEqual([t.name for t in meta[slug].tests],
+                             sorted(local.samples))
+        hashes = problem_store.load_tests_hash_map(client=self.fake)
+        for slug in SEED_SLUGS:
+            self.assertEqual(hashes[slug], grader.tests_hash(grader.load_problem(slug)))
+
+    def test_invalidate_stale_drops_only_changed(self):
+        slug = SEED_SLUGS[0]
+        problem_store.load_problem_supabase(slug, client=self.fake)
+        # Unchanged version: cache kept.
+        hashes = problem_store.load_tests_hash_map(client=self.fake)
+        self.assertEqual(problem_store.invalidate_stale(hashes), [])
+        # Changed version (re-import): cache dropped, next load refetches.
+        for r in self.fake.rows("problems"):
+            if r.get("slug") == slug:
+                r["tests_hash"] = "f" * 16
+        hashes = problem_store.load_tests_hash_map(client=self.fake)
+        self.assertEqual(problem_store.invalidate_stale(hashes), [slug])
+        with self.assertRaises(problem_store.ProblemUnavailable):
+            problem_store.load_problem_supabase(slug, client=self.fake)
+
     def test_schema_has_private_problem_storage(self):
         sql = (ROOT / "supabase" / "schema.sql").read_text(encoding="utf-8")
         self.assertIn("create table if not exists problems", sql)

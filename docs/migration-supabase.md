@@ -61,9 +61,10 @@ GRADER_PROBLEM_CACHE_TTL=30          # metadata TTL seconds, 0 disables
 - Boot in supabase mode WITHOUT Supabase credentials refuses to start (no
   silent local fallback). `GET /api/version -> system.problem_source` shows the
   active source at runtime.
-- Problem rows are TTL-cached and versioned by `tests_hash`; hidden test bytes
-  are cached per problem and only re-fetched when the hash/`updated_at` changes
-  — no per-submission download of every hidden test.
+- Problem rows are TTL-cached and versioned by `tests_hash`. Boot and the
+  periodic refresh load ROWS only (no Storage downloads); hidden test bytes
+  are cached per problem on first use and re-fetched only when the hash
+  changes — a refresh costs two small SELECTs, never ~1700 file downloads.
 - The isolated runner (`judge_runner --job`) receives the fully-resolved problem
   (tests included) through the trusted server-side job payload; it never talks
   to Supabase and never reads client-supplied paths.
