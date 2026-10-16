@@ -235,6 +235,6 @@ network requires offering them the Corresponding Source — for this
 deployment, <https://github.com/n3wbiekkkk/Newbiegrader>, linked from every
 page footer.
 
-The statement-PDF typeface is bundled under SIL OFL 1.1 (`tools/fonts/OFL.txt`).
+The statement-PDF typefaces are bundled under SIL OFL 1.1 (`tools/fonts/OFL.txt` for Sarabun, `tools/fonts/OFL-prompt.txt` for Prompt).
 Dependencies are pinned in `requirements.txt` and are not vendored. No
 warranty is provided and no trademark rights are granted.

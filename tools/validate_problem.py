@@ -5,7 +5,7 @@ Usage:
     python3 tools/validate_problem.py [id ...] [--jobs N]
 
 Checks, per problem:
-  1. config.json  (title / limits / checker / difficulty / tags / notice / samples).
+  1. config.json  (title / limits / checker / difficulty / tags / samples).
      `samples` is a list of test-name strings (canonical); an int (first N tests
      public) is accepted too since grader.load_problem supports it.
   2. statement.md (non-empty) and statement.pdf (>1KB; missing = warning)
@@ -164,8 +164,6 @@ def validate_problem(pid: str) -> dict:
             bad = [t for t in tags if t not in grader.KNOWN_TAGS]
             if bad:
                 fail(f"config.tags has unknown tag(s) {bad}; known = {grader.KNOWN_TAGS}")
-        if "notice" in cfg and not isinstance(cfg["notice"], str):
-            fail(f"config.notice must be a string if present (got {type(cfg['notice']).__name__})")
         # numeric problem id: every problem must carry one (unique, checked in main)
         no = cfg.get("no")
         if no is None:

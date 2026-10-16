@@ -215,7 +215,6 @@ class Problem:
     tests: list[TestCase]
     difficulty: str = ""        # easy | medium | hard (ไว้ filter)
     tags: list[str] = field(default_factory=list)
-    notice: str = ""            # ประกาศโชว์บนหน้า task (เช่น ข้อนี้ใช้อะไรก็ได้)
     samples: list[str] = field(default_factory=list)  # ชื่อ test ที่เป็น "ตัวอย่างสาธารณะ" (ที่เหลือ = hidden)
     hidden: bool = False        # true = โจทย์ชุดคอนเทสต์: ไม่โชว์ในหน้า Task (admin/คอนเทสต์เห็น)
     no: int = 0                 # เลขโจทย์ (id เลข ใช้เรียง/ค้นหา) — 0 = ยังไม่กำหนด
@@ -263,7 +262,6 @@ def load_problem(pid: str) -> Problem:
     for t in tags:
         if t not in KNOWN_TAGS:
             print(c(f"WARNING: problem '{pid}' uses unknown tag '{t}'", C.YELLOW))
-    notice = str(cfg.get("notice", ""))
     desc_path = pdir / "statement.md"
     description = desc_path.read_text(encoding="utf-8") if desc_path.exists() else ""
 
@@ -308,7 +306,7 @@ def load_problem(pid: str) -> Problem:
         print(c(f"WARNING: problem '{pid}' has a negative 'no' ({no})", C.YELLOW))
         no = 0
     return Problem(pid, title, time_limit, memory_limit, checker, tolerance, description, tests,
-                   difficulty, tags, notice, samples, hidden, no)
+                   difficulty, tags, samples, hidden, no)
 
 
 DIFFICULTY_RANK = {"easy": 0, "medium": 1, "hard": 2}

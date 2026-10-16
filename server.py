@@ -2188,7 +2188,6 @@ def problem_detail(request: Request, pid: str) -> dict:
     body = {"id": p.pid, "no": p.no, "title": p.title, "time_limit": p.time_limit,
             "memory_limit": p.memory_limit, "checker": p.checker,
             "difficulty": p.difficulty, "tags": p.tags,
-            "notice": p.notice,
             "tests": len(p.tests), "statement": p.description,
             "samples": list(p.samples),
             "hidden_tests": len(p.tests) - len(p.samples),

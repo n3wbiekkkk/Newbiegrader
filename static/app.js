@@ -1116,13 +1116,6 @@ const DETAIL_CACHE_TTL = 60 * 1000;
 function fillTaskDetail(p) {
   setTitle("tasks", `#${p.no || "?"} ${p.title}`);
   $("task-title").innerHTML = `${noLabel(p)} ${esc(p.title)} <span class="dim">${esc(p.id)}</span>`;
-  const nz = $("task-notice");
-  if (p.notice) {
-    nz.textContent = p.notice;
-    nz.classList.remove("hidden");
-  } else {
-    nz.classList.add("hidden");
-  }
   const extra = [p.difficulty, ...((p.tags || []))].filter(Boolean).join(" · ");
   $("task-meta").innerHTML =
     `${diffBadge(p.difficulty)}` +

@@ -2,9 +2,18 @@
 """Generate a beautiful Thai statement.pdf from problems/<id>/statement.md
 using LaTeX (tectonic + TH Sarabun).
 
-Story paragraphs (before the first ##) are kept in full — do NOT shorten.
-Math shorthands (<=, >=, 10^9, x^2) become real LaTeX math.
-Sample fences with input:/output: markers become side-by-side boxes.
+House style (uniform for every problem; see the "Binary Game" reference):
+- header: LARGE bold title, then a small sans limits line
+  ("1 second, 256 megabytes"), no problem-id line, no rule
+- story paragraphs in full — do NOT shorten
+- math shorthands (<=, >=, 10^9, x^2) become real LaTeX math; raw \(...\,
+  \[...\], and $$...$$ segments pass through untouched (display lines
+  become \[...\])
+- every fenced sample (input:/output:) becomes one ROW of a single bordered
+  longtable ("ตัวอย่างข้อมูลนำเข้า" / "ตัวอย่างข้อมูลส่งออก"); the table
+  breaks across pages with a repeated header
+- list items render as plain lines (no bullets)
+- footer on every page: "Newbiegrader | <page>"
 
 Requires: tectonic (brew install tectonic). Fonts in tools/fonts/.
 
@@ -74,20 +83,52 @@ def _is_thai(ch: str) -> bool:
     return 0x0E00 <= ord(ch) <= 0x0E7F
 
 
-def _latin_tex(t: str, bold: bool) -> str:
+def _latin_tex(t: str, bold: bool, sans: bool = False) -> str:
+    # Latin/digit runs use Prompt (OFL, tools/fonts/): Light for text,
+    # SemiBold for bold — the reference's geometric look, same range as the
+    # website. (The bundled Sarabun draws ASCII digits as Thai digits, and
+    # TeX's default sans looked out of place next to it.)
+    # Display titles pass sans=True, kept for compatibility (also Prompt).
     t = esc_plain(t)
     t = t.replace("<=", "$\\le$").replace(">=", "$\\ge$").replace("!=", "$\\ne$")
+    # Arrows have no glyph in the serif/main fonts (tofu): set them as math.
+    t = t.replace("→", "$\\rightarrow$").replace("↔", "$\\leftrightarrow$")
     t = re.sub(r"(\d+)\^(\d+)", r"$\1^\2$", t)
     t = re.sub(r"\b([A-Za-z])\^(\d+)\b", r"$\1^\2$", t)
+    # Lone Latin letters are variables: set them as math italic ($N$), the way
+    # they look inside equations. Only outside existing $...$ segments.
+    segs = re.split(r"(\$[^$]*\$)", t)
+    for i in range(0, len(segs), 2):
+        segs[i] = re.sub(r"(?<![A-Za-z$])([A-Za-z])(?![A-Za-z])",
+                          r"$\1$", segs[i])
+    t = "".join(segs)
     if bold:
-        return "\\textsf{\\textbf{" + t + "}}"
-    return "\\textsf{" + t + "}"
+        return "\\textbf{\\eng{" + t + "}}"
+    return "\\eng{" + t + "}"
 
 
-def tex_inline(s: str, bold: bool = False) -> str:
+def tex_inline(s: str, bold: bool = False, sans: bool = False) -> str:
     """Markdown line -> LaTeX: **bold**, `code`, math shorthands.
-    Thai runs stay in Sarabun; Latin/digit runs go to the TeX sans font
-    (this Sarabun file draws ASCII digits as Thai digits)."""
+    Thai runs stay in Sarabun; Latin/digit runs go to Prompt Light
+    (SemiBold when bold). Pass sans=True for display titles (also Prompt).
+    Raw math segments (\(...\), \[...\], $$...$$) pass through untouched so
+    authors can write real LaTeX; a whole-line $$...$$ becomes display math.
+    """
+    out = []
+    for seg in re.split(r"(\\\[.+?\\\]|\\\(.+?\\\)|\$\$.+?\$\$)", s):
+        if not seg:
+            continue
+        if seg.startswith("\\("):
+            out.append("$" + seg[2:-2] + "$")
+        elif seg.startswith("\\[") or seg.startswith("$$"):
+            inner = seg[2:-2]
+            out.append("\\[" + inner + "\\]")
+        else:
+            out.append(_tex_inline_text(seg, bold, sans))
+    return "".join(out)
+
+
+def _tex_inline_text(s: str, bold: bool = False, sans: bool = False) -> str:
     parts = re.split(r"(\*\*[^*]+\*\*|`[^`]+`)", s)
     out = []
     for p in parts:
@@ -98,13 +139,13 @@ def tex_inline(s: str, bold: bool = False) -> str:
             p, b = p[2:-2], True
             for run_th, chunk in _runs(p):
                 out.append("\\textbf{" + esc_plain(chunk) + "}" if run_th
-                           else _latin_tex(chunk, True))
+                           else _latin_tex(chunk, True, sans))
             continue
         if p.startswith("`"):
             out.append(tex_code(p[1:-1]))
             continue
         for run_th, chunk in _runs(p):
-            out.append(esc_plain(chunk) if run_th else _latin_tex(chunk, b))
+            out.append(esc_plain(chunk) if run_th else _latin_tex(chunk, b, sans))
     return "".join(out)
 
 
@@ -168,20 +209,32 @@ def tex_verbatim(s: str) -> str:
              .replace("~", "\\textasciitilde{}").replace("^", "\\^{}"))
 
 
-def render_sample(inp: str, outp: str) -> str:
-    def box(title, body):
-        return ("\\begin{minipage}[t]{0.48\\linewidth}\n"
-                "{\\small\\bfseries " + title + "}\n"
-                "\\begin{mdframed}[backgroundcolor=white,linewidth=0.8pt,"
-                "linecolor=black,innerleftmargin=6pt,innerrightmargin=6pt,"
-                "innertopmargin=4pt,innerbottommargin=4pt]\n"
-                "{\\ttfamily\\small\\setlength{\\baselineskip}{14pt}\n" +
-                "\\\\\n".join(tex_verbatim(l) if l.strip() else "~"
-                               for l in body.rstrip("\n").split("\n")) +
-                "}\n\\end{mdframed}\n\\end{minipage}")
-    if outp:
-        return (box("Input", inp) + "\\hfill\n" + box("Output", outp) + "\n\n\\medskip\n")
-    return box("Input", inp) + "\n\n\\medskip\n"
+def render_samples_table(samples: list) -> str:
+    """All fenced samples as ONE bordered table (house style): a header row
+    plus one row per sample. longtable lets tall samples break across pages
+    with the header repeated. Cells are small monospace; source lines are
+    joined with LaTeX line breaks (sample I/O is ASCII-only by convention).
+    """
+
+    def cell(body: str) -> str:
+        # Inside a p-column cell, \\ would end the table ROW: use \newline
+        # for line breaks within the cell.
+        lines = body.rstrip("\n").split("\n")
+        return "\\newline\n".join(tex_verbatim(l) if l.strip() else "~"
+                                  for l in lines) or "~"
+
+    head = ("{\\centering\\small\\bfseries ตัวอย่างข้อมูลนำเข้า\\par} &\n"
+            "{\\centering\\small\\bfseries ตัวอย่างข้อมูลส่งออก\\par} \\\\\n"
+            "\\hline\n")
+    parts = ["\\begin{longtable}{|p{0.44\\linewidth}|p{0.44\\linewidth}|}\n",
+             "\\hline\n", head,
+             "\\endfirsthead\n", "\\hline\n", head, "\\endhead\n"]
+    for inp, outp in samples:
+        parts.append("{\\ttfamily\\small " + cell(inp) + "} &\n"
+                     "{\\ttfamily\\small " + cell(outp) + "} \\\\\n"
+                     "\\hline\n")
+    parts.append("\\end{longtable}\n\n\\medskip\n")
+    return "".join(parts)
 
 
 PREAMBLE = """\\documentclass[a4paper,12pt]{article}
@@ -190,7 +243,7 @@ PREAMBLE = """\\documentclass[a4paper,12pt]{article}
 \\usepackage{geometry}
 \\usepackage{xcolor}
 \\usepackage{amsmath}
-\\usepackage{mdframed}
+\\usepackage{longtable}
 \\usepackage{fancyhdr}
 \\geometry{top=2.2cm,bottom=2.2cm,left=2.2cm,right=2.2cm}
 \\definecolor{accent}{HTML}{ACCENT}
@@ -202,45 +255,80 @@ PREAMBLE = """\\documentclass[a4paper,12pt]{article}
   ItalicFont=sarabun-italic,
   BoldItalicFont=sarabun-bolditalic
 ]{sarabun}
+\\newfontfamily\\eng[
+  Path=FONTPATH,
+  Extension=.ttf,
+  UprightFont=prompt-light,
+  BoldFont=prompt-semibold
+]{prompt}
 \\renewcommand{\\normalsize}{\\fontsize{14}{22}\\selectfont}
 \\setlength{\\parskip}{6pt}
 \\setlength{\\parindent}{0pt}
 \\pagestyle{fancy}
 \\fancyhf{}
-\\fancyfoot[C]{\\small Newbiegrader \\quad\\textbar\\quad \\thepage}
+\\fancyfoot[C]{\\small\\eng{Newbiegrader} \\quad\\textbar\\quad \\eng{\\thepage}}
 \\renewcommand{\\headrulewidth}{0pt}
 \\begin{document}
 \\normalsize
+\\raggedright
 """.replace("ACCENT", ACCENT).replace("FONTPATH", str(FONTDIR) + "/")
+
+
+def _limits_line(tl: float, mem: int) -> str:
+    t = str(tl).rstrip("0").rstrip(".")
+    unit = "second" if float(t) == 1 else "seconds"
+    return "{\\small\\eng{" + t + " " + unit + ", " + str(mem) + " megabytes}}\n\n"
+
+
+# House style uses Thai section headings, matching the reference statement.
+H2_TH = {
+    "input": "ข้อมูลนำเข้า",
+    "output": "ข้อมูลส่งออก",
+    "ตัวอย่าง": "ตัวอย่างข้อมูลนำเข้าและข้อมูลส่งออก",
+    "limits": "ข้อจำกัด",
+    "subtask": "การให้คะแนน",
+    "subtasks": "การให้คะแนน",
+}
 
 
 def build(pid: str, title: str, tl: float, mem: int, md: str) -> str:
     blocks = [b for b in md.split("\n") if b.strip()]
     _ = blocks
     parts = [PREAMBLE]
-    parts.append("{\\small\\ttfamily " + esc_plain(pid) + "}\n\n")
-    parts.append("{\\LARGE\\bfseries " + tex_inline(title) + "}\n\n")
-    parts.append("{\\small\\textsf{Time limit: " + str(tl).rstrip("0").rstrip(".")
-                 + " s \\quad\\textbar\\quad Memory limit: " + str(mem) + " MB}}\n\n")
-    parts.append("\\rule{\\linewidth}{1.2pt}\n\n\\bigskip\n")
+    parts.append("{\\LARGE\\bfseries " + tex_inline(title, sans=True) + "}\n\n")
+    parts.append(_limits_line(tl, mem))
     story_done = False
-    for kind, text in md_blocks(md):
+    blocks = md_blocks(md)
+    # Every fenced sample becomes one ROW of a single table placed where the
+    # first fence stood (all fences live under ## ตัวอย่าง by convention).
+    samples = []
+    for kind, text in blocks:
+        if kind != "code":
+            continue
+        inp, outp = split_sample(text)
+        # drop a leading 'input:' marker, whether alone on its line or
+        # prefixing the first value ("input: 12")
+        m = re.match(r"(?i)^input:\s*(.*)$", inp.split("\n")[0].strip(),
+                     re.S)
+        if m:
+            first, rest = m.group(1), "\n".join(inp.split("\n")[1:])
+            inp = (first + ("\n" + rest if rest else "")).strip("\n")
+        samples.append((inp, outp))
+    table_done = False
+    for kind, text in blocks:
         if kind == "h1":
             continue  # title already in header
         if kind == "h2":
             story_done = True
-            parts.append("{\\large\\bfseries " + tex_inline(text) + "}\n\n")
+            parts.append("{\\large\\bfseries " + tex_inline(H2_TH.get(text.lower(), text)) + "}\n\n")
         elif kind == "code":
             story_done = True
-            inp, outp = split_sample(text)
-            # drop a leading 'input:' marker line if present
-            inp_lines = inp.split("\n")
-            if inp_lines and inp_lines[0].strip().lower().rstrip(":") == "input":
-                inp = "\n".join(inp_lines[1:])
-            parts.append(render_sample(inp, outp))
+            if not table_done:
+                parts.append(render_samples_table(samples))
+                table_done = True
         elif kind == "li":
             story_done = True
-            parts.append("\\textbullet\\ " + tex_inline(text) + "\\\\\n")
+            parts.append(tex_inline(text) + "\\\\\n")
         else:
             for para in text.split("\n"):
                 para = para.strip()
