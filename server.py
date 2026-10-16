@@ -594,7 +594,8 @@ WORKER_ID = f"{os.getpid()}-{uuid.uuid4()}"
 
 async def _queue_rpc(name: str, **params):
     if _sb is None:
-        raise HTTPException(status_code=503, detail="judge database unavailable")
+        raise HTTPException(status_code=503, detail="judge database unavailable",
+                            headers={"Retry-After": "30"})
     try:
         response = await asyncio.to_thread(
             lambda: _sb.rpc("judge_queue_" + name, params).execute())
@@ -843,7 +844,7 @@ async def _create_job(row: dict, track_active: bool = True) -> dict:
             code = int(response.get("status_code", 503))
             raise HTTPException(status_code=code, detail=response["error"],
                                 headers={"Retry-After": str(response.get("retry_after", 30))}
-                                if code in (429, 503) else None)
+                                if code in (409, 429, 503) else None)
         return response["job"]
     with _admission_lock:
         email = row.get("user_email") or ""
