@@ -701,6 +701,7 @@ function openTask(pid) {
 
 // Cards are plain <a> for keyboard/SEO: intercept only the task→task case.
 document.addEventListener("click", (e) => {
+  if (e.metaKey || e.ctrlKey || e.shiftKey || (e.button !== undefined && e.button !== 0)) return;
   const a = e.target && e.target.closest ? e.target.closest('a[href^="#/task/"]') : null;
   if (!a) return;
   if (!(location.hash || "").startsWith("#/task/")) return;
