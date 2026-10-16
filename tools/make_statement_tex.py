@@ -249,8 +249,8 @@ def render_samples_table(samples: list) -> str:
              "\\hline\n", head,
              "\\endfirsthead\n", "\\hline\n", head, "\\endhead\n"]
     for inp, outp in samples:
-        parts.append("{\\ttfamily\\small " + cell(inp) + "} &\n"
-                     "{\\ttfamily\\small " + cell(outp) + "} \\\\\n"
+        parts.append("{\\fontsize{13}{17}\\ttfamily\\selectfont " + cell(inp) + "} &\n"
+                     "{\\fontsize{13}{17}\\ttfamily\\selectfont " + cell(outp) + "} \\\\\n"
                      "\\hline\n")
     parts.append("\\end{longtable}\n\n\\medskip\n")
     return "".join(parts)
@@ -280,8 +280,8 @@ PREAMBLE = """\\documentclass[a4paper,12pt]{article}
   UprightFont=prompt-light,
   BoldFont=prompt-semibold
 ]{prompt}
-\\renewcommand{\\normalsize}{\\fontsize{14}{22}\\selectfont}
-\\setlength{\\parskip}{6pt}
+\\renewcommand{\\normalsize}{\\fontsize{16}{26}\\selectfont}
+\\setlength{\\parskip}{8pt}
 \\setlength{\\parindent}{0pt}
 \\pagestyle{fancy}
 \\fancyhf{}
@@ -314,7 +314,7 @@ def build(pid: str, title: str, tl: float, mem: int, md: str) -> str:
     blocks = [b for b in md.split("\n") if b.strip()]
     _ = blocks
     parts = [PREAMBLE]
-    parts.append("{\\LARGE\\bfseries " + tex_inline(title, sans=True) + "}\n\n")
+    parts.append("{\\fontsize{26}{30}\\bfseries " + tex_inline(title, sans=True) + "}\n\n")
     parts.append(_limits_line(tl, mem))
     story_done = False
     blocks = md_blocks(md)
@@ -339,7 +339,7 @@ def build(pid: str, title: str, tl: float, mem: int, md: str) -> str:
             continue  # title already in header
         if kind == "h2":
             story_done = True
-            parts.append("{\\large\\bfseries " + tex_inline(H2_TH.get(text.lower(), text)) + "}\n\n")
+            parts.append("{\\fontsize{20}{24}\\bfseries " + tex_inline(H2_TH.get(text.lower(), text)) + "}\n\n")
         elif kind == "code":
             story_done = True
             if not table_done:
