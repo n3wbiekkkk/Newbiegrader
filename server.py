@@ -516,6 +516,8 @@ def _plain_text(text: str) -> str:
     the history row: the browser showed the escape sequence instead of the diff.
     The CLI keeps its colours; the web/DB never sees them.
     """
+    if "\x1b[" not in text:
+        return text
     return _ANSI_RE.sub("", text)
 
 
@@ -1105,7 +1107,7 @@ async def _run_job(job: dict) -> None:
         return
     stored = _stored_result(job, result)
     sid = None
-    row = _submission_row(job, result)
+    row = _submission_row(job, result, stored)
     if QUEUE_MODE == "local" and _sb is not None:
         sid = await _store_submission(row, target_id=job.get("target_id"))
     result["id"] = sid
@@ -1134,10 +1136,12 @@ def _stored_result(job: dict, result: dict) -> dict:
     return {**result, "results": _redact_results(raw, reveal)}
 
 
-def _submission_row(job: dict, result: dict) -> dict:
+def _submission_row(job: dict, result: dict, stored: Optional[dict] = None) -> dict:
     """DB row for one judged submission. Hidden test data is already stripped
     from `result` by run_submission (stored at REVEAL_SAMPLES level)."""
     prob = PROBLEMS.get(job.get("problem", ""))
+    results = (stored.get("results", []) if stored is not None
+               else _stored_result(job, result).get("results", []))
     return {
         "problem": job.get("problem", ""), "language": job.get("language", ""),
         "filename": job.get("filename"), "name": job.get("name", ""),
@@ -1145,7 +1149,7 @@ def _submission_row(job: dict, result: dict) -> dict:
         "verdict": result.get("verdict", ""), "accepted": result.get("accepted", False),
         "passed": result.get("passed", 0), "total": result.get("total", 0),
         "score": result.get("score", 0), "counts": result.get("counts", {}),
-        "results": _stored_result(job, result).get("results", []),
+        "results": results,
         "code": (job.get("source") or "")[:200000],
         "detail": (result.get("compile_error", "") or "")[:4000],
         "tests_hash": _tests_hash(prob.pid) if prob else "",
@@ -1219,7 +1223,7 @@ def _live_hidden_pids(exclude_cid: str = "") -> set:
     if _sb is None:
         return hidden
     try:
-        for row in _all_contest_rows():
+        for row in _cached_contest_rows():
             if exclude_cid and row.get("id") == exclude_cid:
                 continue
             if _contest_window(row) != "running":
@@ -2139,24 +2143,47 @@ def _problem_or_404(pid: str) -> grader.Problem:
 _contest_pid_cache: Dict[str, object] = {"at": 0.0, "all": set(), "hide": set()}
 
 
-def _contest_problem_sets() -> tuple:
-    """(pids listed in any contest, pids a contest hides from Tasks)."""
-    now = time.monotonic()
-    if _contest_pid_cache["at"] and now - float(_contest_pid_cache["at"]) < 20:
-        return _contest_pid_cache["all"], _contest_pid_cache["hide"]
+def _refresh_contest_cache() -> None:
+    """Refetch contest rows + derived visibility sets (single SELECT batch).
+
+    Shares _contest_pid_cache so one timestamp busts everything (admin
+    upsert/delete set ["at"]=0.0) and existing test resets keep working.
+    Raises when the contests table is missing — policy callers degrade.
+    """
     all_pids: set = set()
     hidden: set = set()
+    rows: List[dict] = []
     if _sb is not None:
-        try:
-            for row in _all_contest_rows():
-                pids = {_resolve_pid(str(x)) for x in (row.get("problems") or [])}
-                all_pids |= pids
-                if row.get("hide_from_tasks", True):
-                    hidden |= pids
-        except Exception as e:
-            print(f"[web] contest problem lookup failed: {e}", file=sys.stderr)
-    _contest_pid_cache.update({"at": now, "all": all_pids, "hide": hidden})
-    return all_pids, hidden
+        rows = _all_contest_rows()
+        for row in rows:
+            pids = {_resolve_pid(str(x)) for x in (row.get("problems") or [])}
+            all_pids |= pids
+            if row.get("hide_from_tasks", True):
+                hidden |= pids
+    _contest_pid_cache.update({"at": time.monotonic(),
+                               "all": all_pids, "hide": hidden, "rows": rows})
+
+
+def _cached_contest_rows() -> List[dict]:
+    """Contest rows with 20s TTL (same staleness the visibility policy
+    already accepts). Raises on DB failure — callers degrade as before."""
+    now = time.monotonic()
+    if not (_contest_pid_cache.get("at")
+            and now - float(_contest_pid_cache["at"]) < 20
+            and isinstance(_contest_pid_cache.get("rows"), list)):
+        _refresh_contest_cache()
+    return _contest_pid_cache.get("rows") or []
+
+
+def _contest_problem_sets() -> tuple:
+    """(pids listed in any contest, pids a contest hides from Tasks)."""
+    try:
+        _cached_contest_rows()
+    except Exception as e:
+        print(f"[web] contest problem lookup failed: {e}", file=sys.stderr)
+        _contest_pid_cache["at"] = time.monotonic()  # negative cache; keep old sets
+    return (_contest_pid_cache.get("all") or set(),
+            _contest_pid_cache.get("hide") or set())
 
 
 def _hidden_pids() -> set:
@@ -2192,7 +2219,7 @@ def _contests_listing(pid: str) -> List[dict]:
     if _sb is None:
         return []
     try:
-        return [row for row in _all_contest_rows()
+        return [row for row in _cached_contest_rows()
                 if pid in {_resolve_pid(str(x)) for x in (row.get("problems") or [])}]
     except Exception as e:
         print(f"[web] contest lookup for {pid} failed: {e}", file=sys.stderr)
@@ -2281,16 +2308,19 @@ def run_submission(prob: grader.Problem, ext: str, source: str,
 
         results: List[dict] = []
         lang = grader.detect_language(Path("solution" + ext))
-        with concurrent.futures.ThreadPoolExecutor(max_workers=JUDGE_JOBS) as ex:
-            futs = [ex.submit(grader.judge_test, cmd, tc, capped, False, False, lang)
-                    for tc in prob.tests]
-            for tc, f in zip(prob.tests, futs):
+        if JUDGE_JOBS <= 1:
+            # Serial path: JUDGE_JOBS is 1 on all small hosts. Avoid
+            # ThreadPoolExecutor overhead (thread spawn + future per test).
+            judged = []
+            for tc in prob.tests:
                 try:
-                    v, wall, cpu, mem, detail, actual = f.result()
+                    judged.append((tc, grader.judge_test(
+                        cmd, tc, capped, False, False, lang)))
                 except grader.SandboxUnavailable:
                     # Fail closed: no test was judged, no verdict is recorded.
                     # The worker maps {"error": ...} to a job-level error.
                     return {"error": "execution environment unavailable"}
+            for tc, (v, wall, cpu, mem, detail, actual) in judged:
                 item = {
                     "test": tc.name, "verdict": v,
                     "wall_s": round(wall, 4), "cpu_s": round(cpu, 4),
@@ -2305,6 +2335,29 @@ def run_submission(prob: grader.Problem, ext: str, source: str,
                 elif detail:
                     item["detail"] = detail[:DETAIL_HEAD]
                 results.append(item)
+        else:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=JUDGE_JOBS) as ex:
+                futs = [ex.submit(grader.judge_test, cmd, tc, capped, False, False, lang)
+                        for tc in prob.tests]
+                for tc, f in zip(prob.tests, futs):
+                    try:
+                        v, wall, cpu, mem, detail, actual = f.result()
+                    except grader.SandboxUnavailable:
+                        return {"error": "execution environment unavailable"}
+                    item = {
+                        "test": tc.name, "verdict": v,
+                        "wall_s": round(wall, 4), "cpu_s": round(cpu, 4),
+                        "peak_mb": round(mem, 2),
+                        "public": tc.name in samples,
+                    }
+                    if v == "WA":
+                        item["diff"] = grader.show_diff(tc.expected, actual)[:DETAIL_HEAD]
+                        item["input"] = tc.input[:2000]
+                        item["expected"] = tc.expected[:2000]
+                        item["actual"] = actual[:2000]
+                    elif detail:
+                        item["detail"] = detail[:DETAIL_HEAD]
+                    results.append(item)
 
         passed = sum(1 for r in results if r["verdict"] == "AC")
         total = len(prob.tests)

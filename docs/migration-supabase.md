@@ -64,7 +64,10 @@ GRADER_PROBLEM_CACHE_TTL=30          # metadata TTL seconds, 0 disables
 - Problem rows are TTL-cached and versioned by `tests_hash`. Boot and the
   periodic refresh load ROWS only (no Storage downloads); hidden test bytes
   are cached per problem on first use and re-fetched only when the hash
-  changes — a refresh costs two small SELECTs, never ~1700 file downloads.
+  changes — a refresh costs one small SELECT, never ~1700 file downloads.
+- Contest policy rows (`contests` table) share one 20s TTL cache across
+  visibility, reveal and listing checks, so sample clicks and submits don't
+  pay a live SELECT each; admin upsert/delete busts it immediately.
 - The isolated runner (`judge_runner --job`) receives the fully-resolved problem
   (tests included) through the trusted server-side job payload; it never talks
   to Supabase and never reads client-supplied paths.
