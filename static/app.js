@@ -655,6 +655,13 @@ async function fetchStats() {
 
 /* ---------------- router ---------------- */
 function show(view) {
+  // Leaving the task list remembers where you were: coming back from a
+  // problem restores the scroll instead of dumping you at the top.
+  try {
+    if (document.querySelector("#view-tasks.active") && view !== "tasks") {
+      state.tasksScrollY = window.scrollY || 0;
+    }
+  } catch (e) { /* ignore */ }
   document.querySelectorAll(".view").forEach((v) =>
     v.classList.toggle("active", v.id === "view-" + view));
   document.querySelectorAll(".nav-link").forEach((a) => {
@@ -720,7 +727,7 @@ function router() {
     openTaskByToken(decodeURIComponent(h.slice("#/task/".length)));
     return;
   }
-  if (h === "#/tasks") { show("tasks"); renderTasksTable(); return; }
+  if (h === "#/tasks") { show("tasks"); state.restoreTasksScroll = true; renderTasksTable(); return; }
   if (h === "#/archive") { show("archive"); renderArchive(); return; }
   if (h === "#/leaderboard") { show("leaderboard"); renderLeaderboard(); return; }
   if (h === "#/contests") { show("contests"); renderContests(); return; }
@@ -895,6 +902,10 @@ function renderTasksTable() {
     fetchMyBest().then(() => {
       if (document.querySelector("#view-tasks.active")) renderTasksTable();
     });
+  }
+  if (state.restoreTasksScroll) {
+    state.restoreTasksScroll = false;
+    window.scrollTo(0, state.tasksScrollY || 0);
   }
 }
 
