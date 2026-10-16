@@ -331,10 +331,10 @@ def build(pid: str, title: str, tl: float, mem: int, md: str) -> str:
     parts = [PREAMBLE]
     m = re.match(r"^(.*)\s+\(([^()]*)\)\s*$", title)
     if m:
-        parts.append("{\\fontsize{33}{38} " + tex_inline(m.group(1).strip()) + "}\n")
-        parts.append("{\\fontsize{16}{20} " + tex_inline("(" + m.group(2).strip() + ")", sans=True) + "}\n\n")
+        parts.append("{\\fontsize{30}{34}\\selectfont " + tex_inline(m.group(1).strip()) + "}\n")
+        parts.append("{\\fontsize{16}{20}\\selectfont " + tex_inline("(" + m.group(2).strip() + ")", sans=True) + "}\n\n")
     else:
-        parts.append("{\\fontsize{33}{38} " + tex_inline(title, sans=True) + "}\n\n")
+        parts.append("{\\fontsize{30}{34}\\selectfont " + tex_inline(title, sans=True) + "}\n\n")
     parts.append("\\vspace{8pt}\n")
     parts.append(_limits_line(tl, mem))
     parts.append("\\vspace{3pt}\n")
