@@ -148,7 +148,7 @@ def tex_inline(s: str, bold: bool = False, sans: bool = False) -> str:
 
 
 def _tex_inline_text(s: str, bold: bool = False, sans: bool = False) -> str:
-    parts = re.split(r"(\*\*[^*]+\*\*|`[^`]+`)", s)
+    parts = re.split(r"(\*\*[^*]+\*\*|__[^_]+__|`[^`]+`)", s)
     out = []
     for p in parts:
         if not p:
@@ -159,6 +159,12 @@ def _tex_inline_text(s: str, bold: bool = False, sans: bool = False) -> str:
             for run_th, chunk in _runs(p):
                 out.append("\\textbf{" + esc_plain(chunk) + "}" if run_th
                            else _latin_tex(chunk, True, sans))
+            continue
+        if p.startswith("__") and not p.startswith("___"):
+            inner = "".join(
+                esc_plain(chunk) if run_th else _latin_tex(chunk, b, sans)
+                for run_th, chunk in _runs(p[2:-2]))
+            out.append("\\underline{" + inner + "}")
             continue
         if p.startswith("`"):
             out.append(tex_code(p[1:-1]))
@@ -242,10 +248,10 @@ def render_samples_table(samples: list) -> str:
         return "\\newline\n".join(tex_verbatim(l) if l.strip() else "~"
                                   for l in lines) or "~"
 
-    head = ("{\\centering\\small\\bfseries ตัวอย่างข้อมูลนำเข้า\\par} &\n"
-            "{\\centering\\small\\bfseries ตัวอย่างข้อมูลส่งออก\\par} \\\\\n"
+    head = ("{\\centering\\normalsize\\bfseries ตัวอย่างข้อมูลนำเข้า\\par} &\n"
+            "{\\centering\\normalsize\\bfseries ตัวอย่างข้อมูลส่งออก\\par} \\\\\n"
             "\\hline\n")
-    parts = ["\\begin{longtable}{|p{0.44\\linewidth}|p{0.44\\linewidth}|}\n",
+    parts = ["\\begin{longtable}{|m{0.44\\linewidth}|m{0.44\\linewidth}|}\n",
              "\\hline\n", head,
              "\\endfirsthead\n", "\\hline\n", head, "\\endhead\n"]
     for inp, outp in samples:
@@ -263,6 +269,7 @@ PREAMBLE = """\\documentclass[a4paper,12pt]{article}
 \\usepackage{xcolor}
 \\usepackage{amsmath}
 \\usepackage{longtable}
+\\usepackage{array}
 \\usepackage{fancyhdr}
 \\geometry{top=2.2cm,bottom=2.2cm,left=2.2cm,right=2.2cm}
 \\definecolor{accent}{HTML}{ACCENT}
