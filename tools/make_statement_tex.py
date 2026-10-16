@@ -68,8 +68,12 @@ def has_thai(s: str) -> bool:
 def tex_code(s: str) -> str:
     # code spans are usually ASCII; Thai inside falls back to Sarabun bold.
     # ^ must become math even in code (else XeTeX errors).
+    # A lone ASCII letter is a variable, not code: set it as math italic
+    # so `n` and plain n look identical ($n$).
     if has_thai(s):
         return "\\textbf{" + esc_plain(s) + "}"
+    if re.fullmatch(r"[A-Za-z]", s or ""):
+        return "$" + s + "$"
     out = []
     for m in re.split(r"([A-Za-z0-9]\^\w+)", s):
         if re.fullmatch(r"[A-Za-z0-9]\^\w+", m or ""):
@@ -321,7 +325,7 @@ def build(pid: str, title: str, tl: float, mem: int, md: str) -> str:
     blocks = [b for b in md.split("\n") if b.strip()]
     _ = blocks
     parts = [PREAMBLE]
-    parts.append("{\\fontsize{26}{30}\\bfseries " + tex_inline(title, sans=True) + "}\n\n")
+    parts.append("{\\fontsize{26}{30} " + tex_inline(title, sans=True) + "}\n\n")
     parts.append(_limits_line(tl, mem))
     story_done = False
     blocks = md_blocks(md)
@@ -346,7 +350,7 @@ def build(pid: str, title: str, tl: float, mem: int, md: str) -> str:
             continue  # title already in header
         if kind == "h2":
             story_done = True
-            parts.append("{\\fontsize{20}{24}\\bfseries " + tex_inline(H2_TH.get(text.lower(), text)) + "}\n\n")
+            parts.append("{\\fontsize{20}{24} " + tex_inline(H2_TH.get(text.lower(), text)) + "}\n\n")
         elif kind == "code":
             story_done = True
             if not table_done:
