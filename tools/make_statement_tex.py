@@ -87,7 +87,10 @@ def _latin_tex(t: str, bold: bool, sans: bool = False) -> str:
     # Latin/digit runs use Prompt (OFL, tools/fonts/): Light for text,
     # SemiBold for bold — the reference's geometric look, same range as the
     # website. (Thai itself is set in TH Sarabun New, the formal standard.)
-    # Display titles pass sans=True, kept for compatibility (also Prompt).
+    # Grouping MUST be {\eng{}...} (braces outside): \eng{...} leaks the
+    # font change past its own braces to the end of the document in this
+    # toolchain (all Thai after the first Latin run would set in Prompt).
+    # A lone space is {\eng{}\ } — a bare space after \eng{} is swallowed.
     t = esc_plain(t)
     t = t.replace("<=", "$\\le$").replace(">=", "$\\ge$").replace("!=", "$\\ne$")
     # Arrows have no glyph in the serif/main fonts (tofu): set them as math.
@@ -101,9 +104,26 @@ def _latin_tex(t: str, bold: bool, sans: bool = False) -> str:
         segs[i] = re.sub(r"(?<![A-Za-z$])([A-Za-z])(?![A-Za-z])",
                           r"$\1$", segs[i])
     t = "".join(segs)
+    return _eng_wrap(t, bold)
+
+
+def _eng_wrap(t: str, bold: bool) -> str:
+    """Wrap a Latin run in the Prompt family without leaking or eating space.
+
+    Form MUST be {\\eng{}...} (braces outside): \\eng{...} leaks the font
+    change past its own braces to the end of the document in this toolchain.
+    Spaces adjacent to the switch are emitted bare (main font): a space right
+    after \\eng machinery is swallowed even outside the braces.
+    """
+    m = re.match(r"( *)(.*?)(\ *)$", t, re.S)
+    lead, core, trail = m.group(1), m.group(2), m.group(3)
+    lead = " " if lead else ""
+    trail = " " if trail else ""
+    if not core:
+        return " "
     if bold:
-        return "\\textbf{\\eng{" + t + "}}"
-    return "\\eng{" + t + "}"
+        return lead + "\\textbf{{\\eng{}" + core + "}}" + trail
+    return lead + "{\\eng{}" + core + "}" + trail
 
 
 def tex_inline(s: str, bold: bool = False, sans: bool = False) -> str:
@@ -265,7 +285,7 @@ PREAMBLE = """\\documentclass[a4paper,12pt]{article}
 \\setlength{\\parindent}{0pt}
 \\pagestyle{fancy}
 \\fancyhf{}
-\\fancyfoot[C]{\\small\\eng{Newbiegrader} \\quad\\textbar\\quad \\eng{\\thepage}}
+\\fancyfoot[C]{\\small{\\eng{}Newbiegrader} \\quad\\textbar\\quad {\\eng{}\\thepage}}
 \\renewcommand{\\headrulewidth}{0pt}
 \\begin{document}
 \\normalsize
@@ -276,7 +296,7 @@ PREAMBLE = """\\documentclass[a4paper,12pt]{article}
 def _limits_line(tl: float, mem: int) -> str:
     t = str(tl).rstrip("0").rstrip(".")
     unit = "second" if float(t) == 1 else "seconds"
-    return "{\\small\\eng{" + t + " " + unit + ", " + str(mem) + " megabytes}}\n\n"
+    return "{\\small{\\eng{}" + t + " " + unit + ", " + str(mem) + " megabytes}}\n\n"
 
 
 # House style uses Thai section headings, matching the reference statement.
