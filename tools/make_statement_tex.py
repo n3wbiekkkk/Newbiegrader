@@ -255,8 +255,8 @@ def render_samples_table(samples: list) -> str:
              "\\hline\n", head,
              "\\endfirsthead\n", "\\hline\n", head, "\\endhead\n"]
     for inp, outp in samples:
-        parts.append("{\\fontsize{13}{17}\\ttfamily\\selectfont " + cell(inp) + "} &\n"
-                     "{\\fontsize{13}{17}\\ttfamily\\selectfont " + cell(outp) + "} \\\\\n"
+        parts.append("{\\ttfamily\\small " + cell(inp) + "} &\n"
+                     "{\\ttfamily\\small " + cell(outp) + "} \\\\\n"
                      "\\hline\n")
     parts.append("\\end{longtable}\n\n\\medskip\n")
     return "".join(parts)
@@ -287,7 +287,7 @@ PREAMBLE = """\\documentclass[a4paper,12pt]{article}
   UprightFont=prompt-light,
   BoldFont=prompt-semibold
 ]{prompt}
-\\renewcommand{\\normalsize}{\\fontsize{16}{26}\\selectfont}
+\\renewcommand{\\normalsize}{\\fontsize{12}{20}\\selectfont}
 \\setlength{\\parskip}{8pt}
 \\setlength{\\parindent}{0pt}
 \\pagestyle{fancy}
