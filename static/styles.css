@@ -520,7 +520,7 @@ tr.test-row:hover td { background: var(--panel2); }
 #hist-stats { margin-bottom: var(--sp-3); }
 
 .foot {
-  display: flex; align-items: baseline; gap: var(--sp-4);
+  display: flex; align-items: center; gap: var(--sp-4);
   padding: var(--sp-5) 28px; border-top: 1px solid var(--border);
   font-size: var(--fs-xs); color: var(--dim);
 }
@@ -777,13 +777,14 @@ tr.test-row:hover td { background: var(--panel2); }
 
 /* brand icons (fill-based) + social links */
 .ic-fill { fill: currentColor; stroke: none; }
-.social-row { display: flex; gap: 4px; align-items: center; margin-left: auto; }
+.social-row { display: flex; gap: 10px; align-items: center; margin-left: auto; }
 .social-link {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 32px; height: 32px; border-radius: 8px; color: var(--dim);
+  width: 42px; height: 42px; border-radius: 12px; color: var(--dim);
+  border: 1px solid transparent;
 }
-.social-link:hover { color: var(--text); background: var(--panel2); }
-.social-link .ic { width: 18px; height: 18px; }
+.social-link:hover { color: var(--text); background: var(--panel2); border-color: var(--border); }
+.social-link .brand-img { width: 24px; height: 24px; }
 .about-links { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
 .about-link {
   display: inline-flex; align-items: center; gap: 8px;
