@@ -278,8 +278,13 @@ class ApiE2E(unittest.TestCase):
         self.login(STUDENT_A)
         slow = "import time\ntime.sleep(1.2)\nprint('x')\n"
         first = self.submit("thai_time", slow)
-        second = self.submit("thai_time", slow, expect=409)
+        second_resp = self.client.post("/api/submit", data={
+            "problem": "thai_time", "language": "python", "code": slow},
+            headers=BROWSER)
+        self.assertEqual(second_resp.status_code, 409, second_resp.text)
+        second = second_resp.json()
         self.assertIn("already have a submission", second["detail"])
+        self.assertIn("Retry-After", second_resp.headers)
         job = self.wait_job(first["job_id"])
         self.assertEqual(job["status"], "done")
 
@@ -320,6 +325,34 @@ class ApiE2E(unittest.TestCase):
             headers=BROWSER)
         self.assertEqual(bad.status_code, 200)
         self.assertEqual(len(bad.json()["stdout"].strip()), 1)
+
+    def test_sanitize_compile_error_redacts_host_paths(self):
+        """_sanitize_compile_error must never return raw host paths to clients."""
+        from server import _sanitize_compile_error
+        raw = ("clang++: /tmp/workdir/solution.cpp:5:10: error: expected ';' after expression\n"
+               "    return ;\n"
+               "           ^\n"
+               "/usr/include/c++/14/ostream: note: candidate function\n"
+               "gcc version 14.2.0\n")
+        clean = _sanitize_compile_error(raw)
+        for prefix in ("/tmp", "/app", "/root", "/home", "/usr", "/var", "/etc"):
+            self.assertNotIn(prefix, clean,
+                             f"raw host path prefix leaked: {prefix!r}")
+        self.assertIn("[path]", clean)
+        self.assertIn("clang++: [path]", clean)
+        self.assertIn("(compiler)", clean)
+
+    def test_delete_rejects_unknown_filter_column(self):
+        """fake_supabase delete must validate filter column keys against whitelist."""
+        from fake_supabase import FakeSupabase
+        db = FakeSupabase(columns={"submissions": {"id", "user_email", "problem"}})
+        db.table("submissions").insert({"user_email": "a@example.com", "problem": "p1"}).execute()
+        with self.assertRaises(Exception) as ctx:
+            db.table("submissions").delete().eq("nonexistent_col", 1).execute()
+        self.assertIn("does not exist", str(ctx.exception))
+        # known column still works
+        db.table("submissions").delete().eq("problem", "p1").execute()
+        self.assertEqual(len(db.tables["submissions"]), 0)
 
     def test_history_detail_is_owner_or_admin_only(self):
         self.login(STUDENT_A)
