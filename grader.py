@@ -218,6 +218,8 @@ class Problem:
     samples: list[str] = field(default_factory=list)  # ชื่อ test ที่เป็น "ตัวอย่างสาธารณะ" (ที่เหลือ = hidden)
     hidden: bool = False        # true = โจทย์ชุดคอนเทสต์: ไม่โชว์ในหน้า Task (admin/คอนเทสต์เห็น)
     no: int = 0                 # เลขโจทย์ (id เลข ใช้เรียง/ค้นหา) — 0 = ยังไม่กำหนด
+    is_published: bool = True   # false = unpublished: admin-only even inside contests
+                                # (Supabase migration; local loader always True)
 
 # Canonical tag taxonomy (frontend Tag Filter renders exactly this list).
 KNOWN_TAGS = [
@@ -305,8 +307,11 @@ def load_problem(pid: str) -> Problem:
     if no < 0:
         print(c(f"WARNING: problem '{pid}' has a negative 'no' ({no})", C.YELLOW))
         no = 0
+    # Local packages are always published; Supabase rows carry is_published
+    # separately (unpublished = admin-only). Keep the default True here so
+    # existing callers and tests are unaffected.
     return Problem(pid, title, time_limit, memory_limit, checker, tolerance, description, tests,
-                   difficulty, tags, samples, hidden, no)
+                   difficulty, tags, samples, hidden, no, True)
 
 
 DIFFICULTY_RANK = {"easy": 0, "medium": 1, "hard": 2}

@@ -58,6 +58,7 @@ ROOT = Path(__file__).parent
 sys.path.insert(0, str(ROOT))
 
 import grader  # noqa: E402  (CLI grader module, import-safe: guarded by __main__)
+import problem_store  # noqa: E402  (local|supabase problem repository, storage only)
 
 STATIC_DIR = ROOT / "static"
 
@@ -157,6 +158,12 @@ JUDGE_WORKERS = _capacity["workers"]
 MEMORY_CAP_MB = _capacity["memory_cap_mb"]
 QUEUE_MODE = os.environ.get("GRADER_QUEUE_MODE", "local").strip().lower()
 GRADER_ROLE = os.environ.get("GRADER_ROLE", "combined").strip().lower()
+# Problem storage source: local problems/ (default) or Supabase Postgres +
+# private Storage (judge-assets). Explicit switch, no silent fallback: supabase
+# mode never reads local files (see problem_store.py + docs). Configure via
+# GRADER_PROBLEM_SOURCE=local|supabase, GRADER_PROBLEM_BUCKET, SUPABASE_URL/KEY.
+PROBLEM_SOURCE = (os.environ.get("GRADER_PROBLEM_SOURCE", "local").strip().lower()
+                  or "local")
 CAPACITY_DIR = Path(os.environ.get("GRADER_CAPACITY_DIR") or
                     str(Path(tempfile.gettempdir()) / "newbiegrader-capacity"))
 QUEUE_MAX = _env_int("GRADER_QUEUE_MAX", 25)
@@ -658,6 +665,12 @@ async def validate_runtime() -> None:
         raise RuntimeError("GRADER_QUEUE_MODE must be local or database")
     if GRADER_ROLE not in ("combined", "api", "worker"):
         raise RuntimeError("GRADER_ROLE must be combined, api or worker")
+    if PROBLEM_SOURCE not in ("local", "supabase"):
+        raise RuntimeError("GRADER_PROBLEM_SOURCE must be local or supabase")
+    if PROBLEM_SOURCE == "supabase" and _sb is None:
+        raise RuntimeError("GRADER_PROBLEM_SOURCE=supabase needs SUPABASE_URL + "
+                           "SUPABASE_KEY (service_role); refusing to boot without "
+                           "a problem store (no local fallback)")
     if GRADER_ROLE != "combined" and (QUEUE_MODE != "database" or
                                       not os.environ.get("SESSION_SECRET", "").strip()):
         raise RuntimeError("separated roles require database mode and stable SESSION_SECRET")
@@ -987,7 +1000,58 @@ async def _run_job(job: dict) -> None:
     _jobs[jid] = job
     playground = job.get("kind") == "playground"
     prob = PROBLEMS.get(job.get("problem", ""))
+    if prob is not None and not playground and PROBLEM_SOURCE == "supabase" \
+            and len(prob.tests) == len(prob.samples):
+        # Metadata-only boot: hidden tests not loaded yet — โหลดเต็มก่อนตัดสิน
+        slug = str(job.get("problem", ""))
+        if _sb is None:
+            await _finish_job(jid, error="problem store unavailable")
+            return
+        try:
+            prob = await asyncio.to_thread(
+                problem_store.get_problem, slug, "supabase", _sb)
+            PROBLEMS[prob.pid] = prob
+            _TESTS_HASH_CACHE[prob.pid] = grader.tests_hash(prob)
+        except problem_store.ProblemNotFound:
+            await _finish_job(jid, error=f"unknown problem: {slug}")
+            return
+        except problem_store.ProblemUnavailable as e:
+            print(f"[web] job {jid} problem unavailable: {e}", file=sys.stderr)
+            await _finish_job(jid, error="problem store unavailable")
+            return
+        except Exception as e:
+            print(f"[web] job {jid} problem lookup failed: {e}", file=sys.stderr)
+            await _finish_job(jid, error="problem store unavailable")
+            return
+    if prob is None and not playground and PROBLEM_SOURCE == "supabase":
+        # Worker-side cache miss (separate worker process / TTL expiry):
+        # resolve exactly this problem server-side. Any failure is an
+        # explicit job error — never an empty suite, never Accepted.
+        slug = str(job.get("problem", ""))
+        if _sb is None:
+            await _finish_job(jid, error="problem store unavailable")
+            return
+        try:
+            prob = await asyncio.to_thread(
+                problem_store.get_problem, slug, "supabase", _sb)
+            PROBLEMS[prob.pid] = prob
+            _TESTS_HASH_CACHE[prob.pid] = grader.tests_hash(prob)
+        except problem_store.ProblemNotFound:
+            await _finish_job(jid, error=f"unknown problem: {slug}")
+            return
+        except problem_store.ProblemUnavailable as e:
+            print(f"[web] job {jid} problem unavailable: {e}", file=sys.stderr)
+            await _finish_job(jid, error="problem store unavailable")
+            return
+        except Exception as e:
+            print(f"[web] job {jid} problem lookup failed: {e}", file=sys.stderr)
+            await _finish_job(jid, error="problem store unavailable")
+            return
     if prob is None and not playground:
+        await _finish_job(jid, error=f"unknown problem: {job.get('problem')}")
+        return
+    if prob is not None and not getattr(prob, "is_published", True):
+        # Unpublished after enqueue: refuse to judge (explicit, not silent).
         await _finish_job(jid, error=f"unknown problem: {job.get('problem')}")
         return
     ext = str(LANGS.get(job.get("language", ""), {}).get("ext") or ".py")
@@ -1000,8 +1064,14 @@ async def _run_job(job: dict) -> None:
     payload = {"problem": prob.pid if prob else None, "ext": ext,
                "source": job.get("source", ""), "reveal": reveal,
                "memory_cap_mb": MEMORY_CAP_MB, "judge_jobs": JUDGE_JOBS}
+    if PROBLEM_SOURCE == "supabase" and prob is not None and not playground:
+        # Trusted server-side channel: the isolated runner judges these bytes
+        # without disk or Supabase access (no per-test Storage downloads there).
+        payload["problem_data"] = problem_store.serialize_problem(prob)
     if playground:
         payload.update(job.get("payload") or {})
+        if PROBLEM_SOURCE == "supabase" and prob is not None:
+            payload["problem_data"] = problem_store.serialize_problem(prob)
     try:
         from judge_runner import run_isolated
         execution = asyncio.create_task(run_isolated(
@@ -1819,50 +1889,138 @@ async def update_profile(request: Request) -> dict:
     return {"ok": True, "profile": {"email": user["email"], **row}}
 
 # Preload problems at startup (fail fast on broken tests, skip with warning).
+# Source is explicit via GRADER_PROBLEM_SOURCE (local|supabase); supabase mode
+# never falls back to local files. Supabase rows are cached with TTL (see
+# _ensure_problems_fresh) versioned by tests_hash — hidden test bytes stay
+# cached, only changed problems re-download.
 PROBLEMS: Dict[str, grader.Problem] = {}
-if grader.PROBLEMS_DIR.is_dir():
-    for _pdir in sorted(grader.PROBLEMS_DIR.iterdir()):
-        if not _pdir.is_dir():
-            continue
-        try:
-            _p = grader.load_problem(_pdir.name)
-            PROBLEMS[_p.pid] = _p
-        except SystemExit as e:
-            print(f"[web] skip problem {_pdir.name}: {e}", file=sys.stderr)
+
+
+def _load_local_problems() -> Dict[str, grader.Problem]:
+    out: Dict[str, grader.Problem] = {}
+    if grader.PROBLEMS_DIR.is_dir():
+        for _pdir in sorted(grader.PROBLEMS_DIR.iterdir()):
+            if not _pdir.is_dir():
+                continue
+            try:
+                _p = grader.load_problem(_pdir.name)
+                out[_p.pid] = _p
+            except SystemExit as e:
+                print(f"[web] skip problem {_pdir.name}: {e}", file=sys.stderr)
+    return out
+
+
+def _rebuild_problem_indexes() -> None:
+    PROBLEMS_BY_NO.clear()
+    for _pid, _p in sorted(PROBLEMS.items()):
+        if _p.no > 0:
+            if _p.no in PROBLEMS_BY_NO:
+                print(f"[web] WARNING: problems {PROBLEMS_BY_NO[_p.no]} and {_pid} share "
+                      f"number {_p.no}; the first one wins "
+                      "(fix with tools/number_problems.py)", file=sys.stderr)
+            else:
+                PROBLEMS_BY_NO[_p.no] = _pid
+    # tests_hash คำนวณแบบ lazy เมื่อเข้าถึงจริง (ดู _tests_hash())
+    # ในโหมด supabase ปัญหาที่โหลดตอน boot ยังมีแค่ตัวอย่างสาธารณะ
+    # จึงคำนวณ hash ตอนนี้ไม่ได้ — ต้องรอโหลดเต็มก่อน
+    if PROBLEM_SOURCE != "supabase":
+        _TESTS_HASH_CACHE.clear()
+        for _pid in PROBLEMS:
+            _TESTS_HASH_CACHE[_pid] = grader.tests_hash(PROBLEMS[_pid])
+
 
 # numeric id -> pid (a problem may also be addressed as #19 in URLs and the CLI)
 PROBLEMS_BY_NO: Dict[int, str] = {}
-for _pid, _p in sorted(PROBLEMS.items()):
-    if _p.no > 0:
-        if _p.no in PROBLEMS_BY_NO:
-            print(f"[web] WARNING: problems {PROBLEMS_BY_NO[_p.no]} and {_pid} share "
-                  f"number {_p.no}; the first one wins "
-                  "(fix with tools/number_problems.py)", file=sys.stderr)
-        else:
-            PROBLEMS_BY_NO[_p.no] = _pid
-
-
-# tests_hash is stable for the process lifetime: PROBLEMS are loaded once at
-# boot and never mutated, so hash every problem exactly once instead of
-# re-hashing ~60 test sets on every GET /api/version (prod p95 fix).
+# tests_hash คำนวณแบบ lazy เมื่อเข้าถึงจริง (ดู _tests_hash())
+# ในโหมด supabase เติมจากแถวเมตาดาต้าตอน boot (ไม่ต้องดาวน์โหลดไฟล์เทสต์)
 _TESTS_HASH_CACHE: Dict[str, str] = {}
+_problems_refresh_at: float = time.monotonic()
+
+if PROBLEM_SOURCE == "supabase":
+    if _sb is None:
+        print("[web] GRADER_PROBLEM_SOURCE=supabase but SUPABASE_URL/KEY missing: "
+              "problem store unavailable (no local fallback)", file=sys.stderr)
+    else:
+        try:
+            # โหลดเฉพาะเมตาดาต้า (ตัวอย่างสาธารณะ) ตอน boot — ไม่ดาวน์โหลด
+            # เทสต์ลบทั้งหมด (~พันไฟล์) เพื่อให้เซิร์ฟเวอร์เริ่มต้นได้ไว
+            # เทสต์ลับจะโหลดแบบ lazy ตอนมีการส่งงานจริง (ดู _problem_or_404 / _run_job)
+            PROBLEMS.update(problem_store.load_metadata_only(client=_sb))
+            # เติม tests_hash จากแถวเมตาดาต้าโดยตรง (ไม่ต้องคำนวณจากไฟล์เทสต์)
+            _TESTS_HASH_CACHE.clear()
+            _TESTS_HASH_CACHE.update(problem_store.load_tests_hash_map(client=_sb))
+        except problem_store.ProblemUnavailable as e:
+            print(f"[web] supabase problem preload failed: {e} "
+                  "(no local fallback)", file=sys.stderr)
+        except Exception as e:
+            print(f"[web] supabase problem preload failed: {e} "
+                  "(no local fallback)", file=sys.stderr)
+else:
+    if PROBLEM_SOURCE != "local":
+        print(f"[web] warning: unknown GRADER_PROBLEM_SOURCE={PROBLEM_SOURCE!r}, "
+              "using local", file=sys.stderr)
+    PROBLEMS.update(_load_local_problems())
+
+
+_problems_refresh_at: float = time.monotonic()
+_rebuild_problem_indexes()
 
 
 def _tests_hash(pid: str) -> str:
-    """Cached grader.tests_hash (same value, no per-request SHA256 over tests)."""
+    """Cached grader.tests_hash (same value, no per-request SHA256 over tests).
+
+    ในโหมด supabase ปัญหาอาจยังโหลดแค่ตัวอย่างสาธารณะ (metadata-only)
+    ตอน boot — ถ้าเจอปัญหาที่ยังโหลดไม่ครบ ให้โหลดเต็มก่อนคำนวณ hash
+    เพื่อไม่ให้ hash ที่เก็บไว้ตรงกับเทสต์ชุดที่ไม่ครบ
+    """
     hit = _TESTS_HASH_CACHE.get(pid)
     if hit is not None:
         return hit
     prob = PROBLEMS.get(pid)
     if prob is None:
         return ""
+    if PROBLEM_SOURCE == "supabase" and len(prob.tests) == len(prob.samples):
+        # Metadata-only: tests มีแต่ตัวอย่างสาธารณะ — ต้องโหลดเต็มก่อน
+        try:
+            full_prob = problem_store.get_problem(pid, source="supabase", client=_sb)
+            PROBLEMS[pid] = full_prob
+            if full_prob.no > 0 and full_prob.no not in PROBLEMS_BY_NO:
+                PROBLEMS_BY_NO[full_prob.no] = full_prob.pid
+            prob = full_prob
+        except Exception:
+            return ""
     hashed = grader.tests_hash(prob)
     _TESTS_HASH_CACHE[pid] = hashed
     return hashed
 
 
-for _pid in PROBLEMS:
-    _TESTS_HASH_CACHE[_pid] = grader.tests_hash(PROBLEMS[_pid])
+def _ensure_problems_fresh() -> None:
+    """TTL refresh for supabase mode (bounded cache, versioned by tests_hash).
+
+    Local mode: PROBLEMS are boot-loaded from disk (restart after edits).
+    Supabase mode: re-list rows; unchanged hashes stay cached (no Storage
+    re-download), changed ones refresh. Failures keep the stale cache and log;
+    callers surface an empty store as an explicit 500, never silent fallback.
+    """
+    global _problems_refresh_at
+    if PROBLEM_SOURCE != "supabase":
+        return
+    ttl = problem_store.cache_ttl_s()
+    if ttl > 0 and time.monotonic() - _problems_refresh_at < ttl:
+        return
+    if _sb is None:
+        return
+    try:
+        fresh = problem_store.load_all("supabase", client=_sb)
+    except Exception as e:
+        print(f"[web] problem refresh failed, keeping {len(PROBLEMS)} cached: {e}",
+              file=sys.stderr)
+        _problems_refresh_at = time.monotonic()
+        return
+    PROBLEMS.clear()
+    PROBLEMS.update(fresh)
+    _rebuild_problem_indexes()
+    _problems_refresh_at = time.monotonic()
 
 
 def _resolve_pid(token: str) -> str:
@@ -1879,15 +2037,50 @@ def _resolve_pid(token: str) -> str:
 
 
 def _problem_or_404(pid: str) -> grader.Problem:
-    p = PROBLEMS.get(_resolve_pid(pid))
-    if p is None:
-        raise HTTPException(status_code=404, detail=f"unknown problem: {pid}")
-    return p
+    slug = _resolve_pid(pid)
+    p = PROBLEMS.get(slug)
+    if p is not None:
+        if PROBLEM_SOURCE == "supabase" and len(p.tests) == len(p.samples):
+            # โหลดเมตาดาต้าแค่ตัวอย่างตอน boot — ตอนเข้าถึงจริงต้องโหลด
+            # เทสต์ลับเต็มก่อนตัดสิน (fail closed ถ้าโหลดไม่ได้)
+            try:
+                full_p = problem_store.get_problem(slug, source="supabase", client=_sb)
+                PROBLEMS[slug] = full_p
+                p = full_p
+            except problem_store.ProblemNotFound:
+                raise HTTPException(status_code=404, detail=f"unknown problem: {pid}")
+            except problem_store.ProblemUnavailable as e:
+                print(f"[web] problem {slug} unavailable: {e}", file=sys.stderr)
+                raise HTTPException(status_code=500, detail="problem store unavailable")
+        return p
+    if PROBLEM_SOURCE == "supabase":
+        # Cache miss: fetch exactly this problem (row + Storage, version-checked).
+        # Missing assets / storage / DB errors are explicit 500s, never an
+        # empty suite and never Accepted without judging.
+        if _sb is None:
+            raise HTTPException(status_code=500, detail="problem store unavailable")
+        try:
+            prob = problem_store.get_problem(slug, source="supabase", client=_sb)
+        except problem_store.ProblemNotFound:
+            raise HTTPException(status_code=404, detail=f"unknown problem: {pid}")
+        except problem_store.ProblemUnavailable as e:
+            print(f"[web] problem {slug} unavailable: {e}", file=sys.stderr)
+            raise HTTPException(status_code=500, detail="problem store unavailable")
+        PROBLEMS[prob.pid] = prob
+        if prob.no > 0 and prob.no not in PROBLEMS_BY_NO:
+            PROBLEMS_BY_NO[prob.no] = prob.pid
+        _TESTS_HASH_CACHE[prob.pid] = grader.tests_hash(prob)
+        return prob
+        # (numeric miss falls through to 404 below)
+    if PROBLEM_SOURCE == "supabase" and not PROBLEMS:
+        raise HTTPException(status_code=500, detail="problem store unavailable")
+    raise HTTPException(status_code=404, detail=f"unknown problem: {pid}")
 
 
 # ---- problem visibility (contest-only sets) ----
-# A problem can be kept out of the public Task list in two ways:
+# A problem can be kept out of the public Task list in three ways:
 #   * config.json -> "hidden": true                (always private to contests/admin)
+#   * Supabase problems.is_published = false        (admin-only, no contest bypass)
 #   * listed in a contest with hide_from_tasks      (set from the admin form)
 # Hidden problems stay reachable through their contest page (that is how students
 # open them), through the admin panel, and are gated everywhere else.
@@ -1916,16 +2109,23 @@ def _contest_problem_sets() -> tuple:
 
 def _hidden_pids() -> set:
     listed, hidden_by_contest = _contest_problem_sets()
-    return hidden_by_contest | {pid for pid, p in PROBLEMS.items() if p.hidden}
+    return hidden_by_contest | {
+        pid for pid, p in PROBLEMS.items()
+        if p.hidden or not getattr(p, "is_published", True)
+    }
 
 
 def _visible_to(pid: str, email: str) -> bool:
     """Public Task entry, or reachable because the problem belongs to a contest."""
     pid = _resolve_pid(pid)
-    if pid not in PROBLEMS:
+    prob = PROBLEMS.get(pid)
+    if prob is None:
         return False
     if _is_admin(email):
         return True
+    # Unpublished problems are admin-only (no contest bypass).
+    if not getattr(prob, "is_published", True):
+        return False
     if pid not in _hidden_pids():
         return True
     # contest-only problem: readable once a contest listing it has STARTED
@@ -1962,6 +2162,8 @@ def _host_limits() -> dict:
             "sample_interval_ms": round(grader.SAMPLE_INTERVAL * 1000, 2),
             "compile_timeout_s": grader.COMPILE_TIMEOUT,
             "queue_mode": QUEUE_MODE, "role": GRADER_ROLE,
+            "problem_source": PROBLEM_SOURCE,
+            "problems_count": len(PROBLEMS),
             "reserve_memory_mb": _capacity["reserve_mb"],
             "memory_per_job_mb": _capacity["per_job_mb"],
             # memory policy: peak-RSS threshold = declared x allowance, enforced
@@ -1989,6 +2191,9 @@ def run_submission(prob: grader.Problem, ext: str, source: str,
     `reveal` decides how much test data the returned payload carries; the result
     that gets persisted is always reduced to REVEAL_SAMPLES by the caller.
     """
+    if not prob.tests:
+        # Fail closed: an empty suite must never become Accepted.
+        return {"error": "problem store unavailable (no tests)"}
     samples = grader.sample_names(prob)
     limits = _effective(prob, prob.time_limit, prob.memory_limit)[2]
     if limits["capped"]:
@@ -2131,6 +2336,7 @@ def _run_playground(prob: Optional[grader.Problem], ext: str, source: str,
 def health(request: Request, response: Response) -> dict:
     # Per-user body (admin sees hidden ids): private cache only, never shared.
     response.headers["Cache-Control"] = "private, max-age=20"
+    _ensure_problems_fresh()
     email = (request.session.get("user") or {}).get("email", "")
     if _is_admin(email):
         ids = sorted(PROBLEMS.keys())
@@ -2152,6 +2358,7 @@ def languages() -> dict:
 def list_problems(request: Request, response: Response, sort: str = "") -> dict:
     # Per-user body (admin sees hidden rows): private cache only, never shared.
     response.headers["Cache-Control"] = "private, max-age=20"
+    _ensure_problems_fresh()
     order = {"easy": 0, "medium": 1, "hard": 2}
     sort_by_difficulty = (sort or "").strip().lower() == "difficulty"
     email = (request.session.get("user") or {}).get("email", "")
@@ -2182,9 +2389,17 @@ def list_problems(request: Request, response: Response, sort: str = "") -> dict:
 
 @app.get("/api/problems/{pid}")
 def problem_detail(request: Request, pid: str) -> dict:
+    _ensure_problems_fresh()
     email = (request.session.get("user") or {}).get("email", "")
     p = _visible_problem_or_404(pid, email)
     listed, contest_hidden = _contest_problem_sets()
+    try:
+        if PROBLEM_SOURCE == "supabase":
+            has_pdf = problem_store.has_statement_pdf(p.pid, source="supabase", client=_sb)
+        else:
+            has_pdf = (grader.PROBLEMS_DIR / p.pid / "statement.pdf").is_file()
+    except Exception:
+        has_pdf = False
     body = {"id": p.pid, "no": p.no, "title": p.title, "time_limit": p.time_limit,
             "memory_limit": p.memory_limit, "checker": p.checker,
             "difficulty": p.difficulty, "tags": p.tags,
@@ -2192,7 +2407,7 @@ def problem_detail(request: Request, pid: str) -> dict:
             "samples": list(p.samples),
             "hidden_tests": len(p.tests) - len(p.samples),
             "tests_hash": _tests_hash(p.pid),
-            "has_pdf": (grader.PROBLEMS_DIR / p.pid / "statement.pdf").is_file()}
+            "has_pdf": has_pdf}
     if _is_admin(email):
         body["hidden"] = p.pid in _hidden_pids()
         body["contest_only"] = p.pid in listed
@@ -2204,6 +2419,7 @@ def problem_detail(request: Request, pid: str) -> dict:
 @app.get("/api/problems/{pid}/sample/{name}")
 def problem_sample(request: Request, pid: str, name: str) -> dict:
     """Public sample test data (statement examples) — hidden tests are never served."""
+    _ensure_problems_fresh()
     email = (request.session.get("user") or {}).get("email", "")
     p = _visible_problem_or_404(pid, email)
     if name not in grader.sample_names(p):
@@ -2222,8 +2438,22 @@ def problem_sample(request: Request, pid: str, name: str) -> dict:
 
 @app.get("/api/problems/{pid}/pdf")
 def problem_pdf(request: Request, pid: str):
+    _ensure_problems_fresh()
     email = (request.session.get("user") or {}).get("email", "")
     p = _visible_problem_or_404(pid, email)
+    if PROBLEM_SOURCE == "supabase":
+        # Private bucket, server-side credentials only: stream bytes, never a
+        # public URL. Client-supplied paths are never trusted (resolved via row).
+        try:
+            data = problem_store.get_statement_pdf(p.pid, source="supabase", client=_sb)
+        except problem_store.ProblemNotFound:
+            raise HTTPException(status_code=404,
+                                detail="no PDF statement for this problem")
+        except problem_store.ProblemUnavailable as e:
+            print(f"[web] pdf unavailable for {p.pid}: {e}", file=sys.stderr)
+            raise HTTPException(status_code=500, detail="problem store unavailable")
+        return Response(content=data, media_type="application/pdf",
+                        headers={"Content-Disposition": f'inline; filename="{p.pid}.pdf"'})
     f = grader.PROBLEMS_DIR / p.pid / "statement.pdf"
     if not f.is_file():
         raise HTTPException(status_code=404, detail="no PDF statement for this problem")
@@ -2279,7 +2509,8 @@ async def submit(
     name: str = Form(""),
     contest: str = Form(""),
 ):
-    prob = _problem_or_404(problem)
+    await asyncio.to_thread(_ensure_problems_fresh)
+    prob = await asyncio.to_thread(_problem_or_404, problem)
     user = request.session.get("user") or {}
     if not user.get("email"):
         raise HTTPException(status_code=401, detail="login first")
@@ -2355,6 +2586,7 @@ def version(request: Request, response: Response) -> dict:
     # Hashes are precomputed at boot (_TESTS_HASH_CACHE); this stays O(n) dict
     # build with no SHA256. Per-user body: private cache only, never shared.
     response.headers["Cache-Control"] = "private, max-age=20"
+    _ensure_problems_fresh()
     email = (request.session.get("user") or {}).get("email", "")
     admin = _is_admin(email)
     hidden = _hidden_pids()
@@ -2368,6 +2600,7 @@ def version(request: Request, response: Response) -> dict:
         "languages": sorted(LANGS.keys()),
         "system": _host_limits(),
         "tests": tests,
+        "problem_source": PROBLEM_SOURCE,
     }
     if admin:
         body["hidden_problems"] = sorted(hidden)
@@ -2391,6 +2624,7 @@ async def run_custom(
         raise HTTPException(status_code=401, detail="login first")
     if QUEUE_MODE == "local":
         _quota_check("run", user["email"], RUN_QUOTA)
+    await asyncio.to_thread(_ensure_problems_fresh)
     prob = None
     if problem:
         prob = await asyncio.to_thread(lambda: _visible_problem_or_404(problem, user["email"]))
@@ -2577,6 +2811,7 @@ async def admin_overview(request: Request) -> dict:
         raise HTTPException(status_code=403, detail="admin only")
     if _sb is None:
         raise HTTPException(status_code=404, detail="supabase not configured")
+    await asyncio.to_thread(_ensure_problems_fresh)
 
     def _fetch():
         n_users = (_sb.table("users").select("email", count="exact").limit(1)
@@ -2915,6 +3150,7 @@ async def upsert_contest(request: Request) -> dict:
         raise HTTPException(status_code=403, detail="admin only")
     if _sb is None:
         raise HTTPException(status_code=404, detail="contests not configured")
+    await asyncio.to_thread(_ensure_problems_fresh)
     try:
         body = await request.json()
     except Exception:
@@ -3022,6 +3258,7 @@ def _contest_scoreboard(contest: dict, live: bool) -> List[dict]:
 
 @app.get("/api/contests/{cid}")
 def contest_detail(request: Request, cid: str) -> dict:
+    _ensure_problems_fresh()
     contest = _contest_or_404(cid)
     user = request.session.get("user") or {}
     email = user.get("email", "")
@@ -3210,6 +3447,7 @@ async def admin_rejudge(request: Request) -> dict:
         raise HTTPException(status_code=403, detail="admin only")
     if _sb is None:
         raise HTTPException(status_code=404, detail="history not configured")
+    await asyncio.to_thread(_ensure_problems_fresh)
     try:
         body = await request.json()
     except Exception:
@@ -3307,6 +3545,7 @@ def _plagiarism_module():
 def admin_plagiarism(request: Request, problem: str = "",
                      threshold: float = 0.6, limit: int = 300) -> dict:
     """Similar-code pairs among the most recent submissions of one problem."""
+    _ensure_problems_fresh()
     user = request.session.get("user") or {}
     if not _is_admin(user.get("email", "")):
         raise HTTPException(status_code=403, detail="admin only")

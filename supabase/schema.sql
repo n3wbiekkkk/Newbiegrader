@@ -384,3 +384,74 @@ alter table contest_announcements enable row level security;
 -- ============================================================================
 create index if not exists submissions_history_filter
   on submissions (user_email, problem, created_at desc);
+
+-- ============================================================================
+-- 2026-10-16: problem storage migration (local problems/ -> Supabase).
+-- Queryable metadata + public statements live in Postgres; hidden test FILES
+-- live in the private `judge-assets` Storage bucket (never in public rows).
+-- Append-only: safe to re-run in the Supabase SQL Editor.
+--
+-- Local format mapped here (see tools/import_problems_supabase.py):
+--   problems/<slug>/config.json -> slug/no/title/limits/checker/tolerance/
+--     difficulty/tags/samples/hidden
+--   problems/<slug>/statement.md -> statement_md (public)
+--   problems/<slug>/tests/<name>.in/.out where <name> in samples ->
+--     samples_data (public JSON, served by the API)
+--   problems/<slug>/tests/<name>.in/.out where <name> NOT in samples ->
+--     hidden_tests manifest ONLY (name/sha256/sizes, no contents) +
+--     bytes in Storage at <slug>/tests/<name>.in(.out)
+--   problems/<slug>/statement.pdf -> Storage at <slug>/statement.pdf
+--     (row keeps statement_pdf_path, never a public URL)
+-- ============================================================================
+
+create table if not exists problems (
+  slug text primary key,
+  no int unique not null,
+  title text not null default '',
+  time_limit double precision not null default 1.0,
+  memory_limit int not null default 256,
+  checker text not null default 'token',
+  tolerance double precision not null default 1e-6,
+  difficulty text not null default '',
+  tags jsonb not null default '[]',
+  samples jsonb not null default '[]',
+  samples_data jsonb not null default '[]',
+  statement_md text not null default '',
+  tests_hash text not null default '',
+  tests_count int not null default 0,
+  hidden_tests jsonb not null default '[]',
+  hidden boolean not null default false,
+  is_published boolean not null default true,
+  statement_pdf_path text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists problems_no_idx on problems (no);
+create index if not exists problems_published_idx on problems (is_published, hidden);
+alter table problems enable row level security;
+
+-- Least privilege: backend uses service_role (bypasses RLS). Direct
+-- anon/authenticated reads are limited to published, non-hidden problems
+-- (public metadata + statement + SAMPLE contents only; hidden test contents
+-- are never stored in this table, only their manifest).
+revoke all on problems from public, anon, authenticated;
+grant select on problems to anon, authenticated;
+grant all on problems to service_role;
+drop policy if exists problems_public_read on problems;
+create policy problems_public_read on problems
+  for select to anon, authenticated
+  using (is_published = true and hidden = false);
+
+-- Private Storage bucket for hidden tests + PDFs. Only service_role may
+-- touch it: no anon/authenticated storage.objects policies are created for
+-- this bucket, and no public URLs are ever issued (backend streams bytes).
+-- Guarded so vanilla Postgres CI (no storage schema) still applies this file.
+do $$
+begin
+  if exists (select 1 from information_schema.schemata where schema_name = 'storage') then
+    insert into storage.buckets (id, name, public)
+    values ('judge-assets', 'judge-assets', false)
+    on conflict (id) do nothing;
+  end if;
+end
+$$;

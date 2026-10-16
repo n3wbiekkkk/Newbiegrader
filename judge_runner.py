@@ -338,11 +338,17 @@ def _job() -> int:
     # Keep the JSON result channel separate from import/engine diagnostics.
     with contextlib.redirect_stdout(sys.stderr):
         import grader
+        import problem_store
         import server
         server.MEMORY_CAP_MB = max(1, int(payload["memory_cap_mb"]))
         server.JUDGE_JOBS = max(1, int(payload["judge_jobs"]))
         grader.COMPILE_MEMORY_MB = max(256, server.MEMORY_CAP_MB)
-        problem = grader.load_problem(payload["problem"]) if payload.get("problem") else None
+        if payload.get("problem_data"):
+            # Supabase mode: trusted embedded tests from the backend (no disk
+            # or Storage access here). Client-supplied paths are never trusted.
+            problem = problem_store.deserialize_problem(payload["problem_data"])
+        else:
+            problem = grader.load_problem(payload["problem"]) if payload.get("problem") else None
         if message["kind"] == "submission":
             if problem is None:
                 raise ValueError("submission requires a problem")

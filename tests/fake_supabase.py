@@ -153,7 +153,8 @@ class FakeSupabase:
     """
 
     def __init__(self, columns: dict | None = None, missing: set | None = None,
-                 views: bool = True, view_columns: set | None = None):
+                 views: bool = True, view_columns: set | None = None,
+                 storage_fail: set | None = None):
         self.tables: dict = {}
         self.lock = threading.RLock()
         self.columns = columns or {}
@@ -163,6 +164,14 @@ class FakeSupabase:
         # without `name` for a while, so tests need to ask for a missing one).
         self.view_columns = view_columns or {"user_email", "problem", "best",
                                             "accepted", "last_at", "name"}
+        # Storage: bucket -> {path -> bytes}. Private bucket, no public URLs.
+        self.buckets: dict = {}
+        # Paths that raise on download (simulate storage outage / missing asset).
+        self.storage_fail: set = set(storage_fail or set())
+        self.storage = _FakeStorage(self)
+        # Supabase client attributes used by problem_store._download()
+        self.supabase_url = "http://localhost:54321"
+        self.supabase_key = "fake-key-for-testing"
 
     def check_view_columns(self, table: str, cols: object) -> None:
         if not isinstance(cols, str) or cols.strip() in ("", "*"):
@@ -238,6 +247,58 @@ class FakeSupabase:
     # --- test helpers ---
     def rows(self, table):
         return self.tables.setdefault(table, [])
+
+
+class _FakeStorage:
+    """Minimal stand-in for supabase storage (private bucket, no public URLs)."""
+
+    def __init__(self, db: "FakeSupabase"):
+        self.db = db
+
+    def from_(self, bucket: str) -> "_FakeBucket":
+        return _FakeBucket(self.db, bucket)
+
+
+class _FakeBucket:
+    def __init__(self, db: "FakeSupabase", bucket: str):
+        self.db = db
+        self.bucket = bucket
+
+    def _store(self) -> dict:
+        return self.db.buckets.setdefault(self.bucket, {})
+
+    def upload(self, path: str, data, options=None):
+        if isinstance(data, str):
+            data = data.encode("utf-8")
+        elif hasattr(data, "read"):
+            data = data.read()
+        data = bytes(data)
+        with self.db.lock:
+            self._store()[path] = data
+        return {"path": path}
+
+    def update(self, path: str, data, options=None):
+        return self.upload(path, data, options)
+
+    def download(self, path: str) -> bytes:
+        with self.db.lock:
+            if path in self.db.storage_fail or (self.bucket, path) in self.db.storage_fail:
+                raise Exception(f"storage unavailable for {path!r}")
+            store = self._store()
+            if path not in store:
+                raise Exception(f"object not found: {path!r}")
+            return bytes(store[path])
+
+    def list(self, prefix: str = "") -> list:
+        with self.db.lock:
+            return [{"name": p} for p in sorted(self._store()) if p.startswith(prefix)]
+
+    def remove(self, paths: list) -> list:
+        with self.db.lock:
+            store = self._store()
+            for p in paths:
+                store.pop(p, None)
+        return []
 
 
 class _QueueRPC:
