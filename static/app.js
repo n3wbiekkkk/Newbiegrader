@@ -673,6 +673,31 @@ function show(view) {
     else a.removeAttribute("aria-current");
   });
   window.scrollTo(0, 0);
+  // Move screen-reader/keyboard focus to the new view's heading.
+  try {
+    const h = document.querySelector(`#view-${view} h1, #view-${view} h2`);
+    if (h) {
+      if (!h.hasAttribute("tabindex")) h.setAttribute("tabindex", "-1");
+      h.focus({ preventScroll: true });
+    }
+  } catch (e) { /* ignore */ }
+}
+
+const TITLES = {
+  home: "Newbiegrader — ฝึกเขียนโปรแกรมด้วยโจทย์ภาษาไทย",
+  tasks: "โจทย์ทั้งหมด · Newbiegrader",
+  archive: "หมวดโจทย์ · Newbiegrader",
+  leaderboard: "จัดอันดับ · Newbiegrader",
+  contests: "การแข่ง · Newbiegrader",
+  contest: "การแข่ง · Newbiegrader",
+  history: "ประวัติการส่ง · Newbiegrader",
+  settings: "ตั้งค่า · Newbiegrader",
+  admin: "ผู้ดูแล · Newbiegrader",
+  login: "เข้าสู่ระบบ · Newbiegrader",
+};
+
+function setTitle(view, extra) {
+  document.title = (extra ? `${extra} · ` : "") + (TITLES[view] || TITLES.home);
 }
 
 // Re-render whatever view is already on screen. Used after the identity fetch
@@ -749,27 +774,30 @@ function router() {
     openTaskByToken(decodeURIComponent(h.slice("#/task/".length)));
     return;
   }
-  if (h === "#/tasks") { show("tasks"); state.restoreTasksScroll = true; renderTasksTable(); return; }
-  if (h === "#/archive") { show("archive"); renderArchive(); return; }
-  if (h === "#/leaderboard") { show("leaderboard"); renderLeaderboard(); return; }
-  if (h === "#/contests") { show("contests"); renderContests(); return; }
+  if (h === "#/tasks") { show("tasks"); setTitle("tasks"); state.restoreTasksScroll = true; renderTasksTable(); return; }
+  if (h === "#/archive") { show("archive"); setTitle("archive"); renderArchive(); return; }
+  if (h === "#/leaderboard") { show("leaderboard"); setTitle("leaderboard"); renderLeaderboard(); return; }
+  if (h === "#/contests") { show("contests"); setTitle("contests"); renderContests(); return; }
   if (h.startsWith("#/contests/")) {
     const cid = decodeURIComponent(h.slice("#/contests/".length));
     show("contest");
+    setTitle("contest");
     renderContest(cid);
     return;
   }
-  if (h === "#/history") { show("history"); loadHistory(); return; }
-  if (h === "#/settings") { show("settings"); renderSettings(); return; }
+  if (h === "#/history") { show("history"); setTitle("history"); loadHistory(); return; }
+  if (h === "#/settings") { show("settings"); setTitle("settings"); renderSettings(); return; }
   if (h === "#/admin") {
     if (!state.is_admin) { location.hash = "#/"; return; }
     show("admin");
+    setTitle("admin");
     renderAdmin();
     return;
   }
-  if (h === "#/login") { show("login"); setAuthMode("login"); return; }
-  if (h === "#/login/register") { show("login"); setAuthMode("register"); return; }
+  if (h === "#/login") { show("login"); setTitle("login"); setAuthMode("login"); return; }
+  if (h === "#/login/register") { show("login"); setTitle("login"); setAuthMode("register"); return; }
   show("home");
+  setTitle("home");
   renderHome();
 }
 window.addEventListener("hashchange", router);
@@ -898,6 +926,24 @@ function renderTasksTable() {
   if (!state.user && state.filter.status !== "all") {
     $("tasks-empty").textContent = "login ก่อนใช้ตัวกรอง Tried / Solved";
     $("tasks-empty").classList.remove("hidden");
+    return;
+  }
+  if (!list.length && filtering) {
+    $("tasks-empty").innerHTML = `<div class="empty-state">
+      <p>ไม่เจอโจทย์ที่ตรงเงื่อนไข</p>
+      <button class="btn-ghost" type="button" id="filter-reset">ล้างตัวกรองทั้งหมด</button>
+    </div>`;
+    $("tasks-empty").classList.remove("hidden");
+    $("filter-reset").onclick = () => {
+      state.filter.q = "";
+      $("q").value = "";
+      state.filter.diff = "";
+      const fd = $("f-diff");
+      if (fd) fd.value = "";
+      setStatusFilter("all");
+      if (state.filter.tag) setTagFilter(state.filter.tag);
+      else renderTasksTable();
+    };
     return;
   }
   const showTag = $("show-tag").checked;
@@ -1064,6 +1110,7 @@ async function renderLeaderboard() {
 const DETAIL_CACHE_TTL = 60 * 1000;
 
 function fillTaskDetail(p) {
+  setTitle("tasks", `#${p.no || "?"} ${p.title}`);
   $("task-title").innerHTML = `${noLabel(p)} ${esc(p.title)} <span class="dim">${esc(p.id)}</span>`;
   const nz = $("task-notice");
   if (p.notice) {
@@ -1073,9 +1120,12 @@ function fillTaskDetail(p) {
     nz.classList.add("hidden");
   }
   const extra = [p.difficulty, ...((p.tags || []))].filter(Boolean).join(" · ");
-  $("task-meta").textContent =
-    `TL ${p.time_limit}s | MEM ${p.memory_limit}MB | checker ${p.checker} | ${p.tests} tests` +
-    (extra ? ` | ${extra}` : "");
+  $("task-meta").innerHTML =
+    `${diffBadge(p.difficulty)}` +
+    `<span class="meta-chip">TL ${esc(String(p.time_limit))}s</span>` +
+    `<span class="meta-chip">MEM ${esc(String(p.memory_limit))}MB</span>` +
+    `<span class="meta-chip">${esc(String(p.checker))} · ${p.tests} tests</span>` +
+    ((p.tags || []).map((t) => `<span class="meta-chip">${esc(t)}</span>`).join(""));
   const nSamples = (p.samples || []).length;
   const nHidden = p.hidden_tests != null
     ? p.hidden_tests : Math.max(0, (p.tests || 0) - nSamples);
@@ -2318,6 +2368,7 @@ async function renderContest(cid) {
   try {
     const d = await apiGet(`/api/contests/${encodeURIComponent(cid)}`);
     state.contestCache[cid] = d;
+    setTitle("contest", d.title || d.id);
     title.textContent = d.title || d.id;
     meta.textContent =
       `${d.id} · ${contestWindowText(d)} · แช่แข็ง ${d.freeze_minutes || 0} นาที · ` +
