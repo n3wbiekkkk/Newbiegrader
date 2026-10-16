@@ -843,7 +843,7 @@ async def _create_job(row: dict, track_active: bool = True) -> dict:
     """Reserve capacity and per-account ownership atomically before any yield."""
     jid = str(uuid.uuid4())
     row = {**row, "id": jid, "status": "queued", "result": None, "error": "",
-                                if code in (409, 429, 503) else None)
+           "created_at": _iso_now()}
     if QUEUE_MODE == "database":
         quota = RUN_QUOTA if row.get("kind") == "playground" else SUBMIT_QUOTA
         response = await _queue_rpc("admit", p_job=row, p_queue_max=QUEUE_MAX,
