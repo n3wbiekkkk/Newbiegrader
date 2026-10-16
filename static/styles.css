@@ -772,3 +772,22 @@ tr.test-row:hover td { background: var(--panel2); }
 .ring-fg { fill: none; stroke: var(--link); stroke-width: 3; stroke-linecap: round; }
 .ring-lbl { font-size: var(--fs-2xs); font-weight: 700; fill: var(--text); text-anchor: middle; }
 .arch-top .arch-bar { display: none; }
+
+/* brand icons (fill-based) + social links */
+.ic-fill { fill: currentColor; stroke: none; }
+.social-row { display: flex; gap: 4px; align-items: center; margin-left: auto; }
+.social-link {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; border-radius: 8px; color: var(--dim);
+}
+.social-link:hover { color: var(--text); background: var(--panel2); }
+.social-link .ic { width: 18px; height: 18px; }
+.about-links { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+.about-link {
+  display: inline-flex; align-items: center; gap: 8px;
+  border: 1px solid var(--border); border-radius: var(--r-md);
+  padding: 10px 18px; text-decoration: none; color: var(--text);
+  font-size: var(--fs-md); font-weight: 600; background: var(--card);
+}
+.about-link:hover { border-color: var(--dim); transform: translateY(-1px); box-shadow: var(--shadow); }
+.about-link .dim { font-weight: 400; }
