@@ -6,4 +6,4 @@
  * Only set a backend URL if you serve the frontend from a host WITHOUT
  * the /api proxy (then also set GRADER_CORS_ORIGINS on the backend).
  */
-window.GRADER_API_BASE = "";
+window.GRADER_API_BASE = "https://grader.n.onjrnm.vip";
