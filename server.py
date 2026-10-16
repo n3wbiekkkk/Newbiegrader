@@ -843,7 +843,7 @@ async def _create_job(row: dict, track_active: bool = True) -> dict:
             code = int(response.get("status_code", 503))
             raise HTTPException(status_code=code, detail=response["error"],
                                 headers={"Retry-After": str(response.get("retry_after", 30))}
-                                if code in (429, 503) else None)
+                                if code in (409, 429, 503) else None)
         return response["job"]
     with _admission_lock:
         email = row.get("user_email") or ""
