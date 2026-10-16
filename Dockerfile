@@ -8,7 +8,7 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY grader.py server.py judge_runner.py worker.py container_entrypoint.py ./
+COPY grader.py server.py judge_runner.py worker.py problem_store.py container_entrypoint.py ./
 COPY problems ./problems
 COPY static ./static
 
