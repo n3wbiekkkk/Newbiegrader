@@ -86,8 +86,7 @@ def _is_thai(ch: str) -> bool:
 def _latin_tex(t: str, bold: bool, sans: bool = False) -> str:
     # Latin/digit runs use Prompt (OFL, tools/fonts/): Light for text,
     # SemiBold for bold — the reference's geometric look, same range as the
-    # website. (The bundled Sarabun draws ASCII digits as Thai digits, and
-    # TeX's default sans looked out of place next to it.)
+    # website. (Thai itself is set in TH Sarabun New, the formal standard.)
     # Display titles pass sans=True, kept for compatibility (also Prompt).
     t = esc_plain(t)
     t = t.replace("<=", "$\\le$").replace(">=", "$\\ge$").replace("!=", "$\\ne$")
