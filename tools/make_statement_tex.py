@@ -252,8 +252,8 @@ def render_samples_table(samples: list) -> str:
         return "\\newline\n".join(tex_verbatim(l) if l.strip() else "~"
                                   for l in lines) or "~"
 
-    head = ("{\\centering\\normalsize ตัวอย่างข้อมูลนำเข้า\\par} &\n"
-            "{\\centering\\normalsize ตัวอย่างข้อมูลส่งออก\\par} \\\\\n"
+    head = ("{\\centering\\fontsize{13}{17}\\bfseries ตัวอย่างข้อมูลนำเข้า\\par} &\n"
+            "{\\centering\\fontsize{13}{17}\\bfseries ตัวอย่างข้อมูลส่งออก\\par} \\\\\n"
             "\\hline\n")
     parts = ["\\begin{longtable}{|m{0.44\\linewidth}|m{0.44\\linewidth}|}\n",
              "\\hline\n", head,
