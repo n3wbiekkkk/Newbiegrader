@@ -1688,7 +1688,7 @@ $("template-btn").onclick = () => {
 // Base poll 1200ms (was 700ms): prod is 1 vCPU and every poll is a proxied
 // HTTPS round trip; backoff below stretches it further while queued.
 const POLL_MS = 1200;
-const POLL_MIN_MS = 500;
+const POLL_MIN_MS = 1000;
 const POLL_CAP_MS = 5000;
 const POLL_MAX_MS = 4 * 60 * 1000;
 const POLL_NET_RETRIES = 8;   // transient network blips: retry, don't drop the job id
@@ -2467,6 +2467,7 @@ function startContestTicker(cid, d) {
   const wantHash = "#/contests/" + encodeURIComponent(cid);
   state.contestTimer = setInterval(() => {
     if (location.hash !== wantHash) { stopContestTicker(); return; }   // navigated away mid-fetch
+    if (document.hidden) return; // hidden tab: skip DOM writes, keep phase guard on return
     const left = Math.max(0, Math.round((target - Date.now()) / 1000));
     const el = $("contest-countdown");
     if (el) el.textContent = (phase === "upcoming" ? "เริ่มในอีก " : "เหลืออีก ") + durationText(left);
@@ -3106,7 +3107,11 @@ async function init() {
         b.classList.toggle("active", (b.dataset.status || "all") === (state.filter.status || "all")));
     }
   } catch (e) { /* ignore */ }
-  $("q").oninput = (e) => { state.filter.q = e.target.value; renderTasksTable(); };
+  $("q").oninput = (e) => {
+    state.filter.q = e.target.value;
+    clearTimeout(state._qTimer);
+    state._qTimer = setTimeout(renderTasksTable, 180);
+  };
   fd.onchange = (e) => { state.filter.diff = e.target.value; renderTasksTable(); };
   if (fs) {
     fs.value = state.filter.sort || "no";

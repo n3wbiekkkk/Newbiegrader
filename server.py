@@ -787,6 +787,19 @@ def _queue_depth() -> int:
         return sum(j.get("status") == "queued" for j in _jobs.values())
 
 
+_queue_depth_cache: dict = {"at": 0.0, "value": 0}
+
+
+def _queue_depth_cached(ttl: float = 1.5) -> int:
+    """Cached depth for status polls. Admission still uses exact _queue_depth."""
+    now = time.monotonic()
+    if now - float(_queue_depth_cache.get("at", 0.0)) < ttl:
+        return int(_queue_depth_cache.get("value", 0))
+    value = _queue_depth()
+    _queue_depth_cache.update({"at": now, "value": value})
+    return value
+
+
 # Columns added by the 2026-10 migration; if the migration was not run yet, the
 # insert is retried without them instead of losing the submission.
 _NEW_SUB_COLS = ("tests_hash", "grader_version", "kind", "contest_id", "job_id")
@@ -816,8 +829,13 @@ async def _load_job(jid: str) -> Optional[dict]:
             raise HTTPException(status_code=503, detail="judge database unavailable")
         return None
     try:
+        # Narrow columns: exclude source/payload (up to 200k) on status polls.
         res = await asyncio.to_thread(
-            lambda: _sb.table("judge_jobs").select("*").eq("id", jid).limit(1).execute())
+            lambda: _sb.table("judge_jobs").select(
+                "id,status,problem,kind,user_email,error,result,"
+                "created_at,started_at,finished_at,worker_id,attempt,"
+                "contest_id,tests_hash,grader_version,reveal"
+            ).eq("id", jid).limit(1).execute())
     except Exception as e:
         if QUEUE_MODE == "database":
             raise HTTPException(status_code=503, detail="judge database unavailable")
@@ -1066,9 +1084,10 @@ async def _run_job(job: dict) -> None:
     payload = {"problem": prob.pid if prob else None, "ext": ext,
                "source": job.get("source", ""), "reveal": reveal,
                "memory_cap_mb": MEMORY_CAP_MB, "judge_jobs": JUDGE_JOBS}
-    if PROBLEM_SOURCE == "supabase" and prob is not None and not playground:
+    if prob is not None and not playground:
         # Trusted server-side channel: the isolated runner judges these bytes
         # without disk or Supabase access (no per-test Storage downloads there).
+        # Local mode too: avoids a second full disk read + re-hash in the child.
         payload["problem_data"] = problem_store.serialize_problem(prob)
     if playground:
         payload.update(job.get("payload") or {})
@@ -2688,20 +2707,26 @@ async def submit(
     source, filename = await _read_source(language, code, file)
     display = await asyncio.to_thread(
         _profile_display_name, email, user.get("name") or email)
+    # Blocking policy lookups off the loop: _effective_reveal hits
+    # _live_hidden_pids -> _all_contest_rows (Supabase), _tests_hash may
+    # fetch hidden tests on cache miss. Same values, no extra RTT on loop.
+    reveal, tests_hash = await asyncio.to_thread(
+        lambda: (_effective_reveal(contest_obj, email, prob.pid),
+                 _tests_hash(prob.pid)))
 
     job = await _create_job({
         "kind": "submit", "user_email": email, "name": display[:50],
         "problem": prob.pid, "language": language, "filename": filename,
         "contest_id": contest_obj["id"] if contest_obj else None,
-        "source": source, "reveal": _effective_reveal(contest_obj, email, prob.pid),
-        "tests_hash": _tests_hash(prob.pid),
+        "source": source, "reveal": reveal,
+        "tests_hash": tests_hash,
         "grader_version": grader.GRADER_VERSION,
     })
     return {
         "job_id": job["id"], "status": "queued", "problem": prob.pid,
         "samples": len(prob.samples),
         "hidden_tests": len(prob.tests) - len(prob.samples),
-        "queued_ahead": (await _queue_rpc("diagnostics"))["queued"] if QUEUE_MODE == "database" else _queue_depth(),
+        "queued_ahead": (await _queue_rpc("diagnostics"))["queued"] if QUEUE_MODE == "database" else _queue_depth_cached(),
     }
 
 
@@ -2722,7 +2747,7 @@ async def job_status(request: Request, jid: str) -> dict:
         "id": jid, "status": status, "problem": job.get("problem", ""),
         "kind": job.get("kind", "submit"), "error": job.get("error", "") or "",
         "queued_ahead": ((await _queue_rpc("diagnostics"))["queued"] if QUEUE_MODE == "database"
-                         else _queue_depth()) if status == "queued" else 0,
+                         else _queue_depth_cached()) if status == "queued" else 0,
         "result": job.get("result") if status == "done" else None,
         "created_at": job.get("created_at"), "started_at": job.get("started_at"),
         "finished_at": job.get("finished_at"),
@@ -2790,6 +2815,7 @@ async def run_custom(
                                  "time_limit": tl, "memory_mb": mem}})
     # API-only processes await a durable worker result; they never launch code.
     deadline = time.monotonic() + OVERALL_TIMEOUT + RUN_BUDGET + tl
+    delay = 0.2
     while time.monotonic() < deadline:
         current = await _load_job(job["id"]) if QUEUE_MODE == "database" else _jobs.get(job["id"])
         if current and current.get("status") == "done":
@@ -2798,7 +2824,10 @@ async def run_custom(
             error = current.get("error") or "internal run error"
             raise HTTPException(status_code=504 if "timed out" in error else 500,
                                 detail=_sanitize_compile_error(error))
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(delay)
+        # Backoff: 0.2s -> 1.5s cap cuts DB polls ~5x on slow judges,
+        # same deadline and return contract.
+        delay = min(1.5, delay * 1.3)
     raise HTTPException(status_code=504, detail="run timed out waiting for judge")
 
 

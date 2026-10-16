@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 """Generate a beautiful Thai statement.pdf from problems/<id>/statement.md
-using LaTeX (tectonic + TH Sarabun).
+using LaTeX (tectonic + TH Sarabun New).
 
-House style (uniform for every problem; see the "Binary Game" reference):
-- header: LARGE bold title, then a small sans limits line
+House style (matches the TOI reference statements, e.g. monsters.TH.pdf):
+- header: 36pt bold title, then a 21pt limits line
   ("1 second, 256 megabytes"), no problem-id line, no rule
-- story paragraphs in full — do NOT shorten
-- math shorthands (<=, >=, 10^9, x^2) become real LaTeX math; raw \(...\,
-  \[...\], and $$...$$ segments pass through untouched (display lines
-  become \[...\])
+- story paragraphs in full at 17pt — do NOT shorten
+- math stays at 12pt (as in the reference: $n$ renders smaller than
+  the surrounding 17pt Thai), Latin runs in Latin Modern Roman,
+  code/sample cells in Inconsolata
 - every fenced sample (input:/output:) becomes one ROW of a single bordered
-  longtable ("ตัวอย่างข้อมูลนำเข้า" / "ตัวอย่างข้อมูลส่งออก"); the table
-  breaks across pages with a repeated header
+  longtable ("ตัวอย่างข้อมูลนำเข้า" / "ตัวอย่างข้อมูลส่งออก", 17pt
+  regular header, 14pt Inconsolata cells); the table breaks across
+  pages with a repeated header
 - list items render as plain lines (no bullets)
 - footer on every page: "Newbiegrader | <page>"
 
@@ -65,7 +66,7 @@ def has_thai(s: str) -> bool:
     return any(0x0E00 <= ord(c) <= 0x0E7F for c in s)
 
 
-def tex_code(s: str) -> str:
+def tex_code(s: str, msmall: bool = False) -> str:
     # code spans are usually ASCII; Thai inside falls back to Sarabun bold.
     # ^ must become math even in code (else XeTeX errors).
     # A lone ASCII letter is a variable, not code: set it as math italic
@@ -73,11 +74,11 @@ def tex_code(s: str) -> str:
     if has_thai(s):
         return "\\textbf{" + esc_plain(s) + "}"
     if re.fullmatch(r"[A-Za-z]", s or ""):
-        return "$" + s + "$"
+        return "\\mth{" + s + "}" if msmall else "$" + s + "$"
     out = []
     for m in re.split(r"([A-Za-z0-9]\^\w+)", s):
         if re.fullmatch(r"[A-Za-z0-9]\^\w+", m or ""):
-            out.append("$" + m + "$")
+            out.append("\\mth{" + m + "}" if msmall else "$" + m + "$")
         else:
             out.append("\\texttt{" + esc_plain(m) + "}" if m else "")
     return "".join(out)
@@ -87,10 +88,10 @@ def _is_thai(ch: str) -> bool:
     return 0x0E00 <= ord(ch) <= 0x0E7F
 
 
-def _latin_tex(t: str, bold: bool, sans: bool = False) -> str:
-    # Latin/digit runs use Prompt (OFL, tools/fonts/): Light for text,
-    # SemiBold for bold — the reference's geometric look, same range as the
-    # website. (Thai itself is set in TH Sarabun New, the formal standard.)
+def _latin_tex(t: str, bold: bool, sans: bool = False, msmall: bool = False) -> str:
+    # Latin/digit runs use Latin Modern Roman (tools/fonts/, GUST license),
+    # the same face as the TOI reference statements. (Thai itself is set in
+    # TH Sarabun New.)
     # Grouping MUST be {\eng{}...} (braces outside): \eng{...} leaks the
     # font change past its own braces to the end of the document in this
     # toolchain (all Thai after the first Latin run would set in Prompt).
@@ -108,16 +109,18 @@ def _latin_tex(t: str, bold: bool, sans: bool = False) -> str:
         segs[i] = re.sub(r"(?<![A-Za-z$])([A-Za-z])(?![A-Za-z])",
                           r"$\1$", segs[i])
     t = "".join(segs)
-    return _eng_wrap(t, bold)
+    return _eng_wrap(t, bold, msmall)
 
 
-def _eng_wrap(t: str, bold: bool) -> str:
-    """Wrap a Latin run in the Prompt family without leaking or eating space.
+def _eng_wrap(t: str, bold: bool, msmall: bool = False) -> str:
+    """Wrap a Latin run in the Latin Modern family without leaking or eating space.
 
     Form MUST be {\\eng{}...} (braces outside): \\eng{...} leaks the font
     change past its own braces to the end of the document in this toolchain.
     Spaces adjacent to the switch are emitted bare (main font): a space right
     after \\eng machinery is swallowed even outside the braces.
+    msmall=True (17.3pt body context) drops the run back to \\normalsize
+    (12pt), exactly like the reference statements.
     """
     m = re.match(r"( *)(.*?)(\ *)$", t, re.S)
     lead, core, trail = m.group(1), m.group(2), m.group(3)
@@ -126,32 +129,41 @@ def _eng_wrap(t: str, bold: bool) -> str:
     if not core:
         return " "
     if bold:
-        return lead + "\\textbf{{\\eng{}" + core + "}}" + trail
-    return lead + "{\\eng{}" + core + "}" + trail
+        core = "\\textbf{{\\eng{}" + core + "}}"
+    else:
+        core = "{\\eng{}" + core + "}"
+    if msmall:
+        core = "{\\normalsize " + core + "}"
+    return lead + core + trail
 
 
-def tex_inline(s: str, bold: bool = False, sans: bool = False) -> str:
+def tex_inline(s: str, bold: bool = False, sans: bool = False,
+               msmall: bool = False) -> str:
     """Markdown line -> LaTeX: **bold**, `code`, math shorthands.
-    Thai runs stay in Sarabun; Latin/digit runs go to Prompt Light
-    (SemiBold when bold). Pass sans=True for display titles (also Prompt).
+    Thai runs stay in Sarabun; Latin/digit runs go to Latin Modern Roman
+    (bold when requested). Pass sans=True for display titles.
     Raw math segments (\(...\), \[...\], $$...$$) pass through untouched so
     authors can write real LaTeX; a whole-line $$...$$ becomes display math.
+    msmall=True (17.3pt body context): raw math goes through \\mth/\\dmth
+    (back to 12pt, like the reference) and Latin/code math follows.
     """
     out = []
     for seg in re.split(r"(\\\[.+?\\\]|\\\(.+?\\\)|\$\$.+?\$\$)", s):
         if not seg:
             continue
         if seg.startswith("\\("):
-            out.append("$" + seg[2:-2] + "$")
+            inner = seg[2:-2]
+            out.append("\\mth{" + inner + "}" if msmall else "$" + inner + "$")
         elif seg.startswith("\\[") or seg.startswith("$$"):
             inner = seg[2:-2]
-            out.append("\\[" + inner + "\\]")
+            out.append("\\dmth{" + inner + "}" if msmall else "\\[" + inner + "\\]")
         else:
-            out.append(_tex_inline_text(seg, bold, sans))
+            out.append(_tex_inline_text(seg, bold, sans, msmall))
     return "".join(out)
 
 
-def _tex_inline_text(s: str, bold: bool = False, sans: bool = False) -> str:
+def _tex_inline_text(s: str, bold: bool = False, sans: bool = False,
+                     msmall: bool = False) -> str:
     parts = re.split(r"(\*\*[^*]+\*\*|__[^_]+__|`[^`]+`)", s)
     out = []
     for p in parts:
@@ -162,19 +174,19 @@ def _tex_inline_text(s: str, bold: bool = False, sans: bool = False) -> str:
             p, b = p[2:-2], True
             for run_th, chunk in _runs(p):
                 out.append("\\textbf{" + esc_plain(chunk) + "}" if run_th
-                           else _latin_tex(chunk, True, sans))
+                           else _latin_tex(chunk, True, sans, msmall))
             continue
         if p.startswith("__") and not p.startswith("___"):
             inner = "".join(
-                esc_plain(chunk) if run_th else _latin_tex(chunk, b, sans)
+                esc_plain(chunk) if run_th else _latin_tex(chunk, b, sans, msmall)
                 for run_th, chunk in _runs(p[2:-2]))
             out.append("\\underline{" + inner + "}")
             continue
         if p.startswith("`"):
-            out.append(tex_code(p[1:-1]))
+            out.append(tex_code(p[1:-1], msmall))
             continue
         for run_th, chunk in _runs(p):
-            out.append(esc_plain(chunk) if run_th else _latin_tex(chunk, b, sans))
+            out.append(esc_plain(chunk) if run_th else _latin_tex(chunk, b, sans, msmall))
     return "".join(out)
 
 
@@ -255,17 +267,20 @@ def render_samples_table(samples: list) -> str:
         return "\\newline\n".join(tex_verbatim(l) if l.strip() else "~"
                                   for l in lines) or "~"
 
-    head = ("{\\centering\\fontsize{13}{17}\\bfseries ตัวอย่างข้อมูลนำเข้า\\par} &\n"
-            "{\\centering\\fontsize{13}{17}\\bfseries ตัวอย่างข้อมูลส่งออก\\par} \\\\\n"
+    head = ("\\rowcolor[gray]{0.94}\n"
+            "{\\centering\\fontsize{17.3}{21} ตัวอย่างข้อมูลนำเข้า\\par} &\n"
+            "{\\centering\\fontsize{17.3}{21} ตัวอย่างข้อมูลส่งออก\\par} \\\\\n"
             "\\hline\n")
-    parts = ["\\begin{longtable}{|m{0.44\\linewidth}|m{0.44\\linewidth}|}\n",
+    parts = ["{\\setlength{\\tabcolsep}{8pt}\\renewcommand{\\arraystretch}{1.4}"
+             "\\arrayrulecolor[gray]{0.7}\n",
+             "\\begin{longtable}{|p{0.44\\linewidth}|p{0.44\\linewidth}|}\n",
              "\\hline\n", head,
              "\\endfirsthead\n", "\\hline\n", head, "\\endhead\n"]
     for inp, outp in samples:
-        parts.append("{\\ttfamily\\small " + cell(inp) + "} &\n"
-                     "{\\ttfamily\\small " + cell(outp) + "} \\\\\n"
+        parts.append("{\\fontsize{14}{17}\\selectfont\\ttfamily " + cell(inp) + "} &\n"
+                     "{\\fontsize{14}{17}\\selectfont\\ttfamily " + cell(outp) + "} \\\\\n"
                      "\\hline\n")
-    parts.append("\\end{longtable}\n\n\\medskip\n")
+    parts.append("\\end{longtable}}\n\n\\medskip\n")
     return "".join(parts)
 
 
@@ -273,7 +288,7 @@ PREAMBLE = """\\documentclass[a4paper,12pt]{article}
 \\usepackage{fontspec}
 \\usepackage{xltxtra}
 \\usepackage{geometry}
-\\usepackage{xcolor}
+\\usepackage[table]{xcolor}
 \\usepackage{amsmath}
 \\usepackage{longtable}
 \\usepackage{array}
@@ -284,24 +299,36 @@ PREAMBLE = """\\documentclass[a4paper,12pt]{article}
 \\setmainfont[
   Path=FONTPATH,
   Extension=.ttf,
-  UprightFont=sarabun,
-  BoldFont=sarabun-bold,
-  ItalicFont=sarabun-italic,
-  BoldItalicFont=sarabun-bolditalic
-]{sarabun}
+  UprightFont=thsarabunnew,
+  BoldFont=thsarabunnew-bold,
+  ItalicFont=thsarabunnew-italic,
+  BoldItalicFont=thsarabunnew-bolditalic
+]{thsarabunnew}
 \\newfontfamily\\eng[
   Path=FONTPATH,
+  Extension=.otf,
+  UprightFont=lmroman-regular,
+  BoldFont=lmroman-bold,
+  ItalicFont=lmroman-italic,
+  BoldItalicFont=lmroman-bolditalic
+]{lmroman}
+\\setmonofont[
+  Path=FONTPATH,
   Extension=.ttf,
-  UprightFont=prompt-light,
-  BoldFont=prompt-semibold
-]{prompt}
+  UprightFont=inconsolata-regular,
+  BoldFont=inconsolata-bold
+]{inconsolata}
 \\renewcommand{\\normalsize}{\\fontsize{12}{20}\\selectfont}
-\\setlength{\\parskip}{14pt}
+\\setlength{\\parskip}{8pt}
 \\setlength{\\parindent}{0pt}
 \\pagestyle{fancy}
 \\fancyhf{}
 \\fancyfoot[C]{\\small{\\eng{}Newbiegrader} \\quad\\textbar\\quad {\\eng{}\\thepage}}
 \\renewcommand{\\headrulewidth}{0pt}
+% Body Thai is 17.3pt but math/Latin stay at 12pt (exactly like the
+% reference): mth/dmth typeset math back at normalsize.
+\\newcommand{\\mth}[1]{{\\normalsize $#1$}}
+\\newcommand{\\dmth}[1]{{\\normalsize \\[#1\\]}}
 \\begin{document}
 \\normalsize
 \\raggedright
@@ -311,7 +338,7 @@ PREAMBLE = """\\documentclass[a4paper,12pt]{article}
 def _limits_line(tl: float, mem: int) -> str:
     t = str(tl).rstrip("0").rstrip(".")
     unit = "second" if float(t) == 1 else "seconds"
-    return "{\\fontsize{14.4}{20}\\selectfont{\\eng{}" + t + " " + unit + ", " + str(mem) + " megabytes}}\n\n"
+    return "{\\fontsize{21}{26}\\selectfont{\\eng{}" + t + " " + unit + ", " + str(mem) + " megabytes}}\n\n"
 
 
 # House style uses Thai section headings, matching the reference statement.
@@ -329,15 +356,12 @@ def build(pid: str, title: str, tl: float, mem: int, md: str) -> str:
     blocks = [b for b in md.split("\n") if b.strip()]
     _ = blocks
     parts = [PREAMBLE]
-    m = re.match(r"^(.*)\s+\(([^()]*)\)\s*$", title)
-    if m:
-        parts.append("{\\fontsize{28}{32}\\selectfont " + tex_inline(m.group(1).strip()) + "}\n")
-        parts.append("{\\fontsize{16}{20}\\selectfont " + tex_inline("(" + m.group(2).strip() + ")", sans=True) + "}\n\n")
-    else:
-        parts.append("{\\fontsize{28}{32}\\selectfont " + tex_inline(title, sans=True) + "}\n\n")
+    # One big bold title line, Thai + English alike (Latin runs fall
+    # through to Latin Modern via tex_inline, as in the reference).
+    parts.append("{\\fontsize{36}{42}\\selectfont\\bfseries " + tex_inline(title) + "}\n\n")
     parts.append("\\vspace{8pt}\n")
     parts.append(_limits_line(tl, mem))
-    parts.append("\\vspace{3pt}\n")
+    parts.append("\\vspace{10pt}\n")
     story_done = False
     blocks = md_blocks(md)
     # Every fenced sample becomes one ROW of a single table placed where the
@@ -361,7 +385,7 @@ def build(pid: str, title: str, tl: float, mem: int, md: str) -> str:
             continue  # title already in header
         if kind == "h2":
             story_done = True
-            parts.append("\\needspace{4\\baselineskip}\n\\vspace{18pt}\n{\\fontsize{24}{28}\\bfseries " + tex_inline(H2_TH.get(text.lower(), text)) + "}\n\n\\vspace{8pt}\n\\nopagebreak\n")
+            parts.append("\\needspace{4\\baselineskip}\n\\vspace{28pt}\n{\\fontsize{25}{30}\\bfseries " + tex_inline(H2_TH.get(text.lower(), text)) + "}\n\n\\vspace{14pt}\n\\nopagebreak\n")
         elif kind == "code":
             story_done = True
             if not table_done:
@@ -369,16 +393,18 @@ def build(pid: str, title: str, tl: float, mem: int, md: str) -> str:
                 table_done = True
         elif kind == "li":
             story_done = True
-            parts.append(tex_inline(text) + "\\\\\n")
+            parts.append("{\\fontsize{17.3}{20}\\selectfont " + tex_inline(text, msmall=True) + "}\\\\\n")
         else:
             # Markdown paragraph: blank lines separate paragraphs; a single
             # soft line break inside one joins with a space so the story flows
             # as solid full-width blocks (as in the reference).
+            # Body is 17pt; math stays 12pt (like the reference) because raw
+            # \fontsize does not touch the math setup (only \normalsize does).
             for para in re.split(r"\n[ \t]*\n", text):
                 lines = [ln.strip() for ln in para.split("\n") if ln.strip()]
                 if not lines:
                     continue
-                parts.append(tex_inline(" ".join(lines)) + "\n\n")
+                parts.append("{\\fontsize{17.3}{20}\\selectfont " + tex_inline(" ".join(lines), msmall=True) + "}\n\n")
     parts.append("\\end{document}\n")
     return "".join(parts)
 

@@ -517,14 +517,12 @@ def get_problem(slug: str, source: Optional[str] = None, client=None) -> grader.
             return grader.load_problem(slug)
         except SystemExit as e:
             raise ProblemNotFound(str(e))
-    # Supabase: TTL cache first, then row+storage fetch (raises NotFound/Unavailable).
+    # Supabase: TTL cache first. Fresh cache wins without a row fetch; version
+    # revalidation happens on TTL expiry via load_problem_supabase.
     ttl = cache_ttl_s()
     cached = _cache_get(slug)
     if cached is not None and ttl > 0 and time.monotonic() - cached[3] < ttl:
-        # Fast path still revalidates the version cheaply (one row fetch) so a
-        # re-imported problem invalidates within one TTL window. load_problem_supabase
-        # does the comparison; call it directly to keep a single code path.
-        pass
+        return cached[0]
     return load_problem_supabase(slug, client=client)
 
 
@@ -575,10 +573,11 @@ def manifest_for_problem(prob: grader.Problem) -> Tuple[list, list]:
     for t in prob.tests:
         if t.name in sample_set:
             continue
-        digest = hashlib.sha256(t.input.encode("utf-8", "replace") + b"\x00"
-                                + t.expected.encode("utf-8", "replace")).hexdigest()[:16]
+        raw_in = t.input.encode("utf-8", "replace")
+        raw_out = t.expected.encode("utf-8", "replace")
+        digest = hashlib.sha256(raw_in + b"\x00" + raw_out).hexdigest()[:16]
         hidden.append({"name": t.name, "sha256": digest,
-                       "size_in": len(t.input.encode("utf-8")),
-                       "size_out": len(t.expected.encode("utf-8"))})
+                       "size_in": len(raw_in),
+                       "size_out": len(raw_out)})
     hidden.sort(key=lambda e: e["name"])
     return samples_data, hidden

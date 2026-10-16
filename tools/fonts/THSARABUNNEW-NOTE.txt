@@ -1,0 +1,12 @@
+TH Sarabun New (thsarabunnew*.ttf)
+Source: SIPA via f0nt.com — https://www.f0nt.com/release/th-sarabun-new/
+  (zip sha256 7a3db732e475b0b8adb10adf4058e7d8161ecef157f56f9711c229c73bedc592)
+License: GNU GPL v2 or later, with font-embedding exception
+  (see name-table ID 13 inside the fonts). The exception means PDFs built
+  with these fonts are NOT covered by the GPL; only the font files themselves
+  are. GPL-2.0-or-later material is compatible with this repo's AGPL-3.0-or-later.
+File checksums (sha256):
+  b248f824f3d7a8576bc396826a4d898070c1420564f6ce6aa716aa8ad24f824a  thsarabunnew.ttf
+  49596f298a8fe248c5340b4589b3b4adfcf34a3e24084ebeb4f49c6600f75fa7  thsarabunnew-bold.ttf
+  341b9b5d13b696f74c6318d32bbae7ff183e6bdc07ef3ca1a6f9c5dd83c6494b  thsarabunnew-italic.ttf
+  64a69cbeca6d34dc754a7ab2106615c14fbd359d339ed0f65d2a7b17de14cdfa  thsarabunnew-bolditalic.ttf

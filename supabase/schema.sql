@@ -455,3 +455,18 @@ begin
   end if;
 end
 $$;
+
+-- ============================================================================
+-- 2026-10-17: judge hot-path indexes (optimize batch).
+-- Additive only, safe to re-run. Apply in Supabase SQL Editor.
+-- Covers leaderboard/problem_stats GROUP BY with contest_id IS NULL,
+-- contest scoreboard per contest_id, and judge_jobs claim/admit scans.
+-- ============================================================================
+create index if not exists submissions_leaderboard_cover
+  on submissions (contest_id, user_email, problem);
+create index if not exists submissions_stats_cover
+  on submissions (contest_id, problem);
+create index if not exists submissions_contest_created
+  on submissions (contest_id, created_at desc);
+create index if not exists judge_jobs_claim_cover
+  on judge_jobs (status, kind, created_at, id);
