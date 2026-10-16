@@ -60,6 +60,7 @@
   --t-fast: .15s ease;
   --focus: 2px solid var(--link);
 
+  --brand-ring: #fff;      /* white backing for transparent brand PNGs, both themes */
   --mono: "JetBrains Mono", "Prompt", ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
   --sans: "Prompt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --shadow-sm: 0 1px 2px rgba(0,0,0,.05);
@@ -101,6 +102,7 @@
   --tk-k: #c4b5fd; --tk-s: #86efac; --tk-c: #6b7280;
   --tk-n: #fbbf24; --tk-f: #93c5fd; --tk-p: #f87171;
 
+  --brand-ring: #fff;
   --shadow-sm: 0 1px 2px rgba(0,0,0,.35);
   --shadow: 0 1px 2px rgba(0,0,0,.4);
   color-scheme: dark;
@@ -791,3 +793,6 @@ tr.test-row:hover td { background: var(--panel2); }
 }
 .about-link:hover { border-color: var(--dim); transform: translateY(-1px); box-shadow: var(--shadow); }
 .about-link .dim { font-weight: 400; }
+
+/* user-supplied brand badges (PNG): round, theme-safe */
+.brand-img { width: 18px; height: 18px; border-radius: 50%; flex: none; background: var(--brand-ring); }
