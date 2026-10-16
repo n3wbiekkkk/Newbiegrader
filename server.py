@@ -1934,6 +1934,10 @@ PROBLEMS_BY_NO: Dict[int, str] = {}
 # tests_hash คำนวณแบบ lazy เมื่อเข้าถึงจริง (ดู _tests_hash())
 # ในโหมด supabase เติมจากแถวเมตาดาต้าตอน boot (ไม่ต้องดาวน์โหลดไฟล์เทสต์)
 _TESTS_HASH_CACHE: Dict[str, str] = {}
+# Supabase row extras: {slug: {"tests": total count, "has_pdf": bool}}.
+# Lets list/detail/version/contest serve correct counts with zero Storage
+# downloads (one SELECT per boot/refresh, not per request).
+_PROBLEM_EXTRA: Dict[str, dict] = {}
 _problems_refresh_at: float = time.monotonic()
 
 if PROBLEM_SOURCE == "supabase":
@@ -1945,10 +1949,13 @@ if PROBLEM_SOURCE == "supabase":
             # โหลดเฉพาะเมตาดาต้า (ตัวอย่างสาธารณะ) ตอน boot — ไม่ดาวน์โหลด
             # เทสต์ลบทั้งหมด (~พันไฟล์) เพื่อให้เซิร์ฟเวอร์เริ่มต้นได้ไว
             # เทสต์ลับจะโหลดแบบ lazy ตอนมีการส่งงานจริง (ดู _problem_or_404 / _run_job)
-            PROBLEMS.update(problem_store.load_metadata_only(client=_sb))
+            _snap_meta, _snap_hashes, _snap_extra = problem_store.load_snapshot(client=_sb)
+            PROBLEMS.update(_snap_meta)
             # เติม tests_hash จากแถวเมตาดาต้าโดยตรง (ไม่ต้องคำนวณจากไฟล์เทสต์)
             _TESTS_HASH_CACHE.clear()
-            _TESTS_HASH_CACHE.update(problem_store.load_tests_hash_map(client=_sb))
+            _TESTS_HASH_CACHE.update(_snap_hashes)
+            _PROBLEM_EXTRA.clear()
+            _PROBLEM_EXTRA.update(_snap_extra)
         except problem_store.ProblemUnavailable as e:
             print(f"[web] supabase problem preload failed: {e} "
                   "(no local fallback)", file=sys.stderr)
@@ -2000,7 +2007,7 @@ def _ensure_problems_fresh() -> None:
     Local mode: PROBLEMS are boot-loaded from disk (restart after edits).
     Supabase mode: re-list ROWS only (no Storage downloads); drop cached full
     problems whose hash changed so the next access lazy-reloads them. A refresh
-    costs two small SELECTs, never ~1700 file downloads — safe on the tiny
+    costs one small SELECT, never ~1700 file downloads — safe on the tiny
     prod box. Failures keep the stale cache and log; callers surface an empty
     store as an explicit 500, never silent fallback.
     """
@@ -2013,8 +2020,7 @@ def _ensure_problems_fresh() -> None:
     if _sb is None:
         return
     try:
-        meta = problem_store.load_metadata_only(client=_sb)
-        hashmap = problem_store.load_tests_hash_map(client=_sb)
+        meta, hashmap, extra = problem_store.load_snapshot(client=_sb)
     except Exception as e:
         print(f"[web] problem refresh failed, keeping {len(PROBLEMS)} cached: {e}",
               file=sys.stderr)
@@ -2028,8 +2034,45 @@ def _ensure_problems_fresh() -> None:
     PROBLEMS.update(meta)
     _TESTS_HASH_CACHE.clear()
     _TESTS_HASH_CACHE.update(hashmap)
+    _PROBLEM_EXTRA.clear()
+    _PROBLEM_EXTRA.update(extra)
     _rebuild_problem_indexes()
     _problems_refresh_at = time.monotonic()
+
+
+def _problem_total(pid: str, p: grader.Problem) -> int:
+    """True test count (supabase rows carry it; local Problems know their tests)."""
+    if PROBLEM_SOURCE == "supabase":
+        hit = (_PROBLEM_EXTRA.get(pid) or {}).get("tests") or 0
+        if hit:
+            return int(hit)
+    return len(p.tests)
+
+
+def _meta_or_404(pid: str) -> grader.Problem:
+    """Metadata-only resolve: never downloads hidden tests (browsing path).
+
+    Judging paths must keep using _problem_or_404 (full tests required).
+    """
+    slug = _resolve_pid(pid)
+    p = PROBLEMS.get(slug)
+    if p is not None:
+        return p
+    if PROBLEM_SOURCE != "supabase":
+        raise HTTPException(status_code=404, detail=f"unknown problem: {pid}")
+    if _sb is None:
+        raise HTTPException(status_code=500, detail="problem store unavailable")
+    try:
+        meta, _row = problem_store.load_meta(slug, client=_sb)
+    except problem_store.ProblemNotFound:
+        raise HTTPException(status_code=404, detail=f"unknown problem: {pid}")
+    except problem_store.ProblemUnavailable as e:
+        print(f"[web] problem meta {slug} unavailable: {e}", file=sys.stderr)
+        raise HTTPException(status_code=500, detail="problem store unavailable")
+    PROBLEMS[meta.pid] = meta
+    if meta.no > 0 and meta.no not in PROBLEMS_BY_NO:
+        PROBLEMS_BY_NO[meta.no] = meta.pid
+    return meta
 
 
 def _resolve_pid(token: str) -> str:
@@ -2385,7 +2428,7 @@ def list_problems(request: Request, response: Response, sort: str = "") -> dict:
             "id": p.pid, "no": p.no, "title": p.title, "time_limit": p.time_limit,
             "memory_limit": p.memory_limit, "checker": p.checker,
             "difficulty": p.difficulty, "tags": p.tags,
-            "tests": len(p.tests), "samples": len(p.samples),
+            "tests": _problem_total(p.pid, p), "samples": len(p.samples),
         }
         if admin:
             item["hidden"] = is_hidden
@@ -2400,15 +2443,34 @@ def list_problems(request: Request, response: Response, sort: str = "") -> dict:
 def problem_detail(request: Request, pid: str) -> dict:
     _ensure_problems_fresh()
     email = (request.session.get("user") or {}).get("email", "")
+    if PROBLEM_SOURCE == "supabase":
+        # Browsing path: metadata + row extras only, zero Storage downloads.
+        # Hidden bytes load lazily on submit (judge worker, polled).
+        meta = _meta_or_404(pid)
+        if not _visible_to(meta.pid, email):
+            raise HTTPException(status_code=404, detail=f"unknown problem: {pid}")
+        total = _problem_total(meta.pid, meta)
+        samples = list(meta.samples)
+        has_pdf = bool((_PROBLEM_EXTRA.get(meta.pid) or {}).get("has_pdf", False))
+        listed, contest_hidden = _contest_problem_sets()
+        body = {"id": meta.pid, "no": meta.no, "title": meta.title,
+                "time_limit": meta.time_limit,
+                "memory_limit": meta.memory_limit, "checker": meta.checker,
+                "difficulty": meta.difficulty, "tags": meta.tags,
+                "tests": total, "statement": meta.description,
+                "samples": samples,
+                "hidden_tests": max(0, total - len(samples)),
+                "tests_hash": _tests_hash(meta.pid),
+                "has_pdf": has_pdf}
+        if _is_admin(email):
+            body["hidden"] = meta.pid in _hidden_pids()
+            body["contest_only"] = meta.pid in listed
+            body["config_hidden"] = meta.hidden
+            body["contest_hidden"] = meta.pid in contest_hidden
+        return body
     p = _visible_problem_or_404(pid, email)
     listed, contest_hidden = _contest_problem_sets()
-    try:
-        if PROBLEM_SOURCE == "supabase":
-            has_pdf = problem_store.has_statement_pdf(p.pid, source="supabase", client=_sb)
-        else:
-            has_pdf = (grader.PROBLEMS_DIR / p.pid / "statement.pdf").is_file()
-    except Exception:
-        has_pdf = False
+    has_pdf = (grader.PROBLEMS_DIR / p.pid / "statement.pdf").is_file()
     body = {"id": p.pid, "no": p.no, "title": p.title, "time_limit": p.time_limit,
             "memory_limit": p.memory_limit, "checker": p.checker,
             "difficulty": p.difficulty, "tags": p.tags,
@@ -2430,6 +2492,31 @@ def problem_sample(request: Request, pid: str, name: str) -> dict:
     """Public sample test data (statement examples) — hidden tests are never served."""
     _ensure_problems_fresh()
     email = (request.session.get("user") or {}).get("email", "")
+    if PROBLEM_SOURCE == "supabase":
+        # Sample bytes live in the row itself: one SELECT, zero Storage downloads.
+        meta = _meta_or_404(pid)
+        if not _visible_to(meta.pid, email):
+            raise HTTPException(status_code=404, detail=f"unknown problem: {pid}")
+        if name not in set(meta.samples):
+            raise HTTPException(status_code=404,
+                                detail="not a public sample (hidden tests are not served)")
+        # Live contest with show_samples=false reveals nothing, even via samples.
+        if not _is_admin(email) and meta.pid in _live_hidden_pids():
+            raise HTTPException(status_code=404,
+                                detail="not a public sample (hidden tests are not served)")
+        try:
+            row = problem_store.fetch_row(meta.pid, client=_sb)
+        except problem_store.ProblemNotFound:
+            raise HTTPException(status_code=404, detail="sample not found")
+        except problem_store.ProblemUnavailable as e:
+            print(f"[web] sample {meta.pid}/{name} unavailable: {e}", file=sys.stderr)
+            raise HTTPException(status_code=500, detail="problem store unavailable")
+        for entry in (row.get("samples_data") or []):
+            if str(entry.get("name")) == name:
+                return {"problem": meta.pid, "test": name,
+                        "input": str(entry.get("input", "")),
+                        "output": str(entry.get("expected", ""))}
+        raise HTTPException(status_code=404, detail="sample not found")
     p = _visible_problem_or_404(pid, email)
     if name not in grader.sample_names(p):
         raise HTTPException(status_code=404,
@@ -2599,7 +2686,7 @@ def version(request: Request, response: Response) -> dict:
     email = (request.session.get("user") or {}).get("email", "")
     admin = _is_admin(email)
     hidden = _hidden_pids()
-    tests = {pid: {"hash": _tests_hash(pid), "tests": len(p.tests),
+    tests = {pid: {"hash": _tests_hash(pid), "tests": _problem_total(pid, p),
                    "samples": list(p.samples)}
              for pid, p in sorted(PROBLEMS.items())
              if admin or pid not in hidden}
@@ -3289,7 +3376,8 @@ def contest_detail(request: Request, cid: str) -> dict:
             continue
         problems.append({"id": p.pid, "no": p.no, "title": p.title,
                          "difficulty": p.difficulty,
-                         "tags": p.tags, "tests": len(p.tests), "samples": len(p.samples),
+                         "tags": p.tags, "tests": _problem_total(pid, p),
+                         "samples": len(p.samples),
                          "time_limit": p.time_limit, "memory_limit": p.memory_limit})
     body = {
         **_contest_public(contest, email, _registration_counts()),

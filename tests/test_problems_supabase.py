@@ -405,6 +405,42 @@ class SupabaseProblems(unittest.TestCase):
         with self.assertRaises(problem_store.ProblemUnavailable):
             problem_store.load_problem_supabase(slug, client=self.fake)
 
+    def test_detail_and_sample_need_no_storage(self):
+        # Simulate a real supabase boot: metadata-only PROBLEMS + extras,
+        # then wipe ALL Storage objects — browsing must still work.
+        meta, hashes, extra = problem_store.load_snapshot(client=self.fake)
+        server.PROBLEMS.clear()
+        server.PROBLEMS.update(meta)
+        server._PROBLEM_EXTRA.clear()
+        server._PROBLEM_EXTRA.update(extra)
+        server._TESTS_HASH_CACHE.clear()
+        server._TESTS_HASH_CACHE.update(hashes)
+        problem_store.invalidate_cache()
+        self.fake.buckets.clear()
+        self.login(STUDENT)
+        slug = SEED_SLUGS[0]
+        local = grader.load_problem(slug)
+        r = self.client.get(f"/api/problems/{slug}")
+        self.assertEqual(r.status_code, 200, r.text)
+        body = r.json()
+        self.assertEqual(body["tests"], len(local.tests))
+        self.assertEqual(body["hidden_tests"], len(local.tests) - len(local.samples))
+        self.assertEqual(body["samples"], local.samples)
+        self.assertEqual(body["tests_hash"], grader.tests_hash(local))
+        sample = local.samples[0]
+        r = self.client.get(f"/api/problems/{slug}/sample/{sample}")
+        self.assertEqual(r.status_code, 200, r.text)
+        tc = next(t for t in local.tests if t.name == sample)
+        self.assertEqual(r.json()["input"], tc.input)
+        self.assertEqual(r.json()["output"], tc.expected)
+        # ...but submitting without hidden bytes fails closed immediately.
+        r = self.client.post("/api/submit",
+                             data={"problem": slug, "language": "python",
+                                   "code": (ROOT / "examples" / f"{slug}_ref.py").read_text()},
+                             headers=BROWSER)
+        self.assertEqual(r.status_code, 500, r.text)
+        self.assertIn("unavailable", r.json()["detail"].lower())
+
     def test_schema_has_private_problem_storage(self):
         sql = (ROOT / "supabase" / "schema.sql").read_text(encoding="utf-8")
         self.assertIn("create table if not exists problems", sql)

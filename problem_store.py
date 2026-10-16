@@ -183,9 +183,30 @@ def load_metadata_only(client=None) -> Dict[str, grader.Problem]:
     `load_problem_supabase` (or `get_problem`) before judging, otherwise
     hidden tests are missing and judging must fail closed.
     """
+    return load_snapshot(client)[0]
+
+
+def load_tests_hash_map(client=None) -> Dict[str, str]:
+    """อ่าน {slug: tests_hash} จากตาราง problems โดยไม่ดาวน์โหลดไฟล์เทสต์
+
+    ใช้เติม _TESTS_HASH_CACHE ตอน boot ในโหมด supabase ได้ทันที
+    โดยไม่ต้องรอโหลดเทสต์ลับจาก Storage
+    """
+    return load_snapshot(client)[1]
+
+
+def load_snapshot(client=None) -> tuple:
+    """One SELECT *: (meta, hashes, extra). No Storage access.
+
+    meta[slug] = Problem with samples-only tests (fast browsing);
+    hashes[slug] = tests_hash; extra[slug] = {"tests": total count,
+    "has_pdf": bool}. Powers boot/refresh/detail/version without downloads.
+    """
     client = client if client is not None else _supabase_client()
     rows = _fetch_all_rows(client)
-    out: Dict[str, grader.Problem] = {}
+    meta: Dict[str, grader.Problem] = {}
+    hashes: Dict[str, str] = {}
+    extra: Dict[str, dict] = {}
     for row in rows:
         slug = str(row.get("slug") or "")
         if not slug:
@@ -205,26 +226,52 @@ def load_metadata_only(client=None) -> Dict[str, grader.Problem]:
             continue
         tests.sort(key=lambda t: t.name)
         prob = _row_to_problem(row, tests)
-        if prob.pid:
-            out[slug] = prob
-    return out
-
-
-def load_tests_hash_map(client=None) -> Dict[str, str]:
-    """อ่าน {slug: tests_hash} จากตาราง problems โดยไม่ดาวน์โหลดไฟล์เทสต์
-
-    ใช้เติม _TESTS_HASH_CACHE ตอน boot ในโหมด supabase ได้ทันที
-    โดยไม่ต้องรอโหลดเทสต์ลับจาก Storage
-    """
-    client = client if client is not None else _supabase_client()
-    rows = _fetch_all_rows(client)
-    out: Dict[str, str] = {}
-    for row in rows:
-        slug = str(row.get("slug") or "")
+        if not prob.pid:
+            continue
+        meta[slug] = prob
         th = str(row.get("tests_hash") or "")
-        if slug and th:
-            out[slug] = th
-    return out
+        if th:
+            hashes[slug] = th
+        total = row.get("tests_count") or 0
+        try:
+            total = int(total)
+        except (TypeError, ValueError):
+            total = 0
+        if total <= 0:
+            hidden_manifest = row.get("hidden_tests") or []
+            total = len(hidden_manifest) + len(prob.samples)
+        extra[slug] = {"tests": total,
+                       "has_pdf": bool(row.get("statement_pdf_path"))}
+    return meta, hashes, extra
+
+
+def fetch_row(slug: str, client=None) -> dict:
+    """Fetch one problems row (metadata + samples_data + manifest).
+
+    Never touches hidden test bytes. Raises ProblemNotFound / ProblemUnavailable.
+    """
+    return _fetch_row(client if client is not None else _supabase_client(), slug)
+
+
+def load_meta(slug: str, client=None) -> tuple:
+    """Metadata-only single problem + its row. No Storage access (fast browsing)."""
+    row = fetch_row(slug, client)
+    samples_data = row.get("samples_data") or []
+    tests: List[grader.TestCase] = []
+    try:
+        for entry in samples_data:
+            tests.append(grader.TestCase(
+                name=str(entry["name"]),
+                input=str(entry.get("input", "")),
+                expected=str(entry.get("expected", "")),
+            ))
+    except (TypeError, KeyError, AttributeError) as e:
+        raise ProblemUnavailable(f"problem {slug!r} has corrupt samples_data: {e}")
+    tests.sort(key=lambda t: t.name)
+    prob = _row_to_problem(row, tests)
+    if not prob.pid:
+        raise ProblemUnavailable(f"problem row for {slug!r} is missing slug")
+    return prob, row
 
 
 def serialize_problem(prob: grader.Problem) -> dict:
@@ -401,17 +448,26 @@ def load_problem_supabase(slug: str, client=None) -> grader.Problem:
                                          expected=str(entry.get("expected", ""))))
         except (TypeError, KeyError, AttributeError) as e:
             raise ProblemUnavailable(f"problem {slug!r} has corrupt sample {entry!r}: {e}")
-    for name in hidden_names:
-        if name in sample_map:
-            continue
-        raw_in = _download(client, bucket, f"{slug}/tests/{name}.in")
-        raw_out = _download(client, bucket, f"{slug}/tests/{name}.out")
-        try:
-            text_in = raw_in.decode("utf-8")
-            text_out = raw_out.decode("utf-8")
-        except UnicodeDecodeError as e:
-            raise ProblemUnavailable(f"problem {slug!r} test {name!r} is not UTF-8: {e}")
-        tests.append(grader.TestCase(name=name, input=text_in, expected=text_out))
+    wanted = [n for n in hidden_names if n not in sample_map]
+    if wanted:
+        # I/O-bound: fetch hidden files concurrently (one HTTPS request per
+        # file). Bounded pool; any single failure aborts the whole load
+        # (fail closed — the caller never sees a partial suite).
+        from concurrent.futures import ThreadPoolExecutor
+
+        def _fetch_one(name: str) -> grader.TestCase:
+            raw_in = _download(client, bucket, f"{slug}/tests/{name}.in")
+            raw_out = _download(client, bucket, f"{slug}/tests/{name}.out")
+            try:
+                return grader.TestCase(name=name,
+                                       input=raw_in.decode("utf-8"),
+                                       expected=raw_out.decode("utf-8"))
+            except UnicodeDecodeError as e:
+                raise ProblemUnavailable(
+                    f"problem {slug!r} test {name!r} is not UTF-8: {e}")
+
+        with ThreadPoolExecutor(max_workers=min(8, len(wanted))) as ex:
+            tests.extend(list(ex.map(_fetch_one, wanted)))
     if not tests:
         raise ProblemUnavailable(f"problem {slug!r} has no tests (refusing to judge)")
     tests.sort(key=lambda t: t.name)
