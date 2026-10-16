@@ -814,3 +814,20 @@ tr.test-row:hover td { background: var(--panel2); }
 }
 .empty-state { text-align: center; padding: 40px 16px; }
 .empty-state p { color: var(--dim); margin: 8px 0 16px; }
+
+/* production pass: sticky submit, statement code copy, meta chips handled in JS */
+.submit-bar {
+  position: sticky; bottom: 0; z-index: 5;
+  background: var(--bg); padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+.md h2 {
+  padding-left: 12px; border-left: 4px solid var(--link);
+  margin-top: 1.6em;
+}
+.code-copy-wrap { position: relative; }
+.code-copy-wrap pre { margin: 0; }
+.code-copy {
+  position: absolute; top: 8px; right: 8px;
+  background: var(--field);
+}

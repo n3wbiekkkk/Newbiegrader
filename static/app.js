@@ -351,7 +351,7 @@ function inlineMd(s) {
 function renderMd(src) {
   const blocks = [];
   src = src.replace(/```(\w*)\n([\s\S]*?)```/g, (_m, _lang, code) => {
-    blocks.push(`<pre><code>${esc(code.replace(/\n$/, ""))}</code></pre>`);
+    blocks.push(`<div class="code-copy-wrap"><button class="icon-btn code-copy" type="button" data-copy title="คัดลอกโค้ดตัวอย่าง" aria-label="คัดลอกโค้ดตัวอย่าง">${icon("copy")}</button><pre><code>${esc(code.replace(/\n$/, ""))}</code></pre></div>`);
     return `\u0000${blocks.length - 1}\u0000`;
   });
   const lines = src.split("\n").map((line) => {
@@ -907,6 +907,10 @@ function taskScoreHtml(pid) {
 }
 
 function renderTasksTable() {
+  try {
+    const f0 = state.filter;
+    localStorage.setItem("ng_filter", JSON.stringify({ q: f0.q, diff: f0.diff, tag: f0.tag, status: f0.status }));
+  } catch (e) { /* ignore */ }
   const list = filteredProblems();
   const hiddenCount = state.problems.filter((p) => p.hidden).length;
   // The total problem count is not published: show how many matched only while a
@@ -1146,6 +1150,7 @@ function fillTaskDetail(p) {
     const tb = $("task-body");
     tb.classList.remove("hidden");
     tb.innerHTML = renderMd(p.statement || "(no statement)");
+    bindCopyButtons(tb);
   }
 }
 
@@ -1225,7 +1230,7 @@ async function copyText(text, btn) {
 function bindCopyButtons(root) {
   root.querySelectorAll("button[data-copy]").forEach((btn) => {
     btn.onclick = () => {
-      const box = btn.closest(".io-block");
+      const box = btn.closest(".io-block,.code-copy-wrap");
       const pre = box && box.querySelector("pre");
       copyText(pre ? pre.textContent : "", btn);
     };
@@ -1306,7 +1311,7 @@ async function refreshYourScore() {
 async function loadTaskSubs() {
   const body = $("task-all-body");
   if (!state.current) return;
-  body.innerHTML = `<span class="dim">กำลังโหลด...</span>`;
+  body.innerHTML = skel(4);
   try {
     const h = await apiGet(`/api/history?limit=50&problem=${encodeURIComponent(state.current)}`);
     if (!h.configured) {
@@ -1361,7 +1366,7 @@ async function loadTaskMine() {
     body.innerHTML = `<span class="dim">login ด้วย Google ก่อนดูของตัวเอง</span>`;
     return;
   }
-  body.innerHTML = `<span class="dim">กำลังโหลด...</span>`;
+  body.innerHTML = skel(4);
   try {
     const h = await apiGetCached(`/api/history?limit=100&problem=${encodeURIComponent(state.current)}&mine=1`, 10000);
     const rows = (h.configured && h.submissions) || [];
@@ -2014,6 +2019,17 @@ function renderResults(d, secs) {
       if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggle(); }
     };
   });
+  const firstFail = Array.from(body.querySelectorAll("tr.test-row")).find((tr) => {
+    const b = tr.querySelector("td:nth-child(3) .badge");
+    return b && !b.classList.contains("b-AC") && !b.classList.contains("b-OK");
+  });
+  if (firstFail) {
+    const det = body.querySelector(`tr.detail-row[data-i="${firstFail.dataset.i}"]`);
+    if (det) {
+      det.classList.remove("hidden");
+      firstFail.setAttribute("aria-expanded", "true");
+    }
+  }
 }
 
 function detailHtml(r) {
@@ -2316,7 +2332,7 @@ function isUnconfiguredMessage(msg) {
 async function renderContests() {
   const body = $("contests-body");
   body.classList.add("dim");
-  body.innerHTML = `<div style="padding:4px">กำลังโหลด...</div>`;
+  body.innerHTML = skel(5);
   try {
     const d = await apiGet("/api/contests");
     state.contests = d.contests || [];
@@ -2536,7 +2552,7 @@ async function renderContestAnnc(d) {
   const box = $("contest-annc");
   const form = $("contest-annc-form");
   box.classList.add("dim");
-  box.textContent = "กำลังโหลด...";
+  box.innerHTML = skel(2);
   form.classList.add("hidden");
   try {
     const a = await apiGet(`/api/contests/${encodeURIComponent(d.id)}/announcements`);
@@ -2646,7 +2662,7 @@ async function renderSettings() {
     body.innerHTML = `<span class="dim">login ด้วย Google ก่อนตั้งค่า</span>`;
     return;
   }
-  body.innerHTML = `<span class="dim">กำลังโหลด...</span>`;
+  body.innerHTML = skel(3);
   try {
     const data = await apiGet("/api/profile");
     const p = data.profile || {};
@@ -2744,7 +2760,7 @@ async function loadAdminContests() {
   const box = $("ct-list");
   if (!box) return;
   box.classList.add("dim");
-  box.innerHTML = "กำลังโหลด...";
+  box.innerHTML = skel(3);
   try {
     const d = await apiGet("/api/contests");
     state.contests = d.contests || [];
@@ -3086,6 +3102,16 @@ async function init() {
   try {
     const saved = localStorage.getItem("ng_sort");
     if (saved) state.filter.sort = saved;
+    const ff = JSON.parse(localStorage.getItem("ng_filter") || "null");
+    if (ff && typeof ff === "object") {
+      for (const k of ["q", "diff", "tag", "status"]) {
+        if (typeof ff[k] === "string") state.filter[k] = ff[k];
+      }
+      if ($("q")) $("q").value = state.filter.q;
+      if ($("f-diff")) $("f-diff").value = state.filter.diff || "";
+      document.querySelectorAll("[data-status]").forEach((b) =>
+        b.classList.toggle("active", (b.dataset.status || "all") === (state.filter.status || "all")));
+    }
   } catch (e) { /* ignore */ }
   $("q").oninput = (e) => { state.filter.q = e.target.value; renderTasksTable(); };
   fd.onchange = (e) => { state.filter.diff = e.target.value; renderTasksTable(); };
