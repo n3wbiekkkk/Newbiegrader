@@ -210,9 +210,12 @@ def md_blocks(md: str):
         elif line.startswith("# "):
             flush()
             blocks.append(("h1", line[2:].strip()))
-        elif line.lstrip().startswith("- "):
+        elif re.match(r"^\s*(?:[-*]|\d+[.)])\s+", line):
             flush()
-            blocks.append(("li", line.lstrip()[2:]))
+            if re.match(r"^\s*\d+[.)]\s+", line):
+                blocks.append(("li", line.strip()))
+            else:
+                blocks.append(("li", re.sub(r"^\s*[-*]\s+", "", line)))
         else:
             buf.append(line)
         i += 1
@@ -274,6 +277,7 @@ PREAMBLE = """\\documentclass[a4paper,12pt]{article}
 \\usepackage{amsmath}
 \\usepackage{longtable}
 \\usepackage{array}
+\\usepackage{needspace}
 \\usepackage{fancyhdr}
 \\geometry{top=2.2cm,bottom=2.2cm,left=2.2cm,right=2.2cm}
 \\definecolor{accent}{HTML}{ACCENT}
@@ -292,7 +296,7 @@ PREAMBLE = """\\documentclass[a4paper,12pt]{article}
   BoldFont=prompt-semibold
 ]{prompt}
 \\renewcommand{\\normalsize}{\\fontsize{12}{20}\\selectfont}
-\\setlength{\\parskip}{8pt}
+\\setlength{\\parskip}{14pt}
 \\setlength{\\parindent}{0pt}
 \\pagestyle{fancy}
 \\fancyhf{}
@@ -307,7 +311,7 @@ PREAMBLE = """\\documentclass[a4paper,12pt]{article}
 def _limits_line(tl: float, mem: int) -> str:
     t = str(tl).rstrip("0").rstrip(".")
     unit = "second" if float(t) == 1 else "seconds"
-    return "{\\small{\\eng{}" + t + " " + unit + ", " + str(mem) + " megabytes}}\n\n"
+    return "{\\fontsize{14.4}{20}\\selectfont{\\eng{}" + t + " " + unit + ", " + str(mem) + " megabytes}}\n\n"
 
 
 # House style uses Thai section headings, matching the reference statement.
@@ -327,13 +331,13 @@ def build(pid: str, title: str, tl: float, mem: int, md: str) -> str:
     parts = [PREAMBLE]
     m = re.match(r"^(.*)\s+\(([^()]*)\)\s*$", title)
     if m:
-        parts.append("{\\fontsize{30}{34} " + tex_inline(m.group(1).strip()) + "}\n")
+        parts.append("{\\fontsize{33}{38} " + tex_inline(m.group(1).strip()) + "}\n")
         parts.append("{\\fontsize{16}{20} " + tex_inline("(" + m.group(2).strip() + ")", sans=True) + "}\n\n")
     else:
-        parts.append("{\\fontsize{30}{34}\\bfseries " + tex_inline(title, sans=True) + "}\n\n")
-    parts.append("\\vspace{6pt}\n")
+        parts.append("{\\fontsize{33}{38} " + tex_inline(title, sans=True) + "}\n\n")
+    parts.append("\\vspace{8pt}\n")
     parts.append(_limits_line(tl, mem))
-    parts.append("\\vspace{6pt}\n")
+    parts.append("\\vspace{3pt}\n")
     story_done = False
     blocks = md_blocks(md)
     # Every fenced sample becomes one ROW of a single table placed where the
@@ -357,7 +361,7 @@ def build(pid: str, title: str, tl: float, mem: int, md: str) -> str:
             continue  # title already in header
         if kind == "h2":
             story_done = True
-            parts.append("\\vspace{8pt}\n{\\fontsize{24}{28}\\bfseries " + tex_inline(H2_TH.get(text.lower(), text)) + "}\n\n\\vspace{2pt}\n")
+            parts.append("\\needspace{4\\baselineskip}\n\\vspace{18pt}\n{\\fontsize{24}{28}\\bfseries " + tex_inline(H2_TH.get(text.lower(), text)) + "}\n\n\\vspace{8pt}\n\\nopagebreak\n")
         elif kind == "code":
             story_done = True
             if not table_done:
@@ -367,11 +371,14 @@ def build(pid: str, title: str, tl: float, mem: int, md: str) -> str:
             story_done = True
             parts.append(tex_inline(text) + "\\\\\n")
         else:
-            for para in text.split("\n"):
-                para = para.strip()
-                if not para:
+            # Markdown paragraph: blank lines separate paragraphs; a single
+            # soft line break inside one joins with a space so the story flows
+            # as solid full-width blocks (as in the reference).
+            for para in re.split(r"\n[ \t]*\n", text):
+                lines = [ln.strip() for ln in para.split("\n") if ln.strip()]
+                if not lines:
                     continue
-                parts.append(tex_inline(para) + "\n\n")
+                parts.append(tex_inline(" ".join(lines)) + "\n\n")
     parts.append("\\end{document}\n")
     return "".join(parts)
 
