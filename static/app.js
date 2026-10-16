@@ -84,7 +84,7 @@ function renderPalette() {
     `${noLabel(p)}<span>${esc(p.title)}</span> <span class="dim">${esc(p.id)}</span></button>`
   ).join("") : `<div class="dim" style="padding:12px 14px">ไม่เจอโจทย์ที่ตรง</div>`;
   $("palette-list").querySelectorAll("[data-pid]").forEach((b) => {
-    b.onclick = () => { closePalette(); location.hash = "#/task/" + encodeURIComponent(b.dataset.pid); };
+    b.onclick = () => { const pid = b.dataset.pid; closePalette(); openTask(pid); };
   });
 }
 
@@ -127,7 +127,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Enter") {
     const items = paletteMatches($("palette-input").value);
     const pick = items[Math.min(paletteIdx, items.length - 1)];
-    if (pick) { closePalette(); location.hash = "#/task/" + encodeURIComponent(pick.id); }
+    if (pick) { const pid = pick.id; closePalette(); openTask(pid); }
   }
 });
 
@@ -688,6 +688,27 @@ function resolveTaskToken(token) {
   }
   return null;
 }
+
+/* Task-to-task jumps replace the history entry instead of pushing: opening
+ * problem B from problem A must not stack, otherwise one Back press lands on
+ * A and users need two presses to reach the list. From anywhere else (list,
+ * palette, history, contest) navigation pushes normally. */
+function openTask(pid) {
+  const url = "#/task/" + encodeURIComponent(pid);
+  if ((location.hash || "").startsWith("#/task/")) location.replace(url);
+  else location.hash = url;
+}
+
+// Cards are plain <a> for keyboard/SEO: intercept only the task→task case.
+document.addEventListener("click", (e) => {
+  const a = e.target && e.target.closest ? e.target.closest('a[href^="#/task/"]') : null;
+  if (!a) return;
+  if (!(location.hash || "").startsWith("#/task/")) return;
+  const m = /^#\/task\/(.*)$/.exec(a.getAttribute("href") || "");
+  if (!m) return;
+  e.preventDefault();
+  openTask(decodeURIComponent(m[1]));
+});
 
 async function openTaskByToken(token) {
   const pid = resolveTaskToken(token);
@@ -2163,7 +2184,7 @@ async function viewSubmission(sid) {
   try {
     const r = await apiGet(`/api/history/${encodeURIComponent(sid)}`);
     if (r.problem !== state.current) {
-      location.hash = "#/task/" + encodeURIComponent(r.problem);
+      openTask(r.problem);
       await selectProblem(r.problem);
     }
     show("task");
@@ -2454,7 +2475,7 @@ function renderContestProblems(d) {
   box.querySelectorAll("button[data-enter]").forEach((b) => {
     b.onclick = () => {
       enterContestFrom(d);
-      location.hash = "#/task/" + encodeURIComponent(b.dataset.enter);
+      openTask(b.dataset.enter);
     };
   });
 }
