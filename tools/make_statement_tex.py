@@ -325,8 +325,15 @@ def build(pid: str, title: str, tl: float, mem: int, md: str) -> str:
     blocks = [b for b in md.split("\n") if b.strip()]
     _ = blocks
     parts = [PREAMBLE]
-    parts.append("{\\fontsize{26}{30} " + tex_inline(title, sans=True) + "}\n\n")
+    m = re.match(r"^(.*)\s+\(([^()]*)\)\s*$", title)
+    if m:
+        parts.append("{\\fontsize{30}{34} " + tex_inline(m.group(1).strip()) + "}\n")
+        parts.append("{\\fontsize{20}{24} " + tex_inline("(" + m.group(2).strip() + ")", sans=True) + "}\n\n")
+    else:
+        parts.append("{\\fontsize{30}{34} " + tex_inline(title, sans=True) + "}\n\n")
+    parts.append("\\vspace{6pt}\n")
     parts.append(_limits_line(tl, mem))
+    parts.append("\\vspace{6pt}\n")
     story_done = False
     blocks = md_blocks(md)
     # Every fenced sample becomes one ROW of a single table placed where the
@@ -350,7 +357,7 @@ def build(pid: str, title: str, tl: float, mem: int, md: str) -> str:
             continue  # title already in header
         if kind == "h2":
             story_done = True
-            parts.append("{\\fontsize{20}{24} " + tex_inline(H2_TH.get(text.lower(), text)) + "}\n\n")
+            parts.append("\\vspace{8pt}\n{\\fontsize{20}{24} " + tex_inline(H2_TH.get(text.lower(), text)) + "}\n\n\\vspace{2pt}\n")
         elif kind == "code":
             story_done = True
             if not table_done:
