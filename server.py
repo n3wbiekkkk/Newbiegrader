@@ -222,6 +222,16 @@ async def _lifespan(_app: "FastAPI"):
 
 app = FastAPI(title="Newbiegrader API", version="2.0.0", lifespan=_lifespan)
 app.add_middleware(GZipMiddleware, minimum_size=500)
+@app.exception_handler(Exception)
+async def _unexpected_exception_handler(request: Request, exc: Exception):
+    """Convert unexpected exceptions to a generic JSON 500 instead of FastAPI's
+    default traceback HTML, preventing internal detail leakage to clients."""
+    print(f"[web] unhandled exception on {request.method} {request.url.path}: {exc!r}",
+          file=sys.stderr)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "internal server error"},
+    )
 
 
 @app.middleware("http")
@@ -833,7 +843,7 @@ async def _create_job(row: dict, track_active: bool = True) -> dict:
     """Reserve capacity and per-account ownership atomically before any yield."""
     jid = str(uuid.uuid4())
     row = {**row, "id": jid, "status": "queued", "result": None, "error": "",
-           "created_at": _iso_now()}
+                                if code in (409, 429, 503) else None)
     if QUEUE_MODE == "database":
         quota = RUN_QUOTA if row.get("kind") == "playground" else SUBMIT_QUOTA
         response = await _queue_rpc("admit", p_job=row, p_queue_max=QUEUE_MAX,

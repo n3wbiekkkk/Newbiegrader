@@ -117,6 +117,78 @@ class QueueAdmission(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response["result"]["score"], 100)
 
     async def test_poll_refresh_cannot_replace_active_attempt_ownership(self):
+    async def test_create_job_503_when_database_unavailable_has_retry_after(self):
+        with patch.object(server, "_sb", None), patch.object(server, "QUEUE_MODE", "database"):
+            with self.assertRaises(server.HTTPException) as raised:
+                await server._create_job(job())
+        self.assertEqual(raised.exception.status_code, 503)
+        self.assertIn("Retry-After", raised.exception.headers)
+        self.assertTrue(raised.exception.headers["Retry-After"].isdigit())
+
+    async def test_create_job_503_when_database_unavailable_has_retry_after(self):
+        with patch.object(server, "_sb", None), patch.object(server, "QUEUE_MODE", "database"):
+            with self.assertRaises(server.HTTPException) as raised:
+                await server._create_job(job())
+        self.assertEqual(raised.exception.status_code, 503)
+        self.assertIn("Retry-After", raised.exception.headers)
+        self.assertTrue(raised.exception.headers["Retry-After"].isdigit())
+
+    async def test_create_job_503_when_database_unavailable_has_retry_after(self):
+        with patch.object(server, "_sb", None), patch.object(server, "QUEUE_MODE", "database"):
+            with self.assertRaises(server.HTTPException) as raised:
+                await server._create_job(job())
+        self.assertEqual(raised.exception.status_code, 503)
+        self.assertIn("Retry-After", raised.exception.headers)
+        self.assertTrue(raised.exception.headers["Retry-After"].isdigit())
+
+    async def test_create_job_503_when_database_unavailable_has_retry_after(self):
+        with patch.object(server, "_sb", None), patch.object(server, "QUEUE_MODE", "database"):
+            with self.assertRaises(server.HTTPException) as raised:
+                await server._create_job(job())
+        self.assertEqual(raised.exception.status_code, 503)
+        self.assertIn("Retry-After", raised.exception.headers)
+        self.assertTrue(raised.exception.headers["Retry-After"].isdigit())
+
+    async def test_create_job_503_when_database_unavailable_has_retry_after(self):
+        with patch.object(server, "_sb", None), patch.object(server, "QUEUE_MODE", "database"):
+            with self.assertRaises(server.HTTPException) as raised:
+                await server._create_job(job())
+        self.assertEqual(raised.exception.status_code, 503)
+        self.assertIn("Retry-After", raised.exception.headers)
+        self.assertTrue(raised.exception.headers["Retry-After"].isdigit())
+
+    async def test_create_job_503_when_database_unavailable_has_retry_after(self):
+        with patch.object(server, "_sb", None), patch.object(server, "QUEUE_MODE", "database"):
+            with self.assertRaises(server.HTTPException) as raised:
+                await server._create_job(job())
+        self.assertEqual(raised.exception.status_code, 503)
+        self.assertIn("Retry-After", raised.exception.headers)
+        self.assertTrue(raised.exception.headers["Retry-After"].isdigit())
+
+    async def test_create_job_503_when_database_unavailable_has_retry_after(self):
+        with patch.object(server, "_sb", None), patch.object(server, "QUEUE_MODE", "database"):
+            with self.assertRaises(server.HTTPException) as raised:
+                await server._create_job(job())
+        self.assertEqual(raised.exception.status_code, 503)
+        self.assertIn("Retry-After", raised.exception.headers)
+        self.assertTrue(raised.exception.headers["Retry-After"].isdigit())
+
+    async def test_create_job_503_when_database_unavailable_has_retry_after(self):
+        with patch.object(server, "_sb", None), patch.object(server, "QUEUE_MODE", "database"):
+            with self.assertRaises(server.HTTPException) as raised:
+                await server._create_job(job())
+        self.assertEqual(raised.exception.status_code, 503)
+        self.assertIn("Retry-After", raised.exception.headers)
+        self.assertTrue(raised.exception.headers["Retry-After"].isdigit())
+
+    async def test_create_job_503_when_database_unavailable_has_retry_after(self):
+        with patch.object(server, "_sb", None), patch.object(server, "QUEUE_MODE", "database"):
+            with self.assertRaises(server.HTTPException) as raised:
+                await server._create_job(job())
+        self.assertEqual(raised.exception.status_code, 503)
+        self.assertIn("Retry-After", raised.exception.headers)
+        self.assertTrue(raised.exception.headers["Retry-After"].isdigit())
+
         await server._create_job(job())
         first = self.fake.rpc("judge_queue_claim", {"p_worker": "old", "p_lease_seconds": 30}).execute().data
         entered, release = asyncio.Event(), asyncio.Event()

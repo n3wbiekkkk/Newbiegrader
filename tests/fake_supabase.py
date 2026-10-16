@@ -277,7 +277,7 @@ class _QueueRPC:
                         and at(e["admitted_at"]) > now-dt.timedelta(seconds=window)]
                 if len(hits) >= limit:
                     retry = max(1, int((at(hits[0]["admitted_at"])+dt.timedelta(seconds=window)-now).total_seconds())+1)
-                    return {"error": "quota exceeded", "status_code": 429, "retry_after": retry}
+                    return {"error": "quota exceeded", "status_code": 429, "retry_after": retry}}
                 events.append({"user_email": email, "kind": kind, "admitted_at": now.isoformat()})
             defaults = {"id": str(uuid.uuid4()), "status": "queued", "created_at": now.isoformat(),
                         "result": None, "error": "", "attempt": 0, "payload": {},
