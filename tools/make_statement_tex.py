@@ -330,7 +330,7 @@ def build(pid: str, title: str, tl: float, mem: int, md: str) -> str:
         parts.append("{\\fontsize{30}{34} " + tex_inline(m.group(1).strip()) + "}\n")
         parts.append("{\\fontsize{16}{20} " + tex_inline("(" + m.group(2).strip() + ")", sans=True) + "}\n\n")
     else:
-        parts.append("{\\fontsize{30}{34} " + tex_inline(title, sans=True) + "}\n\n")
+        parts.append("{\\fontsize{30}{34}\\bfseries " + tex_inline(title, sans=True) + "}\n\n")
     parts.append("\\vspace{6pt}\n")
     parts.append(_limits_line(tl, mem))
     parts.append("\\vspace{6pt}\n")
@@ -357,7 +357,7 @@ def build(pid: str, title: str, tl: float, mem: int, md: str) -> str:
             continue  # title already in header
         if kind == "h2":
             story_done = True
-            parts.append("\\vspace{8pt}\n{\\fontsize{24}{28} " + tex_inline(H2_TH.get(text.lower(), text)) + "}\n\n\\vspace{2pt}\n")
+            parts.append("\\vspace{8pt}\n{\\fontsize{24}{28}\\bfseries " + tex_inline(H2_TH.get(text.lower(), text)) + "}\n\n\\vspace{2pt}\n")
         elif kind == "code":
             story_done = True
             if not table_done:
