@@ -714,26 +714,62 @@ function resolveTaskToken(token) {
   return null;
 }
 
-/* Task-to-task jumps replace the history entry instead of pushing: opening
- * problem B from problem A must not stack, otherwise one Back press lands on
- * A and users need two presses to reach the list. From anywhere else (list,
- * palette, history, contest) navigation pushes normally. */
-function openTask(pid) {
-  const url = "#/task/" + encodeURIComponent(pid);
-  if ((location.hash || "").startsWith("#/task/")) location.replace(url);
+/* ---------------- history hygiene ----------------
+ * The task list is the hub users bounce back to, so a link pointing at the
+ * route sitting directly behind the current entry must *go back* instead of
+ * pushing a second copy — otherwise the problem that was open before stays in
+ * the stack and one Back press lands on it. The shortcut is only taken when we
+ * know what is behind us: either we pushed the entry ourselves, or the entry
+ * recorded its neighbour in history.state (survives reloads and Forward). */
+let _currentRoute = null;     // route of the entry we are on
+let _prevEntryRoute = null;   // route of the entry directly behind it, or null
+let _pendingNav = null;       // {kind, to} for a navigation we started
+
+function _nav(url, kind) {
+  if (!url || url === (location.hash || "#/")) return;
+  _pendingNav = { kind: kind, to: url };
+  if (kind === "replace") location.replace(url);
   else location.hash = url;
 }
 
-// Cards are plain <a> for keyboard/SEO: intercept only the task→task case.
+function _syncHistoryEntry(kind) {
+  if (kind === "push") {
+    _prevEntryRoute = _currentRoute;      // we just left it: it is right behind us
+  } else if (kind !== "replace") {
+    _prevEntryRoute = (history.state && history.state.prev) || null;   // Back/Forward
+  }
+  try {
+    history.replaceState({ prev: _prevEntryRoute }, "", location.href);
+  } catch (e) { /* history disabled: navigation still works, only the hint is lost */ }
+}
+
+/* Task-to-task jumps replace the history entry instead of pushing: opening
+ * problem B from problem A must not stack. From anywhere else (list, palette,
+ * history, contest) navigation pushes normally. */
+function openTask(pid) {
+  const url = "#/task/" + encodeURIComponent(pid);
+  _nav(url, (location.hash || "").startsWith("#/task/") ? "replace" : "push");
+}
+
+// Cards are plain <a> for keyboard/SEO: intercept only the two cases that need
+// custom history handling and let every other hash link push on its own.
 document.addEventListener("click", (e) => {
-  if (e.metaKey || e.ctrlKey || e.shiftKey || (e.button !== undefined && e.button !== 0)) return;
-  const a = e.target && e.target.closest ? e.target.closest('a[href^="#/task/"]') : null;
+  if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.shiftKey ||
+      (e.button !== undefined && e.button !== 0)) return;
+  const a = e.target && e.target.closest ? e.target.closest('a[href^="#/"]') : null;
   if (!a) return;
-  if (!(location.hash || "").startsWith("#/task/")) return;
-  const m = /^#\/task\/(.*)$/.exec(a.getAttribute("href") || "");
-  if (!m) return;
-  e.preventDefault();
-  openTask(decodeURIComponent(m[1]));
+  const target = a.getAttribute("href") || "";
+  if (_prevEntryRoute && target === _prevEntryRoute) {   // retracing: reuse the entry
+    e.preventDefault();
+    history.back();
+    return;
+  }
+  if (target.startsWith("#/task/") && (location.hash || "").startsWith("#/task/")) {
+    e.preventDefault();
+    openTask(decodeURIComponent(target.slice("#/task/".length)));
+    return;
+  }
+  if (target !== (location.hash || "#/")) _pendingNav = { kind: "push", to: target };
 });
 
 async function openTaskByToken(token) {
@@ -743,7 +779,7 @@ async function openTaskByToken(token) {
     const d = await apiGet(`/api/problems/${encodeURIComponent(token)}`);
     if (d && d.id) { show("task"); selectProblem(d.id); return; }
   } catch (e) { /* fall through */ }
-  location.hash = "#/tasks";
+  _nav("#/tasks", "push");
 }
 
 function currentRouteRender() {
@@ -768,7 +804,13 @@ function currentRouteRender() {
 }
 
 function router() {
+  const pend = _pendingNav;
+  _pendingNav = null;
   const h = location.hash || "#/";
+  // Record where this entry sits before rendering: a navigation we started is
+  // trustworthy, anything else is a Back/Forward traversal.
+  _syncHistoryEntry(pend && pend.to === h ? pend.kind : null);
+  _currentRoute = h;
   if (!h.startsWith("#/contests/")) stopContestTicker();
   if (h.startsWith("#/task/")) {
     openTaskByToken(decodeURIComponent(h.slice("#/task/".length)));
