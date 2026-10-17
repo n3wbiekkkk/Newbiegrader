@@ -4,6 +4,14 @@ Status: remote path implemented and feature-flagged; local files remain the
 default and are never deleted. Cutover is one environment variable after a
 verified import.
 
+Neither `problems/` nor `examples/` is versioned in this repository: the source
+of truth is Supabase and the repo is public, so test fixtures and reference
+solutions must not ship here. Both directories stay on disk for local work
+(`GRADER_PROBLEM_SOURCE=local`) and are listed in `.gitignore`. CI has no
+problem set, so problem-dependent test modules and `tools/validate_problem.py`
+skip themselves when `problems/` is absent; run the full suite from a checkout
+that has `problems/`.
+
 ## What moved where
 
 | Local artifact | Supabase location | Visibility |
@@ -13,7 +21,7 @@ verified import.
 | `statement.pdf` | Storage `judge-assets/<slug>/statement.pdf` (row keeps `statement_pdf_path`) | private bucket; streamed by the API with server credentials |
 | `tests/<name>.in/.out` where `<name>` ∈ `config.samples` | `problems.samples_data` (`[{name,input,expected}]`) | public samples only, served via `/api/problems/{pid}/sample/{name}` |
 | `tests/<name>.in/.out` where `<name>` ∉ `samples` (1001+) | Storage `judge-assets/<slug>/tests/<name>.in|.out`; row keeps a **manifest only** (`hidden_tests: [{name,sha256,size_in,size_out}]` — never contents) | private; downloaded server-side with the service-role key |
-| `examples/<id>_ref.*` | **not migrated** — remain local tooling for test generation/validation | private to the repo |
+| `examples/<id>_ref.*` | **not migrated** — local tooling for test generation/validation; not versioned (kept on disk only) | never public |
 
 Integrity: `problems.tests_hash` stores `grader.tests_hash(...)`. The loader
 recomputes the hash after downloading and **refuses to judge on mismatch**

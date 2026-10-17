@@ -89,7 +89,7 @@ Plain HTML, CSS and JavaScript. No bundler, no transpiler and no framework.
 | `server.py` | FastAPI application: authentication, job queue, quota and visibility policy, result redaction |
 | `judge_runner.py` · `worker.py` | Supervised bounded execution and the dedicated worker role |
 | `static/` | The web interface |
-| `problems/` | One self-contained package per problem: configuration, statement and tests |
+| `problems/` | Local working copy of the problem set (configuration, statement, tests). Not versioned here — the source of truth is Supabase |
 | `supabase/` | Database schema with append-only, re-runnable migrations |
 
 Host capacity is read from the container at startup, and worker counts, memory ceilings, queue bounds and timeouts are derived from it automatically.
