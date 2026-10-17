@@ -3,8 +3,8 @@
 using LaTeX (tectonic + TH Sarabun New).
 
 House style (matches the TOI reference statements, e.g. monsters.TH.pdf):
-- header: 26pt bold Thai title with a smaller English name, then a 12pt limits line
-  ("1 second, 256 megabytes"), no problem-id line, no rule
+- header: centered website icon + newbiegrader wordmark and a thin rule,
+  followed by a 26pt Thai title, smaller English name and 12pt limits line
 - story paragraphs in full at 17pt — do NOT shorten
 - math stays at 12pt (as in the reference: $n$ renders smaller than
   the surrounding 17pt Thai), Latin runs in Latin Modern Roman,
@@ -50,6 +50,7 @@ ROOT = Path(__file__).parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 FONTDIR = (Path(__file__).parent / "fonts").resolve()
+BRAND_LOGO = (ROOT / "static" / "logo-icon.png").resolve()
 
 ACCENT = "00695C"  # deep teal
 
@@ -301,6 +302,7 @@ def render_samples_table(samples: list, multipage: bool = True) -> str:
 
 PREAMBLE = """\\documentclass[a4paper,12pt]{article}
 \\usepackage{fontspec}
+\\usepackage{graphicx}
 \\usepackage{xltxtra}
 \\usepackage{geometry}
 \\usepackage[table]{xcolor}
@@ -311,6 +313,8 @@ PREAMBLE = """\\documentclass[a4paper,12pt]{article}
 \\usepackage{fancyhdr}
 \\geometry{top=2.2cm,bottom=2.2cm,left=2.2cm,right=2.2cm}
 \\definecolor{accent}{HTML}{ACCENT}
+\\definecolor{brandink}{HTML}{232522}
+\\definecolor{brandmuted}{HTML}{656961}
 \\setmainfont[
   Path=FONTPATH,
   Extension=.ttf,
@@ -327,6 +331,12 @@ PREAMBLE = """\\documentclass[a4paper,12pt]{article}
   ItalicFont=lmroman-italic,
   BoldItalicFont=lmroman-bolditalic
 ]{lmroman}
+\\newfontfamily\\wordmarkfont[
+  Path=FONTPATH,
+  Extension=.ttf,
+  UprightFont=anuphan-regular,
+  BoldFont=anuphan-semibold
+]{anuphan-regular}
 \\setmonofont[
   Path=FONTPATH,
   Extension=.ttf,
@@ -360,6 +370,18 @@ def _limits_line(tl: float, mem: int) -> str:
     return "{\\fontsize{12}{16}\\selectfont{\\eng{}" + t + " " + unit + ", " + str(mem) + " megabytes}}\n\n"
 
 
+def brand_header() -> str:
+    """Match the light website wordmark above the problem title, once per PDF."""
+    return (
+        "{\\centering\n"
+        "\\raisebox{-5pt}{\\includegraphics[height=24pt]{\\detokenize{" + str(BRAND_LOGO) + "}}}"
+        "\\hspace{7pt}"
+        "{\\wordmarkfont\\fontsize{22}{28}\\selectfont\\color{brandink}\\bfseries "
+        "newbie{\\mdseries\\color{brandmuted}grader}}\\par}\n"
+        "\\vspace{10pt}\\hrule height 0.4pt\\vspace{16pt}\n"
+    )
+
+
 # House style uses Thai section headings, matching the reference statement.
 H2_TH = {
     "input": "ข้อมูลนำเข้า",
@@ -372,7 +394,7 @@ H2_TH = {
 
 
 def build(pid: str, title: str, tl: float, mem: int, md: str) -> str:
-    parts = [PREAMBLE]
+    parts = [PREAMBLE, brand_header()]
     # One big bold title line, Thai + English alike (Latin runs fall
     # through to Latin Modern via tex_inline, as in the reference).
     match = re.fullmatch(r"(.+?)\s+(\([^()]+\))", title)

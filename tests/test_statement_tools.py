@@ -16,6 +16,18 @@ from tools.validate_problem import parse_samples
 
 
 class StatementLayout(unittest.TestCase):
+    def test_website_brand_is_centered_above_the_title_without_a_trailing_dot(self):
+        tex = renderer.build("synthetic", "เรื่อง (Example)", 1, 256, "เนื้อเรื่อง")
+        header = renderer.brand_header()
+        self.assertEqual(tex.count(header), 1)
+        self.assertIn("\\centering", header)
+        self.assertIn("logo-icon.png", header)
+        self.assertIn("\\wordmarkfont", header)
+        self.assertIn("newbie{\\mdseries\\color{brandmuted}grader}", header)
+        self.assertNotIn("grader.", header)
+        self.assertIn("\\hrule height 0.4pt", header)
+        self.assertLess(tex.index(header), tex.index("\\fontsize{26}{31}"))
+
     def test_compact_bilingual_header_and_right_page_number(self):
         # GitHub checks out this repo under a directory named Newbiegrader.
         # Its font path is legitimate source text, not a rendered footer label.

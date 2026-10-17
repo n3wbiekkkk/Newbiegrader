@@ -104,8 +104,12 @@ pdftoppm -png -r 100 problems/new_problem/statement.pdf tmp/pdfs/new_problem/pag
 เนื้อไทย 17.3pt, หัวข้อ 22pt, ตาราง input/output สองคอลัมน์ไม่มีแถบสี
 และเลขหน้าล่างขวา ไม่บังคับจำนวนหน้าให้เท่ากัน
 
+หัวหน้าแรกใช้ไอคอน `static/logo-icon.png` คู่กับชื่อ `newbiegrader` ไม่มีจุดท้าย
+ใช้ Anuphan เช่นหัวเว็บ วางกึ่งกลางเหนือชื่อโจทย์ พร้อมเส้นคั่นบาง
+ทุกข้อใช้ `brand_header()` จาก renderer กลาง ห้ามแทรกโลโก้ซ้ำใน statement.md
+
 เครื่องมือหยุดก่อนเรียก tectonic หาก sample ไม่ตรง สร้าง `statement.build.json`
-คู่กับ PDF เก็บ hash ของ statement/metadata ที่ใช้ render, renderer, ฟอนต์ และ PDF
+คู่กับ PDF เก็บ hash ของ statement/metadata ที่ใช้ render, renderer, ฟอนต์, โลโก้ และ PDF
 เมื่อแก้แหล่งข้อมูลแล้วไม่ rebuild ตัวตรวจจะ FAIL ว่า PDF เก่า preview มี build record
 ของตัวเองและไม่เขียนทับไฟล์ติดตั้ง hash นี้ตรวจความเก่า ไม่แทนการตรวจภาพหรือยืนยันว่า
 PDF ถูกต้องเมื่อผู้เขียนจงใจปลอม record

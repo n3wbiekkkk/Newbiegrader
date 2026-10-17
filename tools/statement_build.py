@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 
 TOOLS = Path(__file__).resolve().parent
+BRAND_ASSETS = (TOOLS.parent / "static" / "logo-icon.png",)
 
 
 def digest(data: bytes) -> str:
@@ -19,6 +20,8 @@ def build_record(cfg: dict, md: str, pdf: bytes) -> dict:
     fonts = [p for p in (TOOLS / "fonts").iterdir() if p.suffix.lower() in (".ttf", ".otf")]
     for font in sorted(fonts):
         layout += font.name.encode() + bytes.fromhex(digest(font.read_bytes()))
+    for asset in BRAND_ASSETS:
+        layout += asset.name.encode() + bytes.fromhex(digest(asset.read_bytes()))
     header = {k: cfg.get(k) for k in ("title", "time_limit", "memory_limit")}
     source = json.dumps(header, ensure_ascii=False, sort_keys=True).encode() + b"\x00" + md.encode()
     return {"version": 1, "source_sha256": digest(source),

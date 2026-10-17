@@ -128,4 +128,4 @@ This program is free software, released under the [GNU Affero General Public Lic
 
 Under AGPL §13, running a modified version for users over a network requires offering them the Corresponding Source. For this deployment, the source is available at <https://github.com/n3wbiekkkk/Newbiegrader>.
 
-Statement-PDF typefaces (Sarabun and Prompt) are bundled under SIL OFL 1.1. No warranty is provided and no trademark rights are granted.
+Statement-PDF typefaces (Sarabun, Prompt and Anuphan) are bundled under SIL OFL 1.1. No warranty is provided and no trademark rights are granted.

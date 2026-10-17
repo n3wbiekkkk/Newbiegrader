@@ -233,6 +233,10 @@ class ProblemAuthoring(unittest.TestCase):
         self.assertTrue(check_build(self.pdir, dict(cfg, time_limit=2), md, required=True))
         with patch("tools.statement_build.build_record", return_value={"layout_sha256": "changed"}):
             self.assertTrue(check_build(self.pdir, cfg, md, required=True))
+        logo = self.root / "synthetic-logo.png"
+        logo.write_bytes(b"synthetic changed logo")
+        with patch("tools.statement_build.BRAND_ASSETS", (logo,)):
+            self.assertTrue(check_build(self.pdir, cfg, md, required=True))
         (self.pdir / "statement.pdf").write_bytes(b"%PDF-modified")
         self.assertTrue(check_build(self.pdir, cfg, md, required=True))
 
