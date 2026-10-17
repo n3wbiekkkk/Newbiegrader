@@ -7,14 +7,17 @@ Usage:
 Checks, per problem:
   1. config.json  (title / limits / checker / difficulty / tags / samples).
      `samples` is a list of test-name strings (canonical); an int (first N tests
-     public) is accepted too since grader.load_problem supports it.
+     public) is accepted too since grader.load_problem supports it. Policy: at
+     least MIN_SAMPLES (3) public samples per problem.
   2. statement.md (non-empty) and statement.pdf (>1KB; missing = warning)
   3. tests/        count >= 10, samples numbered 01.. (small) + hidden tests
                    numbered contiguously from 1001 up, no orphans,
                    UTF-8, no CR, .in non-empty
-  4. statement samples: every fenced `input:` / `output:` pair should match a
-     shipped test under token comparison; when it does not, the statement
-     example cannot be a public sample -> warning (not a failure)
+  4. statement samples: config.samples and statement.md must agree one-for-one
+     (same count; each listed sample has a matching fenced `input:`/`output:`
+     block) -> failure. An individual example that matches no shipped test,
+     only matches after whitespace normalization, or is oversized (looks like a
+     stress test, > MAX_SAMPLE_TOKENS) is a warning.
   5. reference solution examples/<id>_ref.{py,cpp}: must compile and AC all tests
 
 Exit code 0 only when there are no failures (warnings do not fail).
@@ -48,6 +51,10 @@ VALID_CHECKERS = {"token", "exact", "float", "decimal2"}
 VALID_DIFFICULTIES = {"easy", "medium", "hard"}
 PDF_MIN_BYTES = 1024
 MIN_TESTS = 10
+MIN_SAMPLES = 3
+# Sample examples must stay short and readable: a public example is a
+# demonstration, not a stress test. Inputs past this many tokens are flagged.
+MAX_SAMPLE_TOKENS = 40
 
 # redirect_stdout swaps the *global* sys.stdout, so it must be serialized when
 # problems are validated from a thread pool.
@@ -193,6 +200,7 @@ def validate_problem(pid: str) -> dict:
     # ---- 3. tests ------------------------------------------------------
     tdir = pdir / "tests"
     paired: list[grader.TestCase] = []
+    declared_samples: list[str] | None = None
     if not tdir.is_dir():
         fail("tests/ directory is missing")
     else:
@@ -256,6 +264,9 @@ def validate_problem(pid: str) -> dict:
             elif isinstance(samples, int):
                 if not (0 <= samples <= len(stems)):
                     fail(f"config.samples={samples} out of range 0..{len(stems)}")
+                elif samples < MIN_SAMPLES:
+                    fail(f"config.samples={samples} < MIN_SAMPLES={MIN_SAMPLES}: every "
+                         "problem must ship at least 3 public examples")
             elif isinstance(samples, list):
                 valid_names = set(stems)
                 seen: set[str] = set()
@@ -268,6 +279,10 @@ def validate_problem(pid: str) -> dict:
                         fail(f"config.samples lists test '{s}' more than once")
                     else:
                         seen.add(s)
+                declared_samples = [s for s in samples if isinstance(s, str)]
+                if len(declared_samples) < MIN_SAMPLES:
+                    fail(f"config.samples lists {len(declared_samples)} sample(s); policy "
+                         f"requires at least {MIN_SAMPLES} (3 public examples)")
             else:
                 fail("config.samples must be a list of test-name strings or an int "
                      f"(got {type(samples).__name__})")
@@ -337,6 +352,7 @@ def validate_problem(pid: str) -> dict:
         if not samples:
             warn("statement.md has no fenced `input:`/`output:` sample block")
         test_pairs = [(t.input, t.expected, t.name) for t in paired]
+        matched: set[str] = set()
         for idx, pair in enumerate(samples, 1):
             if pair[1] is None:
                 warn(f"sample #{idx}: `input:` block has no `output:` label, skipped")
@@ -345,15 +361,34 @@ def validate_problem(pid: str) -> dict:
             hit = next((name for ti, to, name in test_pairs
                         if tokens(ti) == tokens(s_in) and tokens(to) == tokens(s_out)), None)
             if hit is not None:
+                matched.add(hit)
                 ti, to, _ = next(x for x in test_pairs if x[2] == hit)
                 if canon(ti) != canon(s_in) or canon(to) != canon(s_out):
                     warn(f"sample #{idx} matches test {hit} only after whitespace "
                          "normalization (statement layout differs from tests/*.in|out)")
+                if len(tokens(ti)) > MAX_SAMPLE_TOKENS:
+                    warn(f"sample #{idx} (test {hit}) has {len(tokens(ti))} tokens "
+                         f"> {MAX_SAMPLE_TOKENS} — examples must be short, not stress "
+                         "tests; promote a smaller hidden test instead")
                 continue
             # not among shipped tests: the statement example cannot be a public
             # sample (config.samples could never reference it) -> warning only.
             warn(f"sample #{idx}: statement example not shipped as a test "
                  f"-> cannot be public sample ({pid})")
+
+        # Policy: config.samples and the statement must agree one-for-one — each
+        # public sample needs exactly one fenced example, and the statement must
+        # not show examples the problem does not ship. Enforced (fail), unlike
+        # the per-example checks above which only warn.
+        if paired and declared_samples is not None:
+            if len(samples) != len(declared_samples):
+                fail(f"statement.md has {len(samples)} sample block(s) but "
+                     f"config.samples lists {len(declared_samples)} "
+                     f"({', '.join(declared_samples)})")
+            missing = [s for s in declared_samples if s not in matched]
+            if missing:
+                fail(f"config.samples {missing} have no matching input/output "
+                     "example in statement.md (must match tests/*.in|out)")
 
     if tmpdir is not None:
         tmpdir.cleanup()

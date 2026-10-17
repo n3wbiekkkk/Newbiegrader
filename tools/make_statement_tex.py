@@ -258,6 +258,8 @@ def render_samples_table(samples: list) -> str:
     plus one row per sample. longtable lets tall samples break across pages
     with the header repeated. Cells are small monospace; source lines are
     joined with LaTeX line breaks (sample I/O is ASCII-only by convention).
+    The cell font auto-shrinks when a sample line is wider than the column
+    (e.g. a 50-column output grid) so long lines never overflow the page.
     """
 
     def cell(body: str) -> str:
@@ -266,6 +268,16 @@ def render_samples_table(samples: list) -> str:
         lines = body.rstrip("\n").split("\n")
         return "\\newline\n".join(tex_verbatim(l) if l.strip() else "~"
                                   for l in lines) or "~"
+
+    # Widest sample line drives the monospace size: ~28 chars fit at 14pt in a
+    # 0.44\linewidth column, so shrink proportionally beyond that (min 6pt).
+    maxlen = 0
+    for inp, outp in samples:
+        for ln in (inp + "\n" + outp).split("\n"):
+            maxlen = max(maxlen, len(ln))
+    size = 14 if maxlen <= 28 else max(6, (28 * 14) // maxlen)
+    lineskip = round(size * 17 / 14, 1)
+    font = "{\\fontsize{%d}{%s}\\selectfont\\ttfamily " % (size, lineskip)
 
     head = ("\\rowcolor[gray]{0.94}\n"
             "{\\centering\\fontsize{17.3}{21} ตัวอย่างข้อมูลนำเข้า\\par} &\n"
@@ -277,8 +289,8 @@ def render_samples_table(samples: list) -> str:
              "\\hline\n", head,
              "\\endfirsthead\n", "\\hline\n", head, "\\endhead\n"]
     for inp, outp in samples:
-        parts.append("{\\fontsize{14}{17}\\selectfont\\ttfamily " + cell(inp) + "} &\n"
-                     "{\\fontsize{14}{17}\\selectfont\\ttfamily " + cell(outp) + "} \\\\\n"
+        parts.append(font + cell(inp) + "} &\n"
+                     + font + cell(outp) + "} \\\\\n"
                      "\\hline\n")
     parts.append("\\end{longtable}}\n\n\\medskip\n")
     return "".join(parts)
@@ -385,7 +397,7 @@ def build(pid: str, title: str, tl: float, mem: int, md: str) -> str:
             continue  # title already in header
         if kind == "h2":
             story_done = True
-            parts.append("\\needspace{4\\baselineskip}\n\\vspace{28pt}\n{\\fontsize{25}{30}\\bfseries " + tex_inline(H2_TH.get(text.lower(), text)) + "}\n\n\\vspace{14pt}\n\\nopagebreak\n")
+            parts.append("\\vspace{28pt}\n{\\fontsize{25}{30}\\bfseries " + tex_inline(H2_TH.get(text.lower(), text)) + "}\n\n\\vspace{14pt}\n\\nopagebreak\n")
         elif kind == "code":
             story_done = True
             if not table_done:
