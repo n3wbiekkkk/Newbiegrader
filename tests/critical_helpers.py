@@ -7,12 +7,8 @@ import grader
 
 
 def synthetic_problem():
-    return grader.Problem(
-        "security_canary", "Synthetic security canary", 3.0, 128,
-        "token", 1e-6, "Synthetic fixture only",
-        [grader.TestCase("01", "public-input\n", "hello\n"),
-         grader.TestCase("1001", "synthetic-hidden-input\n", "hello\n")],
-        samples=["01"])
+    with patch.object(grader, "PROBLEMS_DIR", Path(__file__).parent / "fixtures"):
+        return grader.load_problem("security_canary")
 
 
 def test_server():

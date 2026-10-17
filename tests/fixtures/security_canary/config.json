@@ -1,0 +1,10 @@
+{
+  "title": "Synthetic security canary",
+  "time_limit": 3.0,
+  "memory_limit": 128,
+  "checker": "token",
+  "samples": ["01"],
+  "difficulty": "easy",
+  "tags": ["Implementation"],
+  "no": 1
+}

@@ -45,6 +45,28 @@ jobs:
       - name: API end-to-end tests
         run: python3 -m unittest discover -s tests -v
 
+  critical-security:
+    runs-on: ubuntu-latest
+    # Root is required to exercise the real setgroups/setgid/setuid boundary.
+    # Default container capabilities suffice; no privileged mode or cap_add.
+    container: python:3.11-slim
+    env:
+      GRADER_RUNNER_CHILD: "1"
+      SESSION_SECRET: "synthetic-critical-ci-secret"
+      GRADER_REQUIRE_NETNS: "0"
+      GRADER_ALLOW_UNISOLATED_JUDGE: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install synthetic-test toolchain
+        run: apt-get update && apt-get install -y --no-install-recommends gcc g++
+      - name: Install test dependencies
+        run: pip install -r requirements.txt httpx
+      - name: Run critical canaries (any skip fails)
+        run: python tools/run_critical_tests.py
+
   queue-sql:
     runs-on: ubuntu-latest
     services:
