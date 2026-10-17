@@ -1186,10 +1186,7 @@ function fillTaskDetail(p) {
     `<span class="meta-chip">${esc(String(p.checker))} · ${p.tests} tests</span>` +
     ((p.tags || []).map((t) => `<span class="meta-chip">${esc(t)}</span>`).join(""));
   const nSamples = (p.samples || []).length;
-  const nHidden = p.hidden_tests != null
-    ? p.hidden_tests : Math.max(0, (p.tests || 0) - nSamples);
-  $("task-counts").textContent =
-    `ตัวอย่างสาธารณะ ${nSamples} ข้อ · เทสต์ลับ ${nHidden} ข้อ`;
+  $("task-counts").textContent = `ตัวอย่างสาธารณะ ${nSamples} ข้อ`;
   renderSampleButtons(p);
   const pdfUrl = `${API}/api/problems/${encodeURIComponent(p.id)}/pdf`;
   if (p.has_pdf) {
@@ -1998,7 +1995,7 @@ function verdictSummary(d) {
   const bad = rows.filter((r) => r.verdict !== "AC");
   if (!bad.length) return `<p class="verdict-sum ok">ผ่านครบทุกเทสต์</p>`;
   const first = bad[0];
-  const where = first.hidden ? "เทสต์ลับข้อแรก" : `เทสต์ ${first.test} (ตัวอย่าง)`;
+  const where = `เทสต์ ${rows.indexOf(first) + 1}`;
   const kinds = Object.keys(d.counts || {}).filter((k) => k !== "AC");
   const scope = kinds.length > 1
     ? kinds.map((k) => `${VERDICT_TH[k] || k} ${d.counts[k]} ข้อ`).join(" · ")
@@ -2026,17 +2023,14 @@ function renderResults(d, secs) {
     const counts = Object.entries(d.counts || {})
       .map(([k, n]) => `${VERDICT_TH[k] || k}:${n}`).join("  ");
     html += `<div class="meta">${esc(counts)} &nbsp;|&nbsp; ${limitsMeta(d)} ตัวตรวจคำตอบ ${esc(d.checker)}</div>`;
-    if (d.samples != null || d.hidden_tests != null) {
-      const nS = Array.isArray(d.samples) ? d.samples.length : (Number(d.samples) || 0);
-      const nH = d.hidden_tests != null
-        ? Number(d.hidden_tests) : Math.max(0, (Number(d.total) || 0) - nS);
-      html += `<div class="meta">ตัวอย่างสาธารณะ ${nS} ข้อ · เทสต์ลับ ${nH} ข้อ</div>`;
-    }
     if (d.build_warnings) {
       html += `<div class="detail-cell"><p class="dim">คำเตือนตอนคอมไพล์:</p><pre>${esc(d.build_warnings)}</pre></div>`;
     }
+    // Tests are listed by their display order only. The internal test name
+    // (e.g. 01/1001) is never surfaced: the numbered run reads as 1..N so the
+    // public/hidden split stays invisible.
     html += `<table class="tests"><thead><tr>
-      <th>#</th><th>เทสต์</th><th>ผล</th>
+      <th>เทสต์</th><th>ผล</th>
       <th title="เวลาที่ใช้จริง (วินาที)">เวลา</th>
       <th title="เวลา CPU (วินาที)">ซีพียู</th>
       <th title="หน่วยความจำสูงสุด">แรม</th>
@@ -2044,10 +2038,9 @@ function renderResults(d, secs) {
     (d.results || []).forEach((r, i) => {
       html += `<tr class="test-row" data-i="${i}" tabindex="0" role="button" aria-expanded="false">
         <td>${String(i + 1).padStart(2, "0")}</td>
-        <td>${esc(r.test)}${r.hidden ? " " + badge("เทสต์ลับ", "hidden") : ""}</td>
         <td>${badgeVerdict(r.verdict)}</td><td>${r.wall_s}s</td><td>${r.cpu_s}s</td><td>${r.peak_mb}MB</td>
       </tr>`;
-      html += `<tr class="detail-row hidden" data-i="${i}"><td colspan="6" class="detail-cell">${detailHtml(r)}</td></tr>`;
+      html += `<tr class="detail-row hidden" data-i="${i}"><td colspan="5" class="detail-cell">${detailHtml(r)}</td></tr>`;
     });
     html += `</tbody></table>`;
     html += `<p class="dim">คลิกแถวเพื่อดูรายละเอียดของเทสต์นั้น</p>`;
@@ -2071,7 +2064,7 @@ function renderResults(d, secs) {
     };
   });
   const firstFail = Array.from(body.querySelectorAll("tr.test-row")).find((tr) => {
-    const b = tr.querySelector("td:nth-child(3) .badge");
+    const b = tr.querySelector("td:nth-child(2) .badge");
     return b && !b.classList.contains("b-AC") && !b.classList.contains("b-OK");
   });
   if (firstFail) {
@@ -2106,8 +2099,7 @@ function detailHtml(r) {
 /* Hidden tests arrive without input/expected/actual/diff — never render any of
  * them (even if a payload ever carried them), and never try to fetch them. */
 function hiddenDetailHtml(r) {
-  let html = `<p><strong>เทสต์ลับ</strong> — ข้อนี้ไม่แสดง input / expected / ส่วนต่างของคำตอบ</p>`;
-  html += `<p class="dim">${esc(verdictHint(r))}</p>`;
+  let html = `<p class="dim">${esc(verdictHint(r))}</p>`;
   if (r.detail) html += `<pre>${esc(r.detail)}</pre>`;
   return html;
 }
@@ -2571,7 +2563,6 @@ function renderContestProblems(d) {
     <th>#</th><th>ข้อ</th><th>ระดับ</th><th>เทสต์</th><th></th>
   </tr></thead><tbody>` + list.map((p, i) => {
     const nS = p.samples || 0;
-    const nH = Math.max(0, (p.tests || 0) - nS);
     const label = esc((p.no ? "#" + p.no + " " : "") + p.id);
     const link = d.problems_open
       ? `<a class="tlink contest-open" href="#/task/${encodeURIComponent(p.id)}">${label}</a>`
@@ -2585,7 +2576,7 @@ function renderContestProblems(d) {
       <td>${String(i + 1).padStart(2, "0")}</td>
       <td>${link} <span class="dim">${esc(p.title || "")}</span></td>
       <td>${diffBadge(p.difficulty)}</td>
-      <td>${nS} ตัวอย่าง · ${nH} ลับ</td>
+      <td>${nS} ตัวอย่าง</td>
       <td>${action}</td>
     </tr>`;
   }).join("") + `</tbody></table>`;

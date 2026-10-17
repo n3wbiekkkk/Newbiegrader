@@ -2429,7 +2429,7 @@ def run_submission(prob: grader.Problem, ext: str, source: str,
             "limits": limits, "memory_capped": limits["capped"],
             "checker": prob.checker,
             "results": _redact_results(results, reveal),
-            "samples": len(samples), "hidden_tests": total - len(samples),
+            "samples": len(samples),
             "tests_hash": _tests_hash(prob.pid),
             "grader_version": grader.GRADER_VERSION,
         }
@@ -2565,7 +2565,6 @@ def problem_detail(request: Request, pid: str) -> dict:
                 "difficulty": meta.difficulty, "tags": meta.tags,
                 "tests": total, "statement": meta.description,
                 "samples": samples,
-                "hidden_tests": max(0, total - len(samples)),
                 "tests_hash": _tests_hash(meta.pid),
                 "has_pdf": has_pdf}
         if _is_admin(email):
@@ -2582,7 +2581,6 @@ def problem_detail(request: Request, pid: str) -> dict:
             "difficulty": p.difficulty, "tags": p.tags,
             "tests": len(p.tests), "statement": p.description,
             "samples": list(p.samples),
-            "hidden_tests": len(p.tests) - len(p.samples),
             "tests_hash": _tests_hash(p.pid),
             "has_pdf": has_pdf}
     if _is_admin(email):
@@ -2759,7 +2757,6 @@ async def submit(
     return {
         "job_id": job["id"], "status": "queued", "problem": prob.pid,
         "samples": len(prob.samples),
-        "hidden_tests": len(prob.tests) - len(prob.samples),
         "queued_ahead": (await _queue_rpc("diagnostics"))["queued"] if QUEUE_MODE == "database" else _queue_depth_cached(),
     }
 

@@ -480,7 +480,7 @@ class SupabaseProblems(unittest.TestCase):
         self.assertEqual(r.status_code, 200, r.text)
         body = r.json()
         self.assertEqual(body["tests"], len(local.tests))
-        self.assertEqual(body["hidden_tests"], len(local.tests) - len(local.samples))
+        self.assertNotIn("hidden_tests", body)
         self.assertEqual(body["samples"], local.samples)
         self.assertEqual(body["tests_hash"], grader.tests_hash(local))
         sample = local.samples[0]

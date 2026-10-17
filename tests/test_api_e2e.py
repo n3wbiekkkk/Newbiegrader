@@ -1289,7 +1289,8 @@ class ApiE2E(unittest.TestCase):
         self.assertEqual(sorted(h["problems"]), sorted(visible))
         detail = self.client.get("/api/problems/count_islands").json()
         self.assertEqual(detail["samples"], ["01", "02", "03"])
-        self.assertEqual(detail["hidden_tests"], detail["tests"] - 3)
+        # The public payload must not announce the hidden-test count.
+        self.assertNotIn("hidden_tests", detail)
 
 
     def test_remember_me_restore_and_logout(self):
