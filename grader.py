@@ -155,6 +155,8 @@ def netns_available(timeout: float = 10.0) -> bool:
 # into SandboxUnavailable (a job-level error, never a verdict).
 SANDBOX_REFUSED_RC = 126
 SANDBOX_REFUSED_MARKER = "GRADER_REQUIRE_NETNS"
+PRIVILEGE_REFUSED_RC = 125
+PRIVILEGE_REFUSED_MARKER = "GRADER_PRIVILEGE_DROP_FAILED"
 
 
 SAMPLE_INTERVAL = _env_float("GRADER_SAMPLE_INTERVAL",
@@ -446,16 +448,65 @@ class SandboxUnavailable(Exception):
     """
 
 
+def sandbox_identity() -> tuple[int, int]:
+    """The shared unprivileged identity used by compilers and submissions."""
+    import grp
+    import pwd
+    try:
+        uid = pwd.getpwnam("nobody").pw_uid
+    except KeyError:
+        uid = 65534
+    try:
+        gid = grp.getgrnam("nogroup").gr_gid
+    except KeyError:
+        gid = 65534
+    if uid <= 0 or gid <= 0:
+        raise SandboxUnavailable("sandbox identity must be unprivileged")
+    return uid, gid
+
+
+def prepare_workspace(workdir: Path, src: Optional[Path] = None) -> None:
+    """Give the sandbox access only to this caller-created job directory."""
+    if sys.platform.startswith("linux") and os.geteuid() == 0:
+        try:
+            uid, gid = sandbox_identity()
+            directory = os.open(workdir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                # Configure the source before publishing the directory to the
+                # shared sandbox UID. Never follow a replaced path/symlink as root.
+                if src is not None:
+                    source = os.open(src.name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory)
+                    try:
+                        os.fchown(source, uid, gid)
+                        os.fchmod(source, 0o600)
+                    finally:
+                        os.close(source)
+                os.fchmod(directory, 0o700)
+                os.fchown(directory, uid, gid)
+            finally:
+                os.close(directory)
+        except (OSError, SandboxUnavailable) as exc:
+            raise SandboxUnavailable("cannot prepare sandbox workspace") from exc
+    elif src is not None:
+        os.chmod(workdir, 0o755)
+        os.chmod(src, 0o644)
+
+
 def _compile(command: list[str], workdir: Path):
     try:
         from judge_runner import run_bounded
     except ImportError as e:
         raise CompileError(f"judge runner unavailable: {e}")
-    if os.name == "posix" and COMPILE_MEMORY_MB:
+    prepare_workspace(workdir)
+    # Linux/root must drop privileges even when compile memory limits are off.
+    if os.name == "posix" and (COMPILE_MEMORY_MB or (
+            sys.platform.startswith("linux") and os.geteuid() == 0)):
         command = [sys.executable, str(Path(__file__).resolve()), "--compile-sandbox",
                    str(COMPILE_MEMORY_MB), str(COMPILE_TIMEOUT), "--", *command]
     result = run_bounded(command, "", COMPILE_TIMEOUT, output_limit=OUTPUT_LIMIT_BYTES,
                          env=judge_env(str(workdir)), cwd=str(workdir))
+    if result.returncode == PRIVILEGE_REFUSED_RC and PRIVILEGE_REFUSED_MARKER in result.stderr:
+        raise SandboxUnavailable("compiler privilege drop failed (not a verdict)")
     if result.reason == "timeout":
         raise CompileError("compilation exceeded its time limit")
     if result.reason == "ole":
@@ -710,7 +761,8 @@ def memory_note(declared_mb: int, lang: Optional[str]) -> str:
     return f" (allowance for {lang} x{mult:g} = {mem_limit_mb(declared_mb, lang):.0f}MB)"
 
 # ---------- execution with limits ----------
-def build_limits(memory_mb: int, time_limit: float, sandbox: bool = True):
+def build_limits(memory_mb: int, time_limit: float, sandbox: bool = True, *,
+                 network: bool = True):
     def _fn():
         try:
             import resource
@@ -754,8 +806,8 @@ def build_limits(memory_mb: int, time_limit: float, sandbox: bool = True):
                       "continuing with rlimits only", file=sys.stderr)
             except OSError:
                 pass
-        try:
-            if sandbox and sys.platform.startswith("linux") and os.geteuid() == 0:
+        if sandbox and sys.platform.startswith("linux") and os.geteuid() == 0:
+            if network:
                 # Strict network isolation (public-production mode): the operator
                 # sets GRADER_REQUIRE_NETNS=1 to guarantee judged code has no
                 # egress. If the namespace cannot be created, REFUSE to run
@@ -790,34 +842,18 @@ def build_limits(memory_mb: int, time_limit: float, sandbox: bool = True):
                           "(GRADER_REQUIRE_NETNS=1); refusing to run",
                           file=sys.stderr)
                     os._exit(SANDBOX_REFUSED_RC)
-                try:
-                    import grp
-                    gid = grp.getgrnam("nogroup").gr_gid
-                except Exception:
-                    gid = 65534
-                try:
-                    import pwd
-                    uid = pwd.getpwnam("nobody").pw_uid
-                except Exception:
-                    uid = 65534
-                try:
-                    # สำคัญ: setuid ไม่ล้าง supplementary groups เอง — root มักอยู่
-                    # group root ซึ่งยังมีสิทธิ์บน problems/ ผ่าน group bits ได้
-                    # ต้อง setgroups([]) ก่อน ไม่เช่นนั้น nobody ยังอ่าน test ได้
-                    os.setgroups([])
-                except OSError as e:
-                    print(f"[grader] WARNING: setgroups failed ({e})", file=sys.stderr)
-                try:
-                    os.setgid(gid)
-                    os.setuid(uid)
-                except OSError as e:
-                    # ลดสิทธิ์ไม่สำเร็จ = ยังเป็น root: หยุดดีกว่าเสี่ยงรันโค้ด
-                    # อันตรายด้วยสิทธิ์สูง ภายใต้แค่ rlimits
-                    print(f"[grader] FATAL: setgid/setuid failed ({e}); refusing to run",
-                          file=sys.stderr)
-                    os._exit(125)
-        except Exception:
-            pass
+            try:
+                uid, gid = sandbox_identity()
+                os.setgroups([])
+                os.setgid(gid)
+                os.setuid(uid)
+                if os.geteuid() != uid or os.getegid() != gid or os.getgroups():
+                    raise OSError("sandbox identity did not take effect")
+            except Exception:
+                # Never continue after a partial or failed privilege drop.
+                print(f"[grader] FATAL: {PRIVILEGE_REFUSED_MARKER}; refusing to run",
+                      file=sys.stderr)
+                os._exit(PRIVILEGE_REFUSED_RC)
         try:
             os.setsid()
         except OSError:
@@ -900,7 +936,11 @@ def run_one(cmd: list[str], stdin_data: str, time_limit: float, memory_mb: int,
     try:  # sandbox child (nobody) ต้อง traverse cwd + exec binary ได้
         # chmod เฉพาะ tmp ของ job เอง ห้ามแตะ dir ต้นฉบับ (เช่น examples/)
         if cwd and _is_job_tmp(cwd):
-            os.chmod(cwd, 0o755)
+            # Server/compile workspaces already belong to nobody and stay 0700.
+            owned = (sys.platform.startswith("linux") and os.geteuid() == 0
+                     and os.stat(cwd).st_uid == sandbox_identity()[0])
+            if not owned:
+                os.chmod(cwd, 0o755)
         if cmd and os.path.isfile(cmd[0]) and _is_job_tmp(str(Path(cmd[0]).parent)):
             os.chmod(cmd[0], 0o755)
     except OSError:
@@ -932,6 +972,8 @@ def run_one(cmd: list[str], stdin_data: str, time_limit: float, memory_mb: int,
                 "reason": "spawn-fail"}
     out, err, rc = result.stdout, result.stderr, result.returncode
     reason = result.reason
+    if rc == PRIVILEGE_REFUSED_RC and PRIVILEGE_REFUSED_MARKER in (err or ""):
+        reason = "sandbox-unavailable"
     if rc == SANDBOX_REFUSED_RC and SANDBOX_REFUSED_MARKER in (err or ""):
         # Strict-mode refusal: the wrapper exited before exec, so NO user
         # code ran. (A user program exiting 126 would lack the marker.)
@@ -1222,6 +1264,8 @@ def main(argv=None) -> int:
 
 if __name__ == "__main__":
     if sys.argv[1:2] in (["--sandbox"], ["--compile-sandbox"]):
-        build_limits(int(sys.argv[2]), float(sys.argv[3]), sys.argv[1] == "--sandbox")()
+        # Compilation shares the UID/GID drop, not runtime's netns contract.
+        build_limits(int(sys.argv[2]), float(sys.argv[3]),
+                     network=sys.argv[1] == "--sandbox")()
         os.execvpe(sys.argv[5], sys.argv[5:], judge_env())
     raise SystemExit(main())

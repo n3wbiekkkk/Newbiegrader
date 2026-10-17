@@ -2304,13 +2304,11 @@ def run_submission(prob: grader.Problem, ext: str, source: str,
         workdir = Path(tmp)
         src = workdir / ("solution" + ext)
         src.write_text(source, encoding="utf-8")
-        try:  # sandbox runs the child as `nobody`: it must traverse/read these
-            os.chmod(workdir, 0o755)
-            os.chmod(src, 0o644)
-        except OSError:
-            pass
         try:
+            grader.prepare_workspace(workdir, src)
             cmd, _disp, warnings = grader.prepare_command(src, workdir)
+        except grader.SandboxUnavailable:
+            return {"error": "execution environment unavailable"}
         except grader.CompileError as e:
             return {
                 "problem": prob.pid, "verdict": "CE", "accepted": False,
@@ -2406,14 +2404,12 @@ def _run_playground(prob: Optional[grader.Problem], ext: str, source: str,
         workdir = Path(tmp)
         src = workdir / ("solution" + ext)
         src.write_text(source, encoding="utf-8")
-        try:
-            os.chmod(workdir, 0o755)
-            os.chmod(src, 0o644)
-        except OSError:
-            pass
         started = time.perf_counter()
         try:
+            grader.prepare_workspace(workdir, src)
             cmd, _disp, warnings = grader.prepare_command(src, workdir)
+        except grader.SandboxUnavailable:
+            return {"error": "execution environment unavailable"}
         except grader.CompileError as e:
             return {"verdict": "CE", "stdout": "", "stderr": _sanitize_compile_error(str(e))[:4000],
                     "wall_s": round(time.perf_counter() - started, 4),
