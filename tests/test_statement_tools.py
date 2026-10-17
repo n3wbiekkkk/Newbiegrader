@@ -12,6 +12,7 @@ import grader
 from fake_supabase import FakeSupabase
 from tools import import_problems_supabase as importer
 from tools import make_statement_tex as renderer
+from tools.validate_problem import parse_samples
 
 
 class StatementLayout(unittest.TestCase):
@@ -54,6 +55,18 @@ class StatementLayout(unittest.TestCase):
         size = renderer.sample_font_size([("1", "-" * 50)])
         self.assertGreaterEqual(size, 7)
         self.assertLessEqual(50 * size * 0.5, 222)
+
+    def test_spaced_grid_input_keeps_compact_grid_output(self):
+        # Public Forest Fire Spread example: cells are input as integers,
+        # while output rows remain compact strings.
+        inp = "3 3\n0 1 0\n1 2 1\n0 1 0\n1"
+        out = "020\n202\n020"
+        md = f"## ตัวอย่าง\n```\ninput:\n{inp}\n\noutput:\n{out}\n```\n"
+        self.assertEqual(parse_samples(md), [(inp, out)])
+        tex = renderer.build("forest_fire_spread", "ไฟป่าลาม (Forest Fire Spread)",
+                             1, 256, md)
+        self.assertIn("0 1 0\\newline\n1 2 1\\newline\n0 1 0", tex)
+        self.assertIn("020\\newline\n202\\newline\n020", tex)
 
     def test_headings_reserve_space_and_nested_rules_keep_indentation(self):
         tex = renderer.build("synthetic", "เรื่อง", 1, 256,
