@@ -111,6 +111,8 @@ Host capacity is read from the container at startup, and worker counts, memory c
 
 ## Contributing
 
+For problem authors, start with the [shared authoring workflow](docs/making-problems.md) and versioned templates in `tools/templates/problem/`.
+
 Contributions are welcome. You can suggest features or report bugs by opening an issue, chat with the community on [Discord](https://discord.gg/7NQDHFBpf6), or submit a pull request with a clear description of the change. Please report security issues through the maintainer's profile rather than a public issue.
 
 ## Team

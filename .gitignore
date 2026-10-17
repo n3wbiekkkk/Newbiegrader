@@ -12,3 +12,6 @@ problems/
 examples/
 output/
 tmp/pdfs/
+
+# Local agent instructions
+AGENTS.md
