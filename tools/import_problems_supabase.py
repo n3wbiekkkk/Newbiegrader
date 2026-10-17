@@ -202,6 +202,38 @@ def _park_numbers(client) -> int:
     return len(rows)
 
 
+def _prune_storage(client, bucket_name: str, slug: str, dry: bool) -> list[str]:
+    """Delete Storage objects under `<slug>/tests/` that no longer exist locally.
+
+    Uploads are upserts, so a problem whose test set shrank (or was renamed)
+    leaves stale objects behind. They are never referenced again (the row stores
+    an explicit manifest), but they waste space and confuse audits. Only files
+    inside the problem's own `tests/` folder are considered; everything else is
+    left untouched. Returns the object paths removed (or that would be removed).
+    """
+    pdir = grader.PROBLEMS_DIR / slug
+    tdir = pdir / "tests"
+    expected = {f"{slug}/tests/{p.name}" for p in tdir.glob("*.in")}
+    expected |= {f"{slug}/tests/{p.name}" for p in tdir.glob("*.out")}
+    try:
+        listed = client.storage.from_(bucket_name).list(f"{slug}/tests")
+    except Exception as e:
+        print(f"prune {slug}: could not list: {e}", file=sys.stderr)
+        return []
+    # Real Supabase returns the object's basename; the test double returns the
+    # full path. Normalise on the basename so both agree.
+    stale = []
+    for obj in (listed or []):
+        name = str(obj.get("name", "")).rsplit("/", 1)[-1]
+        path = f"{slug}/tests/{name}"
+        if name and path not in expected:
+            stale.append(path)
+    stale.sort()
+    if stale and not dry:
+        client.storage.from_(bucket_name).remove(stale)
+    return stale
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Import problems/ into Supabase (idempotent).")
     ap.add_argument("--problem", action="append", default=[], dest="problems",
@@ -214,6 +246,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="first park the existing DB numbers on negatives so a full "
                          "local renumber (tools/number_problems.py --renumber) can be "
                          "upserted without UNIQUE clashes")
+    ap.add_argument("--prune", action="store_true",
+                    help="also delete Storage test objects for this problem that no "
+                         "longer exist locally (stale after a shrinking test set)")
     args = ap.parse_args(argv)
     slugs = _local_slugs(args.problems)
     if not slugs:
@@ -267,6 +302,17 @@ def main(argv: list[str] | None = None) -> int:
     print(f"{mode}{len(slugs)} problems: "
           f"{counts.get('created',0)} created, {counts.get('updated',0)} updated, "
           f"{counts.get('skipped',0)} skipped, {counts.get('failed',0)} failed")
+    if args.prune and client is not None:
+        removed = 0
+        for slug in slugs:
+            stale = _prune_storage(client, args.bucket, slug, args.dry_run)
+            if stale:
+                removed += len(stale)
+                verb = "stale" if args.dry_run else "removed"
+                names = ", ".join(s.rsplit("/", 1)[-1] for s in stale)
+                print(f"p {slug:<24} {verb} {len(stale)}: {names}")
+        print(f"prune: {removed} stale object(s) "
+              f"{'would be removed' if args.dry_run else 'removed'}")
     if failures:
         print("failed: " + ", ".join(failures))
         return 1

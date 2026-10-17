@@ -251,6 +251,30 @@ class SupabaseProblems(unittest.TestCase):
         row = [r for r in self.fake.rows("problems") if r["slug"] == slug][0]
         self.assertEqual(int(row["no"]), target)
 
+    def test_prune_removes_only_stale_test_objects(self):
+        """Uploads are upserts, so a shrunken test set leaves stale objects.
+        _prune_storage removes exactly those, and never a live object."""
+        import tools.import_problems_supabase as imp
+        slug = SEED_SLUGS[0]
+        bucket = self.fake.storage.from_("judge-assets")
+        bucket.upload(f"{slug}/tests/9999.in", b"stale")
+        bucket.upload(f"{slug}/tests/9999.out", b"stale")
+
+        stale = imp._prune_storage(self.fake, "judge-assets", slug, dry=False)
+        self.assertEqual(sorted(stale),
+                         [f"{slug}/tests/9999.in", f"{slug}/tests/9999.out"])
+        names = {o["name"].rsplit("/", 1)[-1] for o in bucket.list(f"{slug}/tests")}
+        self.assertNotIn("9999.in", names)
+        self.assertNotIn("9999.out", names)
+        live = grader.load_problem(slug)
+        self.assertIn(f"{live.tests[0].name}.in", names)  # real object untouched
+
+        bucket.upload(f"{slug}/tests/8888.out", b"stale")
+        would = imp._prune_storage(self.fake, "judge-assets", slug, dry=True)
+        self.assertIn(f"{slug}/tests/8888.out", would)
+        still = {o["name"].rsplit("/", 1)[-1] for o in bucket.list(f"{slug}/tests")}
+        self.assertIn("8888.out", still)  # dry run deletes nothing
+
     def test_malformed_row_fails_closed(self):
         self.fake.table("problems").upsert(
             {"slug": "broken", "no": 9999, "title": "Broken",
