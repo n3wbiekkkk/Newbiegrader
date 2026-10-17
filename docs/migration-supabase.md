@@ -45,9 +45,15 @@ Apply in Supabase SQL Editor → paste `supabase/schema.sql` → run (idempotent
 ```sh
 SUPABASE_URL=... SUPABASE_KEY=...   # service_role key, server-side only
 python3 tools/import_problems_supabase.py --dry-run   # no writes, summary only
-python3 tools/import_problems_supabase.py             # all 62 problems
+python3 tools/import_problems_supabase.py             # all problems
 python3 tools/import_problems_supabase.py --problem hanoi
+python3 tools/import_problems_supabase.py --renumber  # after a local renumber
 ```
+
+- `--renumber` is for when `tools/number_problems.py --renumber` changed the local
+  numbers: `no int unique` means a permutation cannot be written slug-by-slug, so
+  this first parks every remote `no` on unique negatives (invisible: the API sorts
+  unnumbered rows last), then the normal upsert writes the canonical numbers.
 
 - Upserts Postgres rows (`on_conflict slug`), uploads every test file and the PDF
   to `judge-assets` (upsert on the same deterministic paths).
@@ -117,7 +123,7 @@ bundle need nothing new.
 
 ## Verification performed
 
-- `python3 tools/import_problems_supabase.py --dry-run` → 62/62 clean.
+- `python3 tools/import_problems_supabase.py --dry-run` → every problem clean.
 - New suite `tests/test_problems_supabase.py` (17 tests): import idempotency,
   duplicate-number refusal, malformed row, hash-mismatch, missing asset,
   storage outage (all fail closed), unpublished visibility, hidden-redaction,

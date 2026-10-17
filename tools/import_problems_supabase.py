@@ -17,6 +17,7 @@ or deleted.
     python3 tools/import_problems_supabase.py --dry-run
     python3 tools/import_problems_supabase.py --problem hanoi --problem thai_time
     python3 tools/import_problems_supabase.py  # all problems
+    python3 tools/import_problems_supabase.py --renumber  # after renumbering locally
 
 Exit code 0 only when nothing failed.
 """
@@ -183,6 +184,24 @@ def import_one(client, bucket_name: str, slug: str, dry: bool) -> tuple[str, str
     return status, f"tests={len(prob.tests)} hash={tests_hash}"
 
 
+def _park_numbers(client) -> int:
+    """Move every `problems.no` onto unique negatives to free the positive range.
+
+    `no` carries a UNIQUE constraint (`no int unique not null`), so a full
+    renumber (a permutation old -> new) cannot be written slug-by-slug while
+    both ends still hold numbers: every target is momentarily occupied. Parking
+    the current values on unique negative integers clears the range, then the
+    normal import writes the canonical local numbers. Negatives are invisible
+    to clients (the API sorts unnumbered rows last) and are replaced within the
+    same run, so only a short window can see them.
+    """
+    res = client.table("problems").select("slug,no").execute()
+    rows = getattr(res, "data", None) or []
+    for i, row in enumerate(sorted(rows, key=lambda r: int(r.get("no") or 0)), start=1):
+        client.table("problems").update({"no": -i}).eq("slug", row["slug"]).execute()
+    return len(rows)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Import problems/ into Supabase (idempotent).")
     ap.add_argument("--problem", action="append", default=[], dest="problems",
@@ -191,6 +210,10 @@ def main(argv: list[str] | None = None) -> int:
                     help="private Storage bucket (default: %(default)s)")
     ap.add_argument("--dry-run", action="store_true",
                     help="validate + report without writing Postgres or Storage")
+    ap.add_argument("--renumber", action="store_true",
+                    help="first park the existing DB numbers on negatives so a full "
+                         "local renumber (tools/number_problems.py --renumber) can be "
+                         "upserted without UNIQUE clashes")
     args = ap.parse_args(argv)
     slugs = _local_slugs(args.problems)
     if not slugs:
@@ -222,6 +245,13 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"problems table not readable ({e}); run supabase/schema.sql first",
                       file=sys.stderr)
                 return 1
+    if args.renumber and client is not None and not args.dry_run:
+        try:
+            parked = _park_numbers(client)
+        except Exception as e:
+            print(f"renumber: could not park existing numbers: {e}", file=sys.stderr)
+            return 1
+        print(f"renumber: parked {parked} existing numbers before reassigning")
     counts = {"created": 0, "updated": 0, "skipped": 0, "failed": 0}
     failures: list[str] = []
     for slug in slugs:

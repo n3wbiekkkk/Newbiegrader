@@ -226,6 +226,31 @@ class SupabaseProblems(unittest.TestCase):
         self.assertIn("clash_slug", owners)
         self.assertGreaterEqual(len(owners), 1)
 
+    def test_renumber_parks_numbers_to_free_the_positive_range(self):
+        """A full renumber is a permutation: `no int unique` cannot be written
+        slug-by-slug while both ends hold numbers. `_park_numbers` moves every
+        row onto unique negatives so the canonical numbers can be upserted."""
+        import tools.import_problems_supabase as imp
+        before = list(self.fake.rows("problems"))
+        self.assertTrue(before)
+        self.assertTrue(all(int(r["no"]) > 0 for r in before))
+
+        parked = imp._park_numbers(self.fake)
+        self.assertEqual(parked, len(before))
+        nos = [int(r["no"]) for r in self.fake.rows("problems")]
+        self.assertTrue(all(n < 0 for n in nos))
+        self.assertEqual(len(set(nos)), len(nos), "parked numbers must stay unique")
+
+        # The canonical number is now free, so the renumbered upsert lands.
+        slug = SEED_SLUGS[0]
+        target = grader.load_problem(slug).no
+        self.assertIn(target, [abs(n) for n in nos])
+        self.fake.table("problems").upsert(
+            {"slug": slug, "no": target, "title": "renumbered", "tests_hash": "y"},
+            on_conflict="slug").execute()
+        row = [r for r in self.fake.rows("problems") if r["slug"] == slug][0]
+        self.assertEqual(int(row["no"]), target)
+
     def test_malformed_row_fails_closed(self):
         self.fake.table("problems").upsert(
             {"slug": "broken", "no": 9999, "title": "Broken",
