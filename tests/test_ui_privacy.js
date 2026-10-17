@@ -185,4 +185,5 @@ test("light is the default and long-lived login is not preselected", () => {
   assert.match(source, /getItem\("ng_theme"\) \|\| "light"/);
   assert.doesNotMatch(html.match(/<input id="auth-remember"[^>]*>/)[0], /checked/);
   assert.doesNotMatch(html, /cookie-decline|cookie-accept/);
+  assert.doesNotMatch(html, /brand-dot/);
 });

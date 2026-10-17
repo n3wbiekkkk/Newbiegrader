@@ -169,7 +169,6 @@ body {
 [data-theme="dark"] .logo-dark { display: inline-block; }
 [data-theme="dark"] .brand-logo { background: transparent; }
 .brand-acc { color: var(--dim); font-weight: 400; }
-.brand-dot { color: var(--text); }
 .brand-name { white-space: nowrap; }
 .nav { display: flex; gap: 2px; }
 .nav-link {
