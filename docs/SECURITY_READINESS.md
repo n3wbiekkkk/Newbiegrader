@@ -33,6 +33,31 @@ available, run `tools/validate_problem.py` to verify reference-solution parity.
 Queue SQL tests belong in an empty disposable PostgreSQL database; the workflow
 applies the schema twice before executing `tests/queue_sql.sql`.
 
+### Verify the deployed backend
+
+`GET /api/version` returns `build_sha256`, computed once at process startup from
+the six public backend source files in `server.BUILD_SOURCE_FILES`. Compare it
+with the expected hash from the exact checkout being deployed:
+
+```sh
+python3 - <<'PY'
+import hashlib
+from pathlib import Path
+digest = hashlib.sha256()
+for name in ('grader.py', 'server.py', 'judge_runner.py', 'problem_store.py',
+             'container_entrypoint.py', 'worker.py'):
+    digest.update(name.encode('ascii') + b'\0')
+    digest.update(Path(name).read_bytes())
+    digest.update(b'\0')
+print(digest.hexdigest())
+PY
+```
+
+Use an uncached request to the backend after its rebuild, then verify health.
+The hash identifies these source bytes; it does not attest to dependencies,
+container capabilities, configuration, secrets or the actual sandbox posture.
+The calculation excludes environment variables, `.env`, and problem data.
+
 ## Remaining priorities
 
 1. **Per-job identity and filesystem containment:** compile/runtime jobs still

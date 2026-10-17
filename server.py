@@ -62,6 +62,23 @@ import problem_store  # noqa: E402  (local|supabase problem repository, storage 
 
 STATIC_DIR = ROOT / "static"
 
+BUILD_SOURCE_FILES = ("grader.py", "server.py", "judge_runner.py", "problem_store.py",
+                      "container_entrypoint.py", "worker.py")
+
+
+def _source_fingerprint(root: Path = ROOT) -> str:
+    """Identify deployed backend code without Git, credentials or environment."""
+    digest = hashlib.sha256()
+    for name in BUILD_SOURCE_FILES:
+        digest.update(name.encode("ascii") + b"\0")
+        digest.update((root / name).read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+# Compute once at boot; version requests never read source files or secrets.
+BUILD_SHA256 = _source_fingerprint()
+
 
 def _load_dotenv() -> None:
     """Local-dev convenience only: load ROOT/.env into env (never commit it).
@@ -2790,6 +2807,7 @@ def version(request: Request, response: Response) -> dict:
              if admin or pid not in hidden}
     body = {
         "version": grader.GRADER_VERSION,
+        "build_sha256": BUILD_SHA256,
         "problems": len(tests),
         "languages": sorted(LANGS.keys()),
         "system": _host_limits(),
