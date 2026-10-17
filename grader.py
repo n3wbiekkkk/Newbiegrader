@@ -761,6 +761,20 @@ def memory_note(declared_mb: int, lang: Optional[str]) -> str:
     return f" (allowance for {lang} x{mult:g} = {mem_limit_mb(declared_mb, lang):.0f}MB)"
 
 # ---------- execution with limits ----------
+def _set_no_new_privileges() -> None:
+    """Prevent exec from granting setuid/setgid or file-capability privileges.
+
+    Apply only in the disposable Linux sandbox launcher, never the API parent.
+    The flag is inherited by all compiler/runtime descendants and irreversible.
+    """
+    import ctypes
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.prctl(38, 1, 0, 0, 0) != 0:  # PR_SET_NO_NEW_PRIVS
+        raise OSError(ctypes.get_errno(), "cannot enable no_new_privs")
+    if libc.prctl(39, 0, 0, 0, 0) != 1:  # PR_GET_NO_NEW_PRIVS
+        raise OSError("no_new_privs did not take effect")
+
+
 def build_limits(memory_mb: int, time_limit: float, sandbox: bool = True, *,
                  network: bool = True):
     def _fn():
@@ -843,6 +857,7 @@ def build_limits(memory_mb: int, time_limit: float, sandbox: bool = True, *,
                           file=sys.stderr)
                     os._exit(SANDBOX_REFUSED_RC)
             try:
+                _set_no_new_privileges()
                 uid, gid = sandbox_identity()
                 os.setgroups([])
                 os.setgid(gid)
