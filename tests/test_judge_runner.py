@@ -13,11 +13,7 @@ import unittest
 from unittest.mock import patch
 
 import grader
-
-# No local problem set in the repository (problem data lives in Supabase), so
-# these regressions only run where problems/ exists; CI reports a skip.
-if not grader.PROBLEMS_DIR.is_dir():
-    raise unittest.SkipTest("no local problems/ (source of truth is Supabase)")
+from critical_helpers import synthetic_problem
 
 
 def process_alive(pid):
@@ -144,7 +140,7 @@ class OutputCollectionTests(unittest.TestCase):
             result = grader.run_one([sys.executable, "-c", "print(1)"], "", 3, 128)
         self.assertEqual(result["reason"], "sandbox-unavailable")
         # ...and judge_test must raise instead of scoring it.
-        prob = grader.load_problem("hanoi")
+        prob = synthetic_problem()
         with patch("judge_runner.run_bounded", return_value=fake):
             with self.assertRaises(grader.SandboxUnavailable):
                 grader.judge_test([sys.executable, "-c", "print(1)"],
@@ -172,7 +168,7 @@ class OutputCollectionTests(unittest.TestCase):
                     " print('EGRESS-OPEN')\n"
                     "except Exception:\n"
                     " print('EGRESS-DENIED')\n")
-            prob = grader.load_problem("hanoi")
+            prob = synthetic_problem()
             tc = prob.tests[0]
             with patch.dict(os.environ, {"GRADER_REQUIRE_NETNS": "1"}):
                 try:
@@ -275,11 +271,14 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["memory_capped"])
 
     async def test_submission_preserves_hidden_test_redaction(self):
+        import problem_store
+        problem = synthetic_problem()
         result = await self.runner()("submission", {
-            "problem": "hanoi", "ext": ".py", "source": "print('wrong')",
+            "problem": problem.pid, "problem_data": problem_store.serialize_problem(problem),
+            "ext": ".py", "source": "print('wrong')",
             "reveal": "samples", "memory_cap_mb": 128, "judge_jobs": 1}, 20)
         self.assertGreater(result["total"], 0)
-        sample_names = set(grader.load_problem("hanoi").samples)
+        sample_names = set(problem.samples)
         hidden = [item for item in result["results"] if item["test"] not in sample_names]
         self.assertTrue(hidden)
         for item in hidden:

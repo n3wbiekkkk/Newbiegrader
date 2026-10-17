@@ -181,7 +181,7 @@ class ApiE2E(unittest.TestCase):
         self.assertEqual(body["version"], grader.GRADER_VERSION)
         thai = body["tests"]["thai_time"]
         self.assertEqual(thai["hash"], grader.tests_hash(server.PROBLEMS["thai_time"]))
-        self.assertEqual(thai["samples"], ["02"])
+        self.assertEqual(thai["samples"], ["01", "02", "03"])
         self.assertGreater(thai["tests"], len(thai["samples"]))
 
     def test_version_reports_host_capacity(self):
@@ -232,10 +232,11 @@ class ApiE2E(unittest.TestCase):
             server.QUEUE_MAX = original
 
     def test_samples_are_public_hidden_tests_are_not(self):
-        ok = self.client.get("/api/problems/thai_time/sample/02")
-        self.assertEqual(ok.status_code, 200)
-        self.assertIn("input", ok.json())
-        for hidden_name in ("01", "09", "15"):
+        for name in ("01", "02", "03"):
+            ok = self.client.get(f"/api/problems/thai_time/sample/{name}")
+            self.assertEqual(ok.status_code, 200, name)
+            self.assertIn("input", ok.json())
+        for hidden_name in ("1001", "1005", "1011", "09", "15"):
             r = self.client.get(f"/api/problems/thai_time/sample/{hidden_name}")
             self.assertEqual(r.status_code, 404, hidden_name)
 
@@ -246,11 +247,11 @@ class ApiE2E(unittest.TestCase):
         result = job["result"]
         self.assertTrue(result["accepted"], result)
         self.assertEqual(result["score"], 100)
-        self.assertEqual(result["samples"], 1)
+        self.assertEqual(result["samples"], 3)
 
         public = [i for i in result["results"] if not i.get("hidden")]
         hidden = [i for i in result["results"] if i.get("hidden")]
-        self.assertEqual([i["test"] for i in public], ["02"])
+        self.assertEqual([i["test"] for i in public], ["01", "02", "03"])
         self.assertEqual(public[0]["verdict"], "AC")
         self.assertEqual(public[0]["wall_s"] >= 0, True)
         self.assertTrue(hidden, "expected hidden tests to be redacted")
@@ -1287,8 +1288,8 @@ class ApiE2E(unittest.TestCase):
                    if pid not in server._hidden_pids()]
         self.assertEqual(sorted(h["problems"]), sorted(visible))
         detail = self.client.get("/api/problems/count_islands").json()
-        self.assertEqual(detail["samples"], ["03"])
-        self.assertEqual(detail["hidden_tests"], detail["tests"] - 1)
+        self.assertEqual(detail["samples"], ["01", "02", "03"])
+        self.assertEqual(detail["hidden_tests"], detail["tests"] - 3)
 
 
     def test_remember_me_restore_and_logout(self):

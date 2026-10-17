@@ -17,17 +17,13 @@ os.environ.setdefault("SUPABASE_URL", "")
 os.environ.setdefault("SUPABASE_KEY", "")
 os.environ.setdefault("SESSION_SECRET", "queue-test-secret")
 from fake_supabase import FakeSupabase
-import server
+from critical_helpers import synthetic_problem, test_server
 
-# Queue admission replays real submissions against a problem, and no problem
-# set is versioned in the repository (problem data lives in Supabase); skip in
-# CI, run from a checkout that has problems/.
-if not getattr(server, "PROBLEMS", None):
-    raise unittest.SkipTest("no local problems/ (source of truth is Supabase)")
+server = test_server()
 
 
 def job(email="student@example.com", kind="submit"):
-    return {"kind": kind, "user_email": email, "problem": "thai_time",
+    return {"kind": kind, "user_email": email, "problem": "security_canary",
             "language": "python", "source": "print(1)", "reveal": "samples"}
 
 
@@ -35,6 +31,9 @@ class QueueAdmission(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.fake = FakeSupabase()
         self.patches = [patch.object(server, "_sb", self.fake),
+                        patch.object(server, "PROBLEMS", {"security_canary": synthetic_problem()}),
+                        patch.object(server, "PROBLEM_SOURCE", "local"),
+                        patch.object(server, "_TESTS_HASH_CACHE", {}),
                         patch.object(server, "QUEUE_MODE", "database", create=True),
                         patch.object(server, "GRADER_ROLE", "combined", create=True),
                         patch.object(server, "QUEUE_MAX", 2),
@@ -188,9 +187,9 @@ class QueueAdmission(unittest.IsolatedAsyncioTestCase):
                 await server._run_job({"id": "x", **job()})
 
     async def test_stored_admin_feedback_is_samples_only(self):
-        result = {"results": [{"test": "01", "input": "secret", "expected": "secret",
+        result = {"results": [{"test": "1001", "input": "secret", "expected": "secret",
                                "actual": "x", "diff": "secret", "verdict": "WA"},
-                              {"test": "02", "input": "sample", "verdict": "WA"}]}
+                              {"test": "01", "input": "sample", "verdict": "WA"}]}
         stored = server._submission_row({"id": "x", **job()}, result)
         self.assertNotIn("input", stored["results"][0])
         self.assertEqual(stored["results"][1]["input"], "sample")
@@ -370,9 +369,8 @@ class IsolationPosture(unittest.TestCase):
 
     def test_netns_probe_is_negative_off_linux(self):
         import grader
-        if sys.platform.startswith("linux"):
-            self.skipTest("probe behaviour verified in disposable Linux runs")
-        self.assertFalse(grader.netns_available())
+        with patch.object(grader.sys, "platform", "darwin"):
+            self.assertFalse(grader.netns_available())
 
 
 def _http_request(peer, headers=None):
