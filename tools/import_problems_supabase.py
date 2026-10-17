@@ -56,17 +56,59 @@ def _local_slugs(only: list[str]) -> list[str]:
     return sorted(p.name for p in grader.PROBLEMS_DIR.iterdir() if p.is_dir())
 
 
-def _upload(bucket, path: str, data: bytes, content_type: str, dry: bool) -> None:
-    if dry:
-        return
+def _upload_object(client, bucket_name: str, path: str, data: bytes,
+                   content_type: str) -> None:
+    """PUT one object via plain HTTPS (stdlib, per-call timeout).
+
+    storage3's SyncClient is not thread-safe (shared httpx state breaks under
+    ThreadPoolExecutor), and it has no request timeout — a stuck upload would
+    wedge the whole import. Direct POST mirrors its wire format
+    (multipart `file` field + `x-upsert`), so behavior is identical.
+    """
+    import urllib.parse
+    from urllib.request import Request, urlopen
+    from urllib.error import HTTPError, URLError
+    import uuid
+
+    url = (getattr(client, "supabase_url", "") or os.environ.get("SUPABASE_URL", "")).rstrip("/")
+    key = getattr(client, "supabase_key", "") or os.environ.get("SUPABASE_KEY", "")
+    if not url or not key:
+        raise RuntimeError("supabase upload needs SUPABASE_URL + SUPABASE_KEY")
+    boundary = uuid.uuid4().hex
+    filename = path.rsplit("/", maxsplit=1)[-1]
+    head = (f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+            f"Content-Type: {content_type}\r\n\r\n").encode("utf-8")
+    tail = f"\r\n--{boundary}--\r\n".encode("utf-8")
+    object_url = f"{url}/storage/v1/object/{bucket_name}/{urllib.parse.quote(path, safe='')}"
+    req = Request(object_url, data=head + bytes(data) + tail, method="POST", headers={
+        "Authorization": f"Bearer {key}", "apikey": key, "x-upsert": "true",
+        "Content-Type": f"multipart/form-data; boundary={boundary}",
+    })
     try:
-        bucket.upload(path, data, {"upsert": "true", "content-type": content_type})
-    except Exception as first:
-        # Storage returns 409/duplicate without upsert on some versions; retry update.
-        try:
-            bucket.update(path, data, {"content-type": content_type})
-        except Exception:
-            raise first
+        with urlopen(req, timeout=60) as resp:
+            resp.read()
+    except HTTPError as e:
+        raise RuntimeError(f"upload {path!r}: HTTP {e.code} {e.read()[:200]}")
+    except URLError as e:
+        raise RuntimeError(f"upload {path!r}: {e}")
+
+
+def _upload_many(client, bucket_name: str, jobs: list, dry: bool) -> None:
+    """Upload many objects concurrently (I/O-bound HTTPS). Bounded pool.
+
+    storage3 handles are not shared across threads — each upload is an
+    independent stdlib HTTPS call with its own 60s timeout. Any single
+    failure aborts the import of that problem (fail closed); successful
+    uploads are idempotent (upsert on stable paths) so a retry heals
+    partial batches.
+    """
+    if dry or not jobs:
+        return
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=min(16, len(jobs))) as ex:
+        list(ex.map(lambda j: _upload_object(client, bucket_name, j[0], j[1], j[2]),
+                    jobs))
 
 
 def import_one(client, bucket_name: str, slug: str, dry: bool) -> tuple[str, str]:
@@ -125,15 +167,16 @@ def import_one(client, bucket_name: str, slug: str, dry: bool) -> tuple[str, str
     except Exception as e:
         return "failed", f"db upsert: {e}"
     try:
-        bucket = client.storage.from_(bucket_name)
+        jobs = []
         for tc in prob.tests:
-            _upload(bucket, f"{slug}/tests/{tc.name}.in",
-                    tc.input.encode("utf-8"), "text/plain; charset=utf-8", dry)
-            _upload(bucket, f"{slug}/tests/{tc.name}.out",
-                    tc.expected.encode("utf-8"), "text/plain; charset=utf-8", dry)
+            jobs.append((f"{slug}/tests/{tc.name}.in", tc.input.encode("utf-8"),
+                         "text/plain; charset=utf-8"))
+            jobs.append((f"{slug}/tests/{tc.name}.out", tc.expected.encode("utf-8"),
+                         "text/plain; charset=utf-8"))
         if has_pdf:
-            _upload(bucket, f"{slug}/statement.pdf", pdf_path.read_bytes(),
-                    "application/pdf", dry)
+            jobs.append((f"{slug}/statement.pdf", pdf_path.read_bytes(),
+                         "application/pdf"))
+        _upload_many(client, bucket_name, jobs, dry)
     except Exception as e:
         return "failed", f"storage upload: {e}"
     problem_store.invalidate_cache(slug)
