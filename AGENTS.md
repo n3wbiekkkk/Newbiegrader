@@ -14,6 +14,31 @@ Newbiegrader is a Thai competitive-programming judge. `grader.py` contains the s
 
 Read `README.md` for the specification and `agent.md` for operational details.
 
+## Problem Authoring Contract (all AI agents)
+
+Before creating or editing a problem, read `docs/making-problems.md`. It is the
+canonical authoring workflow; use the versioned templates in
+`tools/templates/problem/` rather than inventing another structure or PDF style.
+
+- Scaffold new problems with `python tools/problem_authoring.py new ...`.
+- Explicitly define input/output separators, row lengths, bounds and ordering.
+  Implement `input_validator.py` for every new problem; check negative examples
+  as well as every shipped input. This is a trusted local author tool only.
+- `tests/` is the source of truth for public sample bytes. Run
+  `python tools/problem_authoring.py sync-samples <id> --write`; do not retype
+  sample data or copy hidden cases into statements. Preserve unrelated prose.
+- Use only `tools/make_statement_tex.py` to build PDFs. Inspect every rendered
+  page. Keep the generated `statement.build.json` beside the private PDF.
+- Before publishing a new problem, require
+  `python tools/validate_problem.py <id> --strict` and use
+  `tools/import_problems_supabase.py --problem <id> --strict --dry-run`.
+  A missing package, unfinished template, format mismatch or warning is a failure.
+- Existing packages can be checked in compatibility mode; do not change their
+  rules, permanent IDs, limits, tests or outputs to make strict checks pass.
+- Do not claim that these checks prove the story, algorithm or test coverage
+  correct. Review the specification and use independent small-case checks and
+  deliberately wrong solutions. Keep secrets, hidden tests and references private.
+
 ## Build, Test, and Development Commands
 
 Use Python 3.11, Node.js for frontend checks, and GCC/G++ for C/C++ submissions. Run from the repository root:

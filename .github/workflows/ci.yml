@@ -39,6 +39,9 @@ jobs:
       - name: Validate problems
         run: python3 tools/validate_problem.py
 
+      - name: Test problem authoring tools with synthetic packages
+        run: python3 -m unittest discover -s tests -p test_problem_authoring.py -v
+
       - name: Plagiarism self-test
         run: python3 tools/plagiarism.py
 

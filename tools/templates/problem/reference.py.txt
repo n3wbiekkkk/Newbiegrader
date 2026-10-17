@@ -1,0 +1,11 @@
+"""Private reference: implement the rules; produce a unique valid output."""
+import sys
+
+
+def solve():
+    # TODO: implement the exact documented input/output contract.
+    raise NotImplementedError("TODO: implement reference solution")
+
+
+if __name__ == "__main__":
+    solve()

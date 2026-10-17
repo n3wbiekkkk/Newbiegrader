@@ -1,0 +1,21 @@
+"""Trusted author tool: validate one complete input from stdin; never echo data.
+
+Implement the exact statement grammar, bounds, row lengths, separators,
+cross-field constraints and end-of-input. Reject invalid data with exit 1.
+This is an authoring check, not part of submission judging or public assets.
+"""
+import sys
+
+
+def validate(text: str) -> None:
+    # TODO: implement all input constraints. Do not accept everything or use
+    # only split() if the contract distinguishes grids from digit strings.
+    raise ValueError("TODO: implement input validation")
+
+
+if __name__ == "__main__":
+    try:
+        validate(sys.stdin.read())
+    except (ValueError, AssertionError):
+        print("invalid input", file=sys.stderr)
+        raise SystemExit(1)

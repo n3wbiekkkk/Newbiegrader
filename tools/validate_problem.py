@@ -13,12 +13,12 @@ Checks, per problem:
   3. tests/        count >= 10, samples numbered 01.. (small) + hidden tests
                    numbered contiguously from 1001 up, no orphans,
                    UTF-8, no CR, .in non-empty
-  4. statement samples: config.samples and statement.md must agree one-for-one
-     (same count; each listed sample has a matching fenced `input:`/`output:`
-     block) -> failure. An individual example that matches no shipped test,
-     only matches after whitespace normalization, or is oversized (looks like a
-     stress test, > MAX_SAMPLE_TOKENS) is a warning.
+  4. statement samples: match public fixtures exactly in config.samples order
+     (ignoring one terminal LF only). Whitespace/layout mismatches fail.
+     Oversized examples (> MAX_SAMPLE_TOKENS) are warnings.
   5. reference solution examples/<id>_ref.{py,cpp}: must compile and AC all tests
+  6. optional trusted input_validator.py: validate every input with a deadline.
+     --strict requires this validator, standard structure and no warnings.
 
 Exit code 0 only when there are no failures (warnings do not fail).
 
@@ -31,6 +31,7 @@ import argparse
 import io
 import json
 import re
+import subprocess
 import sys
 import tempfile
 import threading
@@ -43,6 +44,7 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 import grader  # noqa: E402  (path set above)
+from tools.statement_build import check_build  # noqa: E402
 
 PROBLEMS_DIR = REPO / "problems"
 EXAMPLES_DIR = REPO / "examples"
@@ -105,7 +107,7 @@ def parse_samples(md: str) -> list[tuple[str, str]]:
 
 
 def _join(lines: list[str]) -> str:
-    return "\n".join(lines).strip("\n").strip()
+    return "\n".join(lines).strip("\n")
 
 
 def canon(text: str) -> str:
@@ -122,9 +124,68 @@ def tokens(text: str) -> list[str]:
     return text.split()
 
 
+def public_sample_errors(cfg: dict, md: str, tests: list[grader.TestCase]) -> list[str]:
+    """Public samples must match fixtures in declared order, including spaces.
+
+    A single terminal LF in a fixture is a file terminator, not sample content.
+    Never include fixture contents in diagnostics (tests can be hidden).
+    """
+    names = cfg.get("samples")
+    if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+        return ["config.samples must be a list of public test names"]
+    if (len(names) < MIN_SAMPLES or len(set(names)) != len(names)
+            or any(not re.fullmatch(r"(?:0[1-9]|[1-9][0-9])", n) for n in names)):
+        return ["config.samples must list at least 3 unique public names (01..99)"]
+    pairs = parse_samples(md)
+    errors = []
+    if len(pairs) != len(names):
+        errors.append(f"statement.md has {len(pairs)} sample block(s) but config.samples lists {len(names)}")
+    by_name = {t.name: t for t in tests}
+    for idx, (name, pair) in enumerate(zip(names, pairs), 1):
+        tc = by_name.get(name)
+        if tc is None:
+            errors.append(f"sample #{idx}: declared test {name} is missing")
+        elif pair[1] is None:
+            errors.append(f"sample #{idx}: missing output label")
+        elif (pair[0] != tc.input.removesuffix("\n")
+              or pair[1] != tc.expected.removesuffix("\n")):
+            errors.append(f"sample #{idx}: must match public test {name} exactly (including spaces and line breaks)")
+    return errors
+
+
+def statement_contract_errors(cfg: dict, md: str) -> list[str]:
+    """Strict authoring style; supplements semantic review, never replaces it."""
+    errors = []
+    title = str(cfg.get("title") or "")
+    if not re.fullmatch(r".+ [\(][^()]*[A-Za-z][^()]*[\)]", title) or not any("\u0e00" <= c <= "\u0e7f" for c in title):
+        errors.append("config.title must use Thai Name (English Name)")
+    if not md.splitlines() or md.splitlines()[0] != f"# {title}":
+        errors.append("statement heading must equal config.title")
+    headings = re.findall(r"^## (.+)$", md, flags=re.M)
+    required = ["Input", "Output", "ตัวอย่าง", "คำอธิบายตัวอย่าง"]
+    if any(headings.count(h) != 1 for h in required):
+        errors.append("require one Input, Output, ตัวอย่าง and คำอธิบายตัวอย่าง section")
+    elif [headings.index(h) for h in required] != sorted(headings.index(h) for h in required):
+        errors.append("statement sections must follow the template order")
+    for h in headings:
+        if h.casefold() in {"แนวคิด", "วิธีทำ", "คำใบ้", "กับดัก", "hint", "hints", "solution", "editorial"}:
+            errors.append("statement must not include solution/hint sections")
+    if re.search(r"\b(?:TODO|TBD)\b|\{\{TITLE\}\}", md):
+        errors.append("statement contains unfinished template placeholders")
+    if "Limits" in headings:
+        try:
+            expected = f"- เวลา {float(cfg['time_limit']):g} วินาที, หน่วยความจำ {cfg['memory_limit']} MB"
+            section = re.split(r"^## ", md.split("## Limits\n", 1)[1], maxsplit=1, flags=re.M)[0]
+            if expected not in section.splitlines():
+                errors.append("Limits resource line must match config.time_limit/memory_limit")
+        except (KeyError, ValueError, TypeError, IndexError):
+            errors.append("cannot verify Limits resource line")
+    return errors
+
+
 # ---------------------------------------------------------------- one problem
 
-def validate_problem(pid: str) -> dict:
+def validate_problem(pid: str, strict: bool = False) -> dict:
     res: dict = {"pid": pid, "failures": [], "warnings": [],
                  "tests": 0, "slowest": None, "ref": "", "hidden": False, "no": 0}
     pdir = PROBLEMS_DIR / pid
@@ -196,6 +257,12 @@ def validate_problem(pid: str) -> dict:
         warn("statement.pdf is missing")
     elif pdf_path.stat().st_size <= PDF_MIN_BYTES:
         warn(f"statement.pdf is suspiciously small ({pdf_path.stat().st_size} bytes)")
+    if strict and isinstance(cfg, dict):
+        for error in statement_contract_errors(cfg, md):
+            fail(error)
+    if isinstance(cfg, dict):
+        for error in check_build(pdir, cfg, md, required=strict):
+            fail(error)
 
     # ---- 3. tests ------------------------------------------------------
     tdir = pdir / "tests"
@@ -304,6 +371,30 @@ def validate_problem(pid: str) -> dict:
             paired = prob.tests
             res["tests"] = len(prob.tests)
 
+    # Trusted author-provided grammar checker, invoked on every input (public
+    # and hidden) with a deadline and discarded diagnostics. Never a judge hook.
+    validator = pdir / "input_validator.py"
+    if strict and not validator.is_file():
+        fail("input_validator.py is required in strict mode")
+    if validator.is_file():
+        try:
+            unfinished = re.search(r"\b(?:TODO|TBD)\b", validator.read_text(encoding="utf-8"))
+            if unfinished:
+                fail("input_validator.py contains unfinished template placeholders")
+            else:
+                for tc in paired:
+                    try:
+                        check = subprocess.run([sys.executable, "-I", str(validator.resolve())],
+                                               input=tc.input.encode("utf-8"), cwd=pdir,
+                                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                               timeout=2, check=False)
+                        if check.returncode != 0:
+                            fail(f"input_validator.py rejected test {tc.name} (exit {check.returncode})")
+                    except subprocess.TimeoutExpired:
+                        fail(f"input_validator.py timed out on test {tc.name}")
+        except (OSError, UnicodeError):
+            fail("input_validator.py is unreadable")
+
     # ---- 5. reference solution -----------------------------------------
     ref = EXAMPLES_DIR / f"{pid}_ref.py"
     if not ref.exists():
@@ -315,6 +406,8 @@ def validate_problem(pid: str) -> dict:
         res["ref"] = "missing"
         fail(f"reference solution examples/{pid}_ref.py (or .cpp) is missing")
     elif prob is not None:
+        if strict and re.search(r"\b(?:TODO|TBD)\b", ref.read_text(encoding="utf-8")):
+            fail("reference solution contains unfinished template placeholders")
         tmpdir = tempfile.TemporaryDirectory(prefix=f"val_{pid}_")
         try:
             cmd, disp, build_warnings = grader.prepare_command(ref, Path(tmpdir.name))
@@ -349,46 +442,16 @@ def validate_problem(pid: str) -> dict:
     # ---- 4. sample consistency -----------------------------------------
     if md.strip():
         samples = parse_samples(md)
-        if not samples:
-            warn("statement.md has no fenced `input:`/`output:` sample block")
-        test_pairs = [(t.input, t.expected, t.name) for t in paired]
-        matched: set[str] = set()
-        for idx, pair in enumerate(samples, 1):
-            if pair[1] is None:
-                warn(f"sample #{idx}: `input:` block has no `output:` label, skipped")
-                continue
-            s_in, s_out = pair
-            hit = next((name for ti, to, name in test_pairs
-                        if tokens(ti) == tokens(s_in) and tokens(to) == tokens(s_out)), None)
-            if hit is not None:
-                matched.add(hit)
-                ti, to, _ = next(x for x in test_pairs if x[2] == hit)
-                if canon(ti) != canon(s_in) or canon(to) != canon(s_out):
-                    warn(f"sample #{idx} matches test {hit} only after whitespace "
-                         "normalization (statement layout differs from tests/*.in|out)")
-                if len(tokens(ti)) > MAX_SAMPLE_TOKENS:
-                    warn(f"sample #{idx} (test {hit}) has {len(tokens(ti))} tokens "
-                         f"> {MAX_SAMPLE_TOKENS} — examples must be short, not stress "
-                         "tests; promote a smaller hidden test instead")
-                continue
-            # not among shipped tests: the statement example cannot be a public
-            # sample (config.samples could never reference it) -> warning only.
-            warn(f"sample #{idx}: statement example not shipped as a test "
-                 f"-> cannot be public sample ({pid})")
-
-        # Policy: config.samples and the statement must agree one-for-one — each
-        # public sample needs exactly one fenced example, and the statement must
-        # not show examples the problem does not ship. Enforced (fail), unlike
-        # the per-example checks above which only warn.
-        if paired and declared_samples is not None:
-            if len(samples) != len(declared_samples):
-                fail(f"statement.md has {len(samples)} sample block(s) but "
-                     f"config.samples lists {len(declared_samples)} "
-                     f"({', '.join(declared_samples)})")
-            missing = [s for s in declared_samples if s not in matched]
-            if missing:
-                fail(f"config.samples {missing} have no matching input/output "
-                     "example in statement.md (must match tests/*.in|out)")
+        if isinstance(cfg, dict):
+            sample_cfg = cfg
+            count = cfg.get("samples")
+            if declared_samples is None and isinstance(count, int) and not isinstance(count, bool):
+                sample_cfg = dict(cfg, samples=[t.name for t in paired[:max(0, count)]])
+            for error in public_sample_errors(sample_cfg, md, paired):
+                fail(error)
+        for idx, (s_in, _s_out) in enumerate(samples, 1):
+            if len(tokens(s_in)) > MAX_SAMPLE_TOKENS:
+                warn(f"sample #{idx} exceeds {MAX_SAMPLE_TOKENS} input tokens; use a short example")
 
     if tmpdir is not None:
         tmpdir.cleanup()
@@ -400,6 +463,8 @@ def validate_problem(pid: str) -> dict:
         res["no"] = int(prob.no)
     except SystemExit:
         res["hidden"] = False
+    if strict:
+        res["failures"].extend(f"strict: {w}" for w in res["warnings"])
     return res
 
 
@@ -418,6 +483,8 @@ def _read_no(pid: str) -> tuple:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Validate problems/ (config, tests, samples, refs).")
     ap.add_argument("ids", nargs="*", help="problem ids (default: all, sorted)")
+    ap.add_argument("--strict", action="store_true",
+                    help="require the authoring template, input validator and PDF; fail on warnings or missing packages")
     ap.add_argument("--jobs", "-j", type=int, default=1,
                     help="problems to validate concurrently (default: %(default)s). "
                          "Keep this low: judge_test enforces wall-clock time limits, so "
@@ -433,16 +500,16 @@ def main(argv: list[str] | None = None) -> int:
             # CI stays green; run from a checkout that has problems/ to validate.
             print(f"skip: no problems/ directory at {PROBLEMS_DIR} "
                   "(problem data lives in Supabase)")
-            return 0
+            return 1 if args.strict else 0
         ids = sorted(p.name for p in PROBLEMS_DIR.iterdir() if p.is_dir())
     if not ids:
         print("no problems to validate")
-        return 0
+        return 1 if args.strict else 0
 
     jobs = max(1, args.jobs)
     results: dict[str, dict] = {}
     with ThreadPoolExecutor(max_workers=jobs) as pool:
-        for res in pool.map(validate_problem, ids):
+        for res in pool.map(lambda pid: validate_problem(pid, strict=args.strict), ids):
             results[res["pid"]] = res
 
     # config.no must be unique across ALL problems, not just the ones requested

@@ -47,6 +47,8 @@ def normalize_pdf(data: bytes) -> bytes:
     return data
 
 ROOT = Path(__file__).parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 FONTDIR = (Path(__file__).parent / "fonts").resolve()
 
 ACCENT = "00695C"  # deep teal
@@ -469,9 +471,16 @@ def build(pid: str, title: str, tl: float, mem: int, md: str) -> str:
 
 
 def main(pid: str, output_dir: Path | None = None) -> None:
+    import grader
+    from tools.statement_build import build_record
+    from tools.validate_problem import public_sample_errors
+
     pdir = ROOT / "problems" / pid
     cfg = json.loads((pdir / "config.json").read_text(encoding="utf-8"))
     md = (pdir / "statement.md").read_text(encoding="utf-8")
+    errors = public_sample_errors(cfg, md, grader.load_problem(pid).tests)
+    if errors:
+        raise SystemExit("PDF preflight failed: " + "; ".join(errors))
     tex = build(pid, cfg["title"], float(cfg.get("time_limit", 1.0)),
                 int(cfg.get("memory_limit", 256)), md)
     # Byte-deterministic builds: same .tex always yields identical bytes
@@ -490,6 +499,8 @@ def main(pid: str, output_dir: Path | None = None) -> None:
             raise SystemExit(f"tectonic failed for {pid}")
         shutil.move(str(Path(tmp) / "statement.pdf"), str(out))
     out.write_bytes(normalize_pdf(out.read_bytes()))
+    record_path = out.with_suffix(".build.json")
+    record_path.write_text(json.dumps(build_record(cfg, md, out.read_bytes()), indent=2) + "\n", encoding="utf-8")
     print(f"wrote {out} ({out.stat().st_size // 1024} KB)")
 
 

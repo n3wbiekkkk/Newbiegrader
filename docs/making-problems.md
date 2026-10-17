@@ -1,365 +1,175 @@
-# วิธีทำโจทย์ (Making a Problem) — สูตรให้ AI ทำเหมือนกันทุกครั้ง
+# มาตรฐานสร้างโจทย์สำหรับทุก AI / ผู้เขียน
 
-เอกสารนี้คือ "สูตร" สำหรับสร้างโจทย์ใหม่ 1 ข้อใน Newbiegrader ให้ได้ผลเหมือนกัน
-ทุกครั้งไม่ว่า AI session ไหนจะทำ อ่านคู่กับ `agent.md` §7 (workflow เพิ่มโจทย์)
+ใช้เอกสารนี้กับ `AGENTS.md` ทุกครั้งที่สร้างหรือแก้โจทย์ มาตรฐานและ template อยู่ใน
+Git เพื่อให้ AI คนละตัวหรือคนละ session ใช้โครงสร้าง รูปแบบ PDF และขั้นตรวจเดียวกัน
+เนื้อเรื่องยังต้องผ่านการอ่านทวน เครื่องมือตรวจไม่ได้รับรองความถูกต้องเชิงความหมาย
 
-> เป้าหมาย: ทำตามลำดับในไฟล์นี้แล้วได้โจทย์ที่ `validate_problem.py` ผ่าน 0 FAIL,
-> reference solution AC ทุกเทสต์, PDF ตรงสไตล์ reference และเทสต์แน่นพอที่โค้ดผิดจะตก
+## 1. แหล่งข้อมูลและสิ่งที่ต้องตกลงก่อนเขียน
 
----
+- `config.json`: ชื่อ `ชื่อไทย (English Name)`, เลขถาวร, เวลา, หน่วยความจำ,
+  checker, difficulty, tags และรายชื่อ public samples
+- `statement.md`: เรื่องที่สัมพันธ์กับชื่อ กติกาครบ และ Input/Output ที่ไม่กำกวม
+- `tests/*.in|out`: แหล่งข้อมูลตัวอย่างจริง ห้ามคัดลอกแล้วแก้ซ้ำใน statement ด้วยมือ
+- `input_validator.py`: grammar/constraints ของ input ทั้ง public และ hidden
+- `examples/<id>_ref.py` หรือ `.cpp`: reference ตามกติกาเดียวกัน ใช้ engine เดิมตัดสิน
+- `tools/make_statement_tex.py` + `tools/fonts/`: รูปแบบ PDF กลาง ห้ามสร้าง renderer
+  หรือแต่งฟอนต์ ระยะขอบ และ template ใหม่แยกตาม AI
+- `problems/`, `examples/` และไฟล์ build ภายในนั้นเป็นข้อมูลส่วนตัวที่ Git ignore
+  source of truth ที่เผยแพร่คือ Supabase ห้าม force-add tests/เฉลยเข้า public repo
 
-## 0. หลักการ (อย่าละเมิด)
+ก่อนสร้าง ให้สรุป I/O contract: ทุกบรรทัดมีกี่ค่า ชนิดและช่วงค่า ตัวคั่น ขนาดตาราง
+ลำดับคำตอบ EOF และกรณีพิเศษ ตารางจำนวนเต็มคั่นช่องว่าง (`0 1 0`) กับสตริงติดกัน
+(`010`) เป็นคนละรูปแบบ ต้องเลือกตามโจทย์และใช้ให้ตรงในทุกไฟล์ ส่วน output อาจใช้
+ตัวคั่นต่างจาก input ได้ แต่ต้องเขียนให้ชัด ห้ามอนุมานว่าเหมือนกันเอง
 
-- 1 โจทย์ = 1 โฟลเดอร์ `problems/<id>/` + reference solution `examples/<id>_ref.py`
-- `<id>` = ตัวเล็ก snake_case อังกฤษ (`arrange_tray`, `kai_gai_codex`) — ห้ามเว้นวรรค/ตัวใหญ่
-- **อย่าแก้ `grader.py` / `server.py` / `static/app.js` พร้อมกับงานอื่น** (คู่มือ agent.md §14 ข้อ 13)
-- ตัวอย่างใน statement **ต้องตรงกับเทสต์ทุก byte** (canonical) — ไม่ใช่แค่ค่าตรง
-- เทสต์ต้องแน่น: ถ้าโค้ดผิด (off-by-one ฯลฯ) ยัง AC = เทสต์หลวม ต้องเติมเทสต์ ไม่ใช่ลดเกณฑ์
-- **`problems/` และ `examples/` ไม่ถูก versioned** (อยู่ใน `.gitignore`) — repo เป็น public
-  และ source of truth คือ Supabase ไฟล์โจทย์/เฉลยอยู่บนดิสก์เพื่อทำงานและรันเทสต์เท่านั้น
-  การเผยแพร่โจทย์ทำผ่าน import ขึ้น Supabase (ข้อ 9) ไม่ใช่ commit
-- เริ่มงานให้ working tree สะอาดก่อน (`git status --short`)
+เรื่องเล่าต้องใช้คำเรียกคงที่ อธิบายว่าต้องหาค่าอะไร ระบุการเปลี่ยนสถานะพร้อมกันหรือ
+ตามลำดับให้ครบ และไม่เพิ่มกติกาแฝงจากเรื่อง ห้ามมีหัวข้อคำใบ้/วิธีทำ/เฉลย
+อย่าแต่ง subtasks หรือเกณฑ์คะแนนเพิ่ม ถ้าโจทย์เดิมไม่ได้ระบุไว้
 
----
+## 2. สร้างจาก template เดียว
 
-## 1. หาเลขโจทย์ + สร้างโฟลเดอร์
-
-```sh
-cd <repo root>
-git status --short                            # ต้องสะอาด (หรือรู้ว่าอะไร dirty อยู่และห้ามแตะ)
-python3 tools/number_problems.py --list       # ดูเลขที่ใช้ไปแล้ว
-python3 tools/number_problems.py --check      # ต้อง "ต่อเนื่องครบ" ไม่มีซ้ำ
-mkdir -p problems/<id>/tests
-```
-
-- โจทย์สาธารณะ: เลขอยู่ในช่วง `1..` ต่อเนื่อง (ข้อใหม่ = สูงสุด + 1)
-- โจทย์ชุดคอนเทสต์: ใส่ `"hidden": true` ใน config แล้วเลขจะไปอยู่ช่วง `1001..` ต่อเนื่อง
-- ให้ `--assign` เป็นตัวกำหนดเลข (มันต่อท้ายให้ถูกช่วง) หรือเขียน `"no"` เองแล้ว `--check`
+ตรวจ working tree และเลขที่ใช้แล้วก่อน ห้ามแตะไฟล์งานอื่นหรือเปลี่ยนเลขโจทย์เดิม:
 
 ```sh
-python3 tools/number_problems.py --assign     # ให้เลขกับข้อที่ยังไม่มี "no" (ต่อท้าย)
-python3 tools/number_problems.py --check      # ยืนยัน ต่อเนื่องครบ
+git status --short
+python tools/number_problems.py --list
+python tools/number_problems.py --check
+python tools/problem_authoring.py new new_problem \
+  --thai 'ชื่อภาษาไทย' --english 'English Name' --no 69
 ```
 
----
+`69` เป็นเพียงตัวอย่าง ต้องเลือกเลขที่ยังไม่ใช้จริง โจทย์ contest ใช้ `--hidden`
+และเลขตั้งแต่ `1001` เครื่องมือไม่เขียนทับโฟลเดอร์/reference เดิม ไม่ใช้เลขซ้ำ
+และไม่ติดต่อฐานข้อมูล สร้างไฟล์จาก `tools/templates/problem/`:
 
-## 2. `config.json`
+- `config.json` เริ่มที่ 1 วินาที / 256 MB / token / easy / Implementation
+  ปรับตามข้อกำหนดจริง โดย tags ต้องอยู่ใน `grader.KNOWN_TAGS`
+- `statement.md` ใช้ลำดับ Input → Output → ตัวอย่าง → คำอธิบายตัวอย่าง → Limits
+- `input_validator.py` และ reference เป็นร่างที่ **ยังไม่ผ่าน** จนกว่าจะเขียนจริง
 
-ไฟล์เดียวจบ ทุกฟิลด์มีความหมายตรงกับ `agent.md` §7.3:
+กรอก TODO ทั้งหมด ไม่ใช้ default แทนการตัดสินใจเรื่อง limits หรือ difficulty
+ถ้ายอมหลายคำตอบ ต้องกำหนดคำตอบที่เป็นเอกลักษณ์หรือใช้ checker ที่รองรับจริง
+checker `token` ไม่ยอมรับคำตอบคนละค่าแม้ว่าจะเป็นคำตอบที่โจทย์เปิดให้เลือกได้
 
-```json
-{
-  "title": "ชื่อไทย (English Name)",
-  "time_limit": 1.0,
-  "memory_limit": 256,
-  "checker": "token",
-  "tolerance": 1e-6,
-  "difficulty": "easy",
-  "tags": ["Implementation", "Ad-hoc"],
-  "samples": ["01", "02", "03"],
-  "no": 63
-}
-```
+## 3. สร้าง tests และ input validator
 
-| ฟิลด์ | กติกา |
-|---|---|
-| `title` | `ชื่อไทย (English)` — ใช้เป็นหัวเรื่องบน PDF (จาก config ไม่ใช่ `# ` ใน md) |
-| `time_limit` | วินาที, validator บังคับ `0 < x <= 60` |
-| `memory_limit` | MB, validator บังคับ `16..4096` (ถูก cap ที่ `MEMORY_CAP_MB` อีกชั้น) |
-| `checker` | `token` = เทียบทีละโทเคน (ตัด whitespace) · `exact` = byte ต่อบรรทัด · `float` = ตาม `tolerance` · `decimal2` = ทศนิยม 2 ตำแหน่ง |
-| `difficulty` | `easy` \| `medium` \| `hard` |
-| `tags` | ต้องอยู่ใน KNOWN_TAGS ของ `grader.py` (Implementation, Math, Ad-hoc, String, Data Structure, DP, Sweepline, Greedy, DFS, Bitmasks, Binary Search, Graph, DSU, Sorting, Sliding Window, Divide and Conquer, Matrix Exponential, Tree, Fixed Parameter, Hashing, Geometry, NP, Recursive, Linear Algebra, Matching) |
-| `samples` | ลิสต์ชื่อเทสต์ตัวอย่างสาธารณะ — **นโยบาย repo: 3 ชุดต่อข้อ** (`["01","02","03"]`) ต้องมีไฟล์จริง |
-| `hidden` | ใส่ `true` เฉพาะโจทย์ชุดคอนเทสต์ (ไม่โชว์หน้า Task) |
-| `no` | เลขโจทย์ บังคับ, ไม่ซ้ำ, `>= 1` |
+- อย่างน้อย 10 ชุด: public `01`, `02`, `03` และ hidden `1001..` ต่อเนื่อง
+- ประกาศ public samples ใน `config.samples` ตามลำดับตัวอย่าง ใช้ชื่อเลขสองหลัก
+- UTF-8, LF, มี newline ปิดไฟล์ ทุก `.in` ต้องมี `.out` คู่กัน
+- ตัวอย่างสั้น อ่านได้ (ไม่เกิน 40 input tokens); มีคำอธิบายที่ตรงข้อมูลทุกชุด
+- ครอบคลุม min/max, edge cases, กรณีเฉพาะ, random แบบระบุ seed และ stress
+- สร้าง expected ด้วย reference ที่ตรวจแล้ว ใช้ `check=True` และ timeout เมื่อรัน
+  ห้ามเขียน `.out` ต่อเมื่อ reference crash/timeout และอย่าใช้ reference เพียงตัวเดียว
+  เป็นหลักฐานความถูกต้อง: เทียบกับ brute force/วิธีอิสระบนเคสเล็กด้วย
 
-> `checker` เป็น `token` แล้ว ต้องมั่นใจว่า **คำตอบมีแบบเดียว** ถ้าโจทย์ยอมหลายคำตอบ
-> ต้องเขียนกติกาให้คำตอบเดียว (เช่นกำหนดลำดับ) มิฉะนั้นนักเรียนที่ตอบถูกแบบอื่นจะโดน WA
+`input_validator.py` เป็น **trusted author tool** ไม่ใช่โค้ดผู้ส่ง ไม่ถูกรันใน production
+และไม่ถูกอัปโหลดโดย importer ต้องอ่านหนึ่ง input จาก stdin, exit 0 เมื่อถูกต้อง,
+exit nonzero เมื่อผิด ตรวจชนิด/ช่วงค่า จำนวนแถว ความยาวแถว ตัวคั่น เงื่อนไขข้ามฟิลด์
+และไม่มีข้อมูลเกิน EOF อย่าพิมพ์ input หรือ expected ลง log และอย่าเขียน validator
+ที่รับทุกอย่าง การใช้ `split()` อย่างเดียวอาจจับตารางผิดรูปแบบไม่ได้
 
----
+`validate_problem.py` เรียก validator กับ **ทุก** `.in` ที่จับคู่แล้ว มี deadline 2 วินาที
+ต่อไฟล์และทิ้ง stdout/stderr รายงานเฉพาะชื่อเคสและ exit code/timeout
+ผู้เขียนต้องทดสอบ negative inputs ด้วย เช่น แถวติดกัน จำนวนคอลัมน์ผิด ค่านอกช่วง
+และข้อมูลเกินท้ายไฟล์ กรณี `forest_fire_spread` ต้องปฏิเสธ `010` เมื่อ C = 3
 
-## 3. `statement.md`
-
-### โครงบังคับ
-
-````markdown
-# ชื่อไทย (English Name)
-
-<เนื้อเรื่องภาษาไทยที่สัมพันธ์กับชื่อโจทย์ ตามด้วยเป้าหมายและกติกาที่ชัดเจน>
-
-## Input
-- บรรทัดแรก: ...
-- ...
-
-## Output
-- ...
-
-## ตัวอย่าง
-```
-input:
-6
-1 2 1 3 2 1
-
-output:
-3
-1 2 3
-1 2
-1
-```
-
-## คำอธิบายตัวอย่าง
-<อธิบายว่าทำไมตัวอย่างได้คำตอบนี้>
-
-## Limits
-- เวลา 1 วินาที, หน่วยความจำ 256 MB
-````
-
-### กติกา
-
-- `# ...` บรรทัดแรกใช้แค่ความสวย — **หัวเรื่องจริงมาจาก `config.json` → `title`**
-- **section เขียนเป็นภาษาอังกฤษ** (`## Input` / `## Output` / `## ตัวอย่าง` / `## Limits`
-  / `## Subtasks`) เพราะ tool แปลหัวข้อเป็นไทยให้:
-  - `Input` → "ข้อมูลนำเข้า"
-  - `Output` → "ข้อมูลส่งออก"
-  - `ตัวอย่าง` → "ตัวอย่างข้อมูลนำเข้าและข้อมูลส่งออก"
-  - `Limits` → "ข้อจำกัด"
-  - `Subtasks` → "การให้คะแนน"
-- ตัวอย่าง **ต้องอยู่ใน fenced block** และมีป้าย `input:` และ `output:` — ถ้าไม่มีป้ายนี้
-  validator จะ WARN "no fenced `input:`/`output:` sample block"
-- **แต่ละข้อให้มีตัวอย่าง 3 ชุด** (แต่ละชุด = fenced block หนึ่งอัน ป้าย `input:`/`output:`)
-  ตั้งชื่อเทสต์ `01`,`02`,`03` และประกาศใน `config.samples` — วิธีที่แนะนำคือดึงเทสต์ hidden
-  ที่เล็ก/หลากหลายขึ้นมาเป็นตัวอย่าง แล้ว renumber hidden ที่เหลือให้ต่อเนื่อง `1001..`
-  - **validator บังคับแล้ว (FAIL ไม่ใช่ WARN):** `config.samples` ต้องมี ≥ 3 ชุด
-    (`MIN_SAMPLES`) และจำนวน fenced block ใน `statement.md` ต้องตรงกับจำนวนใน
-    `config.samples` พร้อมทุกชื่อมี block ที่ match `tests/*.in|out` จริง
-  - **ตัวอย่างต้องสั้น อ่านเข้าใจง่าย** — อย่าดึงเทสต์ยาว/stress test มาเป็นตัวอย่าง
-    (validator จะ WARN "examples must be short" ถ้า sample มีเกิน 40 token)
-    ให้เลือกเทสต์ hidden ที่เล็กที่สุดที่ยังมี output ต่างจากตัวอย่างเดิม
-- **ห้ามมี section ใบ้วิธีทำ** (เช่น "แนวคิด", "复杂度") — ผิดกติกาโจทย์
-- เนื้อเรื่องต้องอธิบายได้ว่าทำไมจึงต้องแก้ปัญหานี้ ใช้ตัวละครและคำศัพท์ให้คงเส้นคงวา
-  ไม่ยัดบริบทที่ไม่เกี่ยวกับชื่อ ไม่เฉลยอัลกอริทึม และไม่เพิ่มเงื่อนไขจากเรื่องเล่า
-- เมื่อตกแต่งโจทย์เดิม ให้เก็บข้อมูลเข้า–ออก กติกาเฉพาะ ตัวอย่าง และเกณฑ์คะแนนเดิม
-  ตรวจ hash ของ config และทุกไฟล์เทสต์ก่อน–หลัง ห้ามเปลี่ยนเพื่อให้เข้ากับเรื่องใหม่
-- เขียนข้อความให้เหมือนเว็บ/tool render: ดูข้อ "การเขียน markdown ให้ PDF สวย" ด้านล่าง
-
-### การเขียน markdown ให้ PDF สวย (ตัวแปลงของ `make_statement_tex.py`)
-
-| เขียนใน md | ได้เป็น |
-|---|---|
-| `<=`, `>=`, `!=` | $\le$, $\ge$, $\ne$ |
-| `n^2`, `10^9` | ยกกำลัง (math) |
-| ตัวอักษรเดี่ยว `n`, `a_i` | อิทัลิกแบบ math (`$n$`) |
-| `` `code` `` | Inconsolata (โค้ด) |
-| `**หนา**` | ตัวหนา |
-| `` `n` `` ที่เป็นตัวแปรเดี่ยว | math อิทัลิก (เหมือน `$n$`) |
-
-- เนื้อเรื่อง/`## Input`/`## Output` ตั้งใจเป็น 17.3pt ส่วน math/latin ตั้งใจเล็ก (12pt)
-  ตาม reference — **อย่าแก้**
-- ตัวอักษรพิเศษ `\ { } $ & % # _` พิมพ์ตรง ๆ ได้ (tool escape ให้)
-
----
-
-## 4. สร้าง PDF + verify ด้วยตาจริงทุกครั้ง
+## 4. ดึงตัวอย่างจากไฟล์เทสต์ ไม่พิมพ์ซ้ำ
 
 ```sh
-python3 tools/make_statement_tex.py <id> 2>&1 | grep -v "absolute path"
-python3 tools/make_statement_tex.py <id> --output-dir output/pdf/previews
-python3 tools/make_statement_tex.py --all  # หลังตรวจ preview แล้ว
-pdftotext problems/<id>/statement.pdf - | head -40
-pdftoppm -png -r 60 problems/<id>/statement.pdf /tmp/pdfcheck/<id>
-# แล้วเปิดดูภาพทุกหน้า (หัวเรื่อง + ตารางตัวอย่าง + เลขหน้าล่างขวา)
+python tools/problem_authoring.py sync-samples new_problem --write
+python tools/problem_authoring.py sync-samples new_problem
 ```
 
-- build ต้องขึ้น `wrote problems/<id>/statement.pdf (NN KB)`
-- รูปแบบมาตรฐาน: A4 ขอบ 2.2 ซม., ชื่อไทย 26pt พร้อมชื่ออังกฤษที่เล็กกว่า,
-  บรรทัดเวลา/หน่วยความจำ 12pt, เนื้อหาไทย 17.3pt, หัวข้อ 22pt, เลขหน้าล่างขวา
-- ตัวอย่างทั้งสามชุดอยู่ในตาราง input/output สองคอลัมน์ ไม่มีแถบสี
-  หัวตารางซ้ำเมื่อข้ามหน้า ลดขนาด monospace เฉพาะกรณีบรรทัดกว้าง เช่นภาพ ASCII
-- ไม่บังคับทุกข้อให้สองหน้า: เก็บหัวข้อกับเนื้อหาและไม่ตัดแถวตัวอย่างกลางชุด
-  ให้ตารางตัวอย่างขนาดสั้นอยู่กับคำอธิบายเมื่อมีพื้นที่พอบนหน้าใหม่
-- มีการให้คะแนนเฉพาะเมื่อ statement เดิมระบุไว้จริง ไม่แต่ง subtask เพิ่ม
-- ถ้า build พัง: มักเป็น backslash หลุด (เช่น `\n`, `\mth` ใน comment ของ preamble)
-  — เปิด log ของ tectonic ที่ tool พ่นออกมา
-- **กับดักโจทย์เดิม**: ถ้าโจทย์นี้เคยมี `statement.pdf` อยู่แล้ว และ `statement.md`
-  สั้นกว่าเนื้อหา PDF ตัวเต็ม การ regen จะทำให้เนื้อหาหาย ให้กันไว้ก่อน:
+คำสั่งแรกแทนที่เฉพาะส่วน `## ตัวอย่าง` ด้วย public fixtures ตาม config ไม่แก้เรื่อง
+Input/Output คำอธิบาย หรือเทสต์ และไม่ดึง hidden cases มาใส่ คำสั่งที่สองตรวจอย่างเดียว
+ถ้าไม่ตรงจะ exit 1 ตัวอย่างแต่ละชุดมี fenced block พร้อม `input:` / `output:`
+
+Validator บังคับให้ตัวอย่างตรง public fixtures ตามลำดับ **รวมช่องว่างและการขึ้นบรรทัด**
+ยกเว้น newline ปิดไฟล์หนึ่งตัว mismatch เป็น FAIL ไม่ใช่ WARN
+ถ้าแก้ input ต้องแก้ contract/parser/validator และชุดทดสอบให้สอดคล้อง แล้ว sync ใหม่
+ห้าม sync ทับเพื่อซ่อนข้อผิดพลาดในข้อกำหนด
+
+## 5. สร้างและตรวจ PDF
 
 ```sh
-git show HEAD:problems/<id>/statement.pdf > /tmp/old.pdf 2>/dev/null || true
-old=$(pdftotext /tmp/old.pdf - 2>/dev/null | wc -c)
-python3 tools/make_statement_tex.py <id>
-new=$(pdftotext problems/<id>/statement.pdf - 2>/dev/null | wc -c)
-# ถ้า new < 0.8*old ให้ย้อนกลับ อย่าใช้ PDF ใหม่
-git checkout -- problems/<id>/statement.pdf
+python tools/make_statement_tex.py new_problem --output-dir output/pdf/previews
+python tools/make_statement_tex.py new_problem
+mkdir -p tmp/pdfs/new_problem
+pdftotext problems/new_problem/statement.pdf -
+pdftoppm -png -r 100 problems/new_problem/statement.pdf tmp/pdfs/new_problem/page
 ```
 
----
+เปิดดูภาพ **ทุกหน้า**: ไม่มีข้อความหาย/ล้น/ทับกัน ตัวอย่างอ่านได้ ภาษาไทยไม่เป็นสี่เหลี่ยม
+ใช้ A4 ขอบ 2.2 ซม., ชื่อไทย 26pt + อังกฤษขนาดเล็กกว่า, limits 12pt,
+เนื้อไทย 17.3pt, หัวข้อ 22pt, ตาราง input/output สองคอลัมน์ไม่มีแถบสี
+และเลขหน้าล่างขวา ไม่บังคับจำนวนหน้าให้เท่ากัน
 
-### เผยแพร่เฉพาะเนื้อเรื่อง/PDF ของโจทย์เดิม
+เครื่องมือหยุดก่อนเรียก tectonic หาก sample ไม่ตรง สร้าง `statement.build.json`
+คู่กับ PDF เก็บ hash ของ statement/metadata ที่ใช้ render, renderer, ฟอนต์ และ PDF
+เมื่อแก้แหล่งข้อมูลแล้วไม่ rebuild ตัวตรวจจะ FAIL ว่า PDF เก่า preview มี build record
+ของตัวเองและไม่เขียนทับไฟล์ติดตั้ง hash นี้ตรวจความเก่า ไม่แทนการตรวจภาพหรือยืนยันว่า
+PDF ถูกต้องเมื่อผู้เขียนจงใจปลอม record
 
-ใช้ client ฝั่งเครื่องมือที่ได้รับ `SUPABASE_URL` และ `SUPABASE_KEY` จาก environment
-โดยไม่พิมพ์ค่าลง terminal หรือใส่ค่าในคำสั่ง:
+ก่อนแก้โจทย์เดิม สำรอง config, statement/PDF, tests และ reference ไว้ในพื้นที่ส่วนตัว
+โจทย์ไม่ได้อยู่ใน Git จึงห้ามพึ่ง `git checkout -- problems/...` สำหรับกู้คืน
+ถ้าแค่แต่งเรื่อง ห้ามเปลี่ยน rules/limits/เลข/sample/outputs เพื่อให้เรื่องเข้ากัน
+
+## 6. ประตูตรวจบังคับสำหรับโจทย์ใหม่
 
 ```sh
-python3 tools/import_problems_supabase.py --statements-only --dry-run
-python3 tools/import_problems_supabase.py --statements-only
+python tools/validate_problem.py new_problem --strict
+python tools/number_problems.py --check
+python tools/validate_problem.py
+python -m unittest discover -s tests -v
+python tools/plagiarism.py
+python -m compileall -q grader.py server.py judge_runner.py tools
+node --check static/app.js
+node tools/check_frontend.js
+node tools/check_styles.js
+node --test tests/test_*.js
 ```
 
-โหมดนี้ตรวจ title/เลข/เวลา/หน่วยความจำกับแถวเดิมก่อน อัปโหลด PDF ไปยัง private path
-ที่มี SHA-256 แล้วจึงเปลี่ยน `statement_md`, `statement_pdf_path`, `updated_at`
-พร้อม version guard ไม่แตะเทสต์ เฉลย หรือสถานะเผยแพร่ และไม่ลบ PDF รุ่นเก่า
-ห้ามใช้ร่วมกับ `--renumber` หรือ `--prune` เก็บ snapshot แถวเดิมและ PDF ไว้ก่อนรันเสมอ
+โหมด `--strict` ต้องมี validator, PDF/build record ปัจจุบัน, หัวข้อและชื่อถูกแบบ,
+ไม่มี TODO/TBD และไม่มี WARN; ไม่มี `problems/` หรือไม่มีข้อให้ตรวจถือว่าล้มเหลว
+reference ต้อง AC ทุกเคสผ่าน `grader.prepare_command` / `grader.judge_test` เดิม
 
----
+เขียน solution ผิดโดยตั้งใจหลายแบบแล้วตรวจให้ตกที่เคสที่คาดไว้ อย่าลดความเข้ม checker
+เพื่อให้ reference หรือโค้ดผิดผ่าน เก็บผลการรันจริงและข้อจำกัดของเครื่องทดสอบในรายงาน
 
-## 5. `tests/` — อย่างน้อย 10 เคส
+โจทย์เดิมยังใช้ compatibility mode ได้ระหว่างทยอยเพิ่ม validator/build record
+แต่ sample mismatch เป็น FAIL ทุกโหมด หากมี build record จะตรวจความเก่าทุกโหมด
+ห้ามแก้ tests/rules ของโจทย์เดิมเพียงเพื่อให้ผ่าน strict
+CI มี synthetic authoring tests ใน Git จึงตรวจเครื่องมือได้แม้ไม่มีโจทย์ส่วนตัว
+
+## 7. เผยแพร่และตรวจของจริง
+
+เก็บ credentials ใน environment ของเครื่องมือฝั่ง server ไม่พิมพ์ค่าลงคำสั่งหรือ log
+สำหรับโจทย์ใหม่ที่ได้รับอนุญาตให้เผยแพร่:
 
 ```sh
-ls problems/<id>/tests
+python tools/import_problems_supabase.py --problem new_problem --strict --dry-run
+python tools/import_problems_supabase.py --problem new_problem --strict
 ```
 
-- **ตัวอย่างสาธารณะ**: ชื่อเลขเล็ก `01`, `02`, … และต้องถูกประกาศใน `config.samples`
-- **เทสต์ลับ**: เริ่ม `1001` ขึ้นไป **ต่อเนื่อง** ไม่มี gap
-- เลขเล็กที่ **ไม่ได้** ประกาศใน `samples` = **FAIL** (validator บังคับ)
-- ต้องมีเทสต์ลับ ≥ 1 เคสเสมอ
-- ทุกไฟล์ `.in` ต้องไม่ว่าง, UTF-8, ไม่มี `\r`
+`--strict` ตรวจ local ทั้งหมดก่อนติดต่อ Supabase; ถ้าไม่ผ่าน ไม่มี remote writes
+ทุกโหมดของ CLI มี sample/build preflight แม้ไม่ได้ใช้ strict ส่วน `--dry-run`
+ตรวจความพร้อมเท่านั้น **ไม่ได้** อัปโหลดหรือพิสูจน์ว่า publish สำเร็จ
+ตรวจ metadata, samples, tests hash, PDF และสิทธิ์เข้าถึงบนเว็บหลัง publish จริง
 
-### ครอบคลุมอะไรบ้าง
+สำหรับแก้เฉพาะเรื่อง/PDF ของข้อเดิม ใช้ `--statements-only --problem <id>`
+พร้อม dry-run ก่อน โหมดนี้ไม่แก้เทสต์/เลข/visibility และห้ามใช้เพื่อเผยแพร่การเปลี่ยน input
+สำรองแถวเดิมและ assets ก่อนอัปเดตเสมอ importer ปกติไม่ใช่ transaction ข้าม Storage/DB
+ถ้าแก้ชุดเทสต์ของโจทย์เดิม ต้องตรวจ active jobs และวางแผน rollback ของไฟล์กับ row
 
-1. ตัวอย่างใน statement (ชื่อตรงกัน เนื้อหา **byte-identical**)
-2. edge: `n = 1`, ค่าต่ำสุด/สูงสุด, เคสว่าง (ถ้ามี)
-3. ค่าสุดขีดตาม constraint (max `n`, max ค่า)
-4. random แบบ seeded (ให้ reproducible)
-5. กับดักโค้ดผิดยอดฮิต: off-by-one, ไม่ขยาย shorthand, ลืมเคสว่าง/สุดขีด, O(N²) กับ max input
+local source ต้อง restart หลังเปลี่ยนโจทย์; Supabase source มี metadata TTL refresh
+ให้ตรวจว่า `/api/version` และ problem detail เห็น hash รุ่นใหม่ก่อนสรุปว่างานเสร็จ
+commit/push เฉพาะ code/docs/tools ที่เปลี่ยน ห้าม `git add -A` หรือ force-add ข้อมูลส่วนตัว
 
-### gen output ด้วย ref solution เสมอ (อย่าพิมพ์มือ)
+## Prompt ย่อสำหรับ AI ตัวอื่น
 
-```sh
-python3 - <<'PY'
-import subprocess
-from pathlib import Path
-tests = Path('problems/<id>/tests')
-ref = Path('examples/<id>_ref.py')
-cases = {
-    "01": "6\n1 2 1 3 2 1\n",
-    "1001": "5\n1 2 3 4 5\n",
-    # ... อย่างน้อย 10 เคส
-}
-for name, data in cases.items():
-    (tests / f"{name}.in").write_text(data, encoding="utf-8")
-    out = subprocess.run(["python3", str(ref)], input=data,
-                         capture_output=True, text=True).stdout
-    (tests / f"{name}.out").write_text(out, encoding="utf-8")
-    print(name, "ok")
-PY
-```
-
-> ตัวอย่างใน `01.in`/`01.out` ต้องตรงกับ fenced block ใน statement ทุก byte
-> (validator เทียบ token ก่อน แล้วเตือนถ้า canonical ไม่ตรง — ถ้าเตือน = ยังไม่ผ่าน)
-
----
-
-## 6. Reference solution
-
-- วางที่ `examples/<id>_ref.py`
-- Python stdlib ล้วน อ่าน `sys.stdin` เขียน `sys.stdout`
-- ต้อง **AC ทุกเทสต์**
-
-```python
-import sys
-
-def solve():
-    data = sys.stdin.read().split()
-    if not data:
-        return
-    # ... อ่าน input และเขียนคำตอบ
-    sys.stdout.write("...\n")
-
-solve()
-```
-
----
-
-## 7. ตรวจ 3 ชั้น
-
-```sh
-python3 grader.py run <id> examples/<id>_ref.py   # ต้อง ACCEPTED N/N
-python3 tools/validate_problem.py <id>            # ต้อง OK #<no> ... 0 FAIL
-```
-
-- **ทดสอบว่าเทสต์แน่น**: เขียน solution ผิด **ตั้งใจ** (เช่น off-by-one) ลง `/tmp/bad.py`
-  แล้ว `python3 grader.py run <id> /tmp/bad.py` ต้อง **ไม่ AC** (ได้ WA ที่เคสที่ควรตก)
-  ถ้า AC = เทสต์หลวม ให้เติมเทสต์
-- `validate_problem.py` จะรัน ref กับทุกเทสต์ด้วย `grader.judge_test` ให้เอง
-  และ **FAIL** ถ้า sample ไม่ครบ 3 ชุด หรือจำนวน sample ใน statement ไม่ตรงกับ `config.samples`
-
----
-
-## 8. ชุดตรวจก่อน commit (บังคับ)
-
-```sh
-python3 tools/number_problems.py --check
-python3 tools/validate_problem.py            # ทั้งชุด
-python3 -m unittest discover -s tests -v     # ต้องเขียว (ยกเว้น fail ที่เป็นข้อจำกัดเครื่องนี้)
-python3 -m compileall -q grader.py server.py judge_runner.py tools
-```
-
-- ถ้าแก้ frontend เพิ่ม: `node --check static/app.js && node tools/check_frontend.js && node tools/check_styles.js`
-- restart server แล้วเทสบนเว็บ (ค้นหาด้วยเลขโจทย์ได้)
-
----
-
-## 9. เผยแพร่ + commit
-
-`problems/` และ `examples/` **ไม่ถูก versioned** (อยู่ใน `.gitignore`) — `git add` ไฟล์
-เหล่านี้จะไม่ติด ดังนั้นการ "ส่งโจทย์" คือ **import ขึ้น Supabase** ไม่ใช่ commit
-
-```sh
-# 1) ตรวจก่อน import (ไม่เขียนอะไร) — ต้องมี service_role key (server-side เท่านั้น)
-SUPABASE_URL=... SUPABASE_KEY=<service_role> \
-  python3 tools/import_problems_supabase.py --problem <id> --dry-run
-
-# 2) import จริง (idempotent): metadata + public samples/statement ขึ้น Postgres,
-#    hidden tests + statement.pdf ขึ้น Storage bucket judge-assets (private)
-SUPABASE_URL=... SUPABASE_KEY=<service_role> \
-  python3 tools/import_problems_supabase.py --problem <id>
-```
-
-- commit (git) ใช้เฉพาะเวลาที่แก้ **code/docs/tools** เท่านั้น — รูป `Area: subject`
-  ```sh
-  git add docs/making-problems.md tools/...    # เฉพาะไฟล์ที่ track ได้
-  git commit -m "Docs: ..."                     # เช่น "Frontend: ...", "Statements: ..."
-  ```
-- **อย่า `git add -A`** — `problems/`/`examples/` ถูก ignore อยู่แล้ว และอาจมีไฟล์ dirty ของงานอื่นค้าง
-- หลัง import แล้ว restart server + เทสบนเว็บ (ค้นด้วยเลขโจทย์ได้)
-
----
-
-## 10. กับดักที่เจอจริง (อ่านก่อนทุกครั้ง)
-
-1. **statement.md ไม่มี fenced `input:`/`output:`** → validator WARN
-   "no fenced sample block" และ `config.samples` จะอ้างเทสต์ไม่ได้
-2. **เทสต์เลขเล็กที่ไม่อยู่ใน `samples`** → FAIL (`small numbers are public samples only`)
-3. **ไม่มีเทสต์ลับ** → FAIL (`at least one hidden test (1001+) is required`)
-4. **ตัวอย่าง statement ไม่ตรงเทสต์** → WARN (whitespace ต่างก็เตือน) = ยังไม่ผ่าน
-5. **regen PDF จาก md ที่สั้นกว่าเนื้อหาเต็ม** → เนื้อหาหาย ให้ใช้ตัวกันในข้อ 4
-6. **แก้โจทย์แล้วเว็บยังเก่า** → ลืม restart server (problems โหลดตอน boot)
-7. **คู่มือ agent.md §7.4 ข้อ 4 เขียนว่า validator สร้าง solution ผิดเอง** — จริง ๆ
-   `validate_problem.py` **ไม่ได้** ทำขั้นนี้ ให้ทำมือด้วย `grader.py run /tmp/bad.py` (ข้อ 7)
-8. **โจทย์หลายคำตอบ + checker `token`** → คำตอบที่ไม่ตรง expected จะโดน WA
-   ต้องเขียนกติกาให้คำตอบเดียว หรือใช้ checker เฉพาะ (ถ้ามี)
-
----
-
-## 11. เช็คลิสต์ย่อ (ทำเครื่องหมายก่อน commit)
-
-- [ ] `git status` รู้ว่าอะไรแตะ/ห้ามแตะ
-- [ ] `problems/<id>/config.json` ครบทุกฟิลด์ + `no` ไม่ซ้ำ (`number_problems.py --check`)
-- [ ] `statement.md`: เรื่องครบ + `## Input`/`## Output`/`## ตัวอย่าง` (3 fenced blocks)/`## Limits` + ไม่มี section ใบ้
-- [ ] build PDF แล้ว + `pdftotext` + เปิดดูภาพทุกหน้า
-- [ ] `tests/` ≥ 10: ตัวอย่าง `01`,`02`,`03` (ตรง statement byte-identical) + `1001..` ต่อเนื่อง
-- [ ] `examples/<id>_ref.py` AC ทุกเทสต์
-- [ ] `grader.py run` = ACCEPTED N/N, solution ผิด = WA
-- [ ] `validate_problem.py <id>` = 0 FAIL (เคลียร์ WARN ที่เกี่ยวกับ sample ด้วย เพราะ WARN ไม่ทำให้ exit != 0)
-- [ ] `unittest` + `number_problems.py --check` + `compileall` ผ่าน
-- [ ] `import_problems_supabase.py --problem <id> --dry-run` ผ่าน (เมื่อจะเผยแพร่)
-- [ ] commit เฉพาะ code/docs/tools ที่แก้ (`problems/`/`examples/` ไม่ถูก versioned)
+> อ่าน AGENTS.md และ docs/making-problems.md ใช้ tools/problem_authoring.py กับ
+> template กลาง ระบุ I/O contract ก่อนเขียน ใช้ input_validator.py ตรวจทุกเคส
+> ดึง samples จาก fixtures ด้วย sync-samples และสร้าง PDF ด้วย make_statement_tex.py
+> เท่านั้น ตรวจภาพทุกหน้า ต้องผ่าน validate_problem.py <id> --strict พร้อม reference
+> และ negative tests จริงก่อน import --strict รายงานผลการรันและข้อจำกัดตามจริง
+> ห้ามเปลี่ยนเลข/rules/tests ของโจทย์เดิมนอกงาน ห้ามเผย hidden tests/เฉลย/credentials

@@ -288,6 +288,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="private Storage bucket (default: %(default)s)")
     ap.add_argument("--dry-run", action="store_true",
                     help="validate + report without writing Postgres or Storage")
+    ap.add_argument("--strict", action="store_true",
+                    help="run strict local authoring validation before any remote access or writes")
     ap.add_argument("--statements-only", action="store_true",
                     help="update existing prose/PDF only; preserve tests, IDs and visibility")
     ap.add_argument("--renumber", action="store_true",
@@ -303,7 +305,28 @@ def main(argv: list[str] | None = None) -> int:
     slugs = _local_slugs(args.problems)
     if not slugs:
         print("no problems to import")
-        return 0
+        return 1 if args.strict else 0
+    if args.strict:
+        from tools.validate_problem import main as validate
+        if validate(["--strict", *slugs]) != 0:
+            print("strict preflight failed; no remote operations performed", file=sys.stderr)
+            return 1
+    # Even legacy packages cannot publish statement examples that disagree
+    # with the declared public fixtures. This check is offline and read-only.
+    from tools.validate_problem import public_sample_errors
+    from tools.statement_build import check_build
+    for slug in slugs:
+        try:
+            prob = grader.load_problem(slug)
+            errors = public_sample_errors({"samples": prob.samples}, prob.description, prob.tests)
+            pdir = grader.PROBLEMS_DIR / slug
+            cfg = json.loads((pdir / "config.json").read_text(encoding="utf-8"))
+            errors.extend(check_build(pdir, cfg, prob.description, required=args.strict))
+        except (SystemExit, OSError, ValueError):
+            errors = ["cannot load local problem package"]
+        if errors:
+            print(f"{slug}: public sample preflight failed: " + "; ".join(errors), file=sys.stderr)
+            return 1
     client = None
     if (os.environ.get("SUPABASE_URL", "") or "").strip() and \
             (os.environ.get("SUPABASE_KEY", "") or "").strip():
