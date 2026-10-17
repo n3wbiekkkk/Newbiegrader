@@ -63,7 +63,7 @@ test("an untried problem is different from an attempted zero score", () => {
   assert.match(h.context.taskScoreHtml("p"), /ผ่านแล้ว/);
 });
 
-test("problem statement renders immediately and PDF is only an explicit link", () => {
+test("PDF is the default statement and markdown is a fallback for packages without PDF", () => {
   const h = harness();
   h.context.API = "";
   h.context.setTitle = () => {};
@@ -72,16 +72,47 @@ test("problem statement renders immediately and PDF is only an explicit link", (
   h.context.renderMd = (text) => "RENDERED: " + text;
   h.context.bindCopyButtons = () => {};
   h.context.document.getElementById = h.context.$;
+  h.context.showPdfFrame = (url) => {
+    h.context.$("pdf-frame").src = url;
+    h.context.$("pdf-frame").classList.remove("hidden");
+  };
   vm.runInContext(source.slice(source.indexOf("function fillTaskDetail("),
     source.indexOf("/* ---------------- public sample viewer")), h.context);
-  h.context.fillTaskDetail({ id: "synthetic", title: "โจทย์ (Example)", no: 1,
+  const problem = { id: "synthetic", title: "โจทย์ (Example)", no: 1,
     time_limit: 1, memory_limit: 128, tests: 3, samples: ["01"], has_pdf: true,
-    statement: "SYNTHETIC_PUBLIC_STATEMENT" });
+    statement: "SYNTHETIC_PUBLIC_STATEMENT" };
+  h.context.fillTaskDetail(problem);
+  assert.equal(h.context.$("task-body").classList.contains("hidden"), true);
+  assert.equal(h.context.$("pdf-frame").classList.contains("hidden"), false);
+  assert.equal(h.context.$("pdf-frame").src, "/api/problems/synthetic/pdf");
+  assert.equal(h.context.$("statement-open").href, "/api/problems/synthetic/pdf");
+  h.context.fillTaskDetail({ ...problem, has_pdf: false });
   assert.equal(h.context.$("task-body").classList.contains("hidden"), false);
   assert.match(h.context.$("task-body").innerHTML, /SYNTHETIC_PUBLIC_STATEMENT/);
   assert.equal(h.context.$("pdf-frame").classList.contains("hidden"), true);
-  assert.equal(h.context.$("pdf-frame").src, undefined);
-  assert.equal(h.context.$("statement-open").href, "/api/problems/synthetic/pdf");
+  assert.equal(h.context.$("statement-open").classList.contains("hidden"), true);
+});
+
+test("same PDF reuses its frame and a different problem replaces the frame for Back history", () => {
+  const h = harness();
+  let current = null, created = 0;
+  h.context.document.getElementById = () => current;
+  h.context.document.createElement = (tag) => {
+    assert.equal(tag, "iframe");
+    created++;
+    return { dataset: {}, classList: { remove() {} }, replaceWith(frame) { current = frame; } };
+  };
+  h.context.$("pane-statement").appendChild = (frame) => { current = frame; };
+  vm.runInContext(source.slice(source.indexOf("function showPdfFrame("), source.indexOf("function fillTaskDetail(")), h.context);
+  h.context.showPdfFrame("/api/problems/first/pdf");
+  const first = current;
+  h.context.showPdfFrame("/api/problems/first/pdf");
+  assert.equal(current, first);
+  assert.equal(created, 1);
+  h.context.showPdfFrame("/api/problems/second/pdf");
+  assert.notEqual(current, first);
+  assert.equal(current.src, "/api/problems/second/pdf");
+  assert.equal(created, 2);
 });
 
 test("statement renderer preserves nested rules, ordered lists, samples and safe Thai headings", () => {

@@ -1199,6 +1199,22 @@ async function renderLeaderboard() {
 const DETAIL_CACHE_TTL = 60 * 1000;
 const _detailInflight = new Map();
 
+function showPdfFrame(url) {
+  const current = document.getElementById("pdf-frame");
+  if (current && current.dataset.src === url) {
+    current.classList.remove("hidden");
+    return;
+  }
+  // Replacing the frame avoids adding nested PDF navigations to Back history.
+  const frame = document.createElement("iframe");
+  frame.id = "pdf-frame";
+  frame.title = "เอกสารโจทย์ PDF";
+  frame.dataset.src = url;
+  frame.src = url;
+  if (current) current.replaceWith(frame);
+  else $("pane-statement").appendChild(frame);
+}
+
 function fillTaskDetail(p) {
   setTitle("tasks", `#${p.no || "?"} ${p.title}`);
   $("task-title").innerHTML = `<span class="task-number">PROBLEM ${esc(String(p.no || "—").padStart(2, "0"))} <span>/ ${esc(p.id)}</span></span>${problemNameHtml(p.title)}`;
@@ -1215,14 +1231,17 @@ function fillTaskDetail(p) {
   $("statement-open").classList.toggle("hidden", !p.has_pdf);
   if (p.has_pdf) $("statement-open").href = pdfUrl;
   else $("statement-open").removeAttribute("href");
-  // Readable immediately on every screen; the original PDF is an explicit
-  // link rather than an automatic download/native viewer that can stay blank.
-  const fr = document.getElementById("pdf-frame");
-  if (fr) fr.classList.add("hidden");
   const tb = $("task-body");
-  tb.classList.remove("hidden");
-  tb.innerHTML = renderMd(p.statement || "ยังไม่มีเนื้อหาโจทย์ กรุณาเปิดไฟล์ PDF ด้านบน");
-  bindCopyButtons(tb);
+  if (p.has_pdf) {
+    showPdfFrame(pdfUrl);
+    tb.classList.add("hidden");
+  } else {
+    const frame = document.getElementById("pdf-frame");
+    if (frame) frame.classList.add("hidden");
+    tb.classList.remove("hidden");
+    tb.innerHTML = renderMd(p.statement || "เนื้อหาโจทย์ยังไม่พร้อมใช้งาน");
+    bindCopyButtons(tb);
+  }
 }
 
 /* ---------------- public sample viewer (fetched on click, never prefetched) */
