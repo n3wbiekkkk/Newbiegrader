@@ -2085,7 +2085,7 @@ def _ensure_problems_fresh() -> None:
               file=sys.stderr)
         _problems_refresh_at = time.monotonic()
         return
-    dropped = problem_store.invalidate_stale(hashmap)
+    dropped = problem_store.invalidate_stale(hashmap, extra)
     if dropped:
         print(f"[web] problem versions changed, dropped cache: {sorted(dropped)}",
               file=sys.stderr)
@@ -2640,7 +2640,11 @@ def problem_sample(request: Request, pid: str, name: str) -> dict:
 def problem_pdf(request: Request, pid: str):
     _ensure_problems_fresh()
     email = (request.session.get("user") or {}).get("email", "")
-    p = _visible_problem_or_404(pid, email)
+    # Browsing never needs hidden tests. Authorize the resolved slug before
+    # reading Storage, including conditional requests carrying an old ETag.
+    p = _meta_or_404(pid)
+    if not _visible_to(p.pid, email):
+        raise HTTPException(status_code=404, detail=f"unknown problem: {pid}")
     if PROBLEM_SOURCE == "supabase":
         # Private bucket, server-side credentials only: stream bytes, never a
         # public URL. Client-supplied paths are never trusted (resolved via row).
@@ -2652,13 +2656,21 @@ def problem_pdf(request: Request, pid: str):
         except problem_store.ProblemUnavailable as e:
             print(f"[web] pdf unavailable for {p.pid}: {e}", file=sys.stderr)
             raise HTTPException(status_code=500, detail="problem store unavailable")
-        return Response(content=data, media_type="application/pdf",
-                        headers={"Content-Disposition": f'inline; filename="{p.pid}.pdf"'})
+        etag = '"' + hashlib.sha256(data).hexdigest() + '"'
+        headers = {"Content-Disposition": f'inline; filename="{p.pid}.pdf"',
+                   "Cache-Control": "private, no-cache", "Vary": "Cookie",
+                   "ETag": etag}
+        candidates = [tag.strip().removeprefix("W/")
+                      for tag in request.headers.get("if-none-match", "").split(",")]
+        if etag in candidates or "*" in candidates:
+            return Response(status_code=304, headers=headers)
+        return Response(content=data, media_type="application/pdf", headers=headers)
     f = grader.PROBLEMS_DIR / p.pid / "statement.pdf"
     if not f.is_file():
         raise HTTPException(status_code=404, detail="no PDF statement for this problem")
     return FileResponse(str(f), media_type="application/pdf", filename=f"{p.pid}.pdf",
-                        content_disposition_type="inline")
+                        content_disposition_type="inline",
+                        headers={"Cache-Control": "private, no-cache", "Vary": "Cookie"})
 
 
 async def _read_source(language: str, code: str,

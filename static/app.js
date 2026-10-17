@@ -626,6 +626,9 @@ function clearGetCache() {
   _getGen++;
   _getCache.clear();
   _getInflight.clear();
+  state.detailCache = {};
+  _detailInflight.clear();
+  state.taskSeq = (state.taskSeq || 0) + 1;
 }
 
 function apiPostJson(path, body) {
@@ -1174,6 +1177,7 @@ function showPdfFrame(url) {
 
 /* ---------------- task detail ---------------- */
 const DETAIL_CACHE_TTL = 60 * 1000;
+const _detailInflight = new Map();
 
 function fillTaskDetail(p) {
   setTitle("tasks", `#${p.no || "?"} ${p.title}`);
@@ -1285,11 +1289,23 @@ function bindCopyButtons(root) {
   });
 }
 
+function getProblemDetail(pid) {
+  const hit = state.detailCache[pid];
+  if (hit && Date.now() - hit.t < DETAIL_CACHE_TTL) return Promise.resolve(hit.data);
+  if (_detailInflight.has(pid)) return _detailInflight.get(pid);
+  const gen = _getGen;
+  const pending = apiGet(`/api/problems/${encodeURIComponent(pid)}`).then((p) => {
+    if (gen === _getGen) state.detailCache[pid] = { t: Date.now(), data: p };
+    return p;
+  }).finally(() => {
+    if (_detailInflight.get(pid) === pending) _detailInflight.delete(pid);
+  });
+  _detailInflight.set(pid, pending);
+  return pending;
+}
+
 function prefetchDetail(pid) {
-  if (state.detailCache[pid]) return;
-  apiGet(`/api/problems/${encodeURIComponent(pid)}`)
-    .then((p) => { state.detailCache[pid] = { t: Date.now(), data: p }; })
-    .catch(() => { /* ignore: real navigation will retry */ });
+  getProblemDetail(pid).catch(() => { /* navigation will retry */ });
 }
 
 async function selectProblem(pid) {
@@ -1309,7 +1325,8 @@ async function selectProblem(pid) {
   $("sample-view").innerHTML = `<span class="dim">เลือกตัวอย่างด้านบนเพื่อดู input / output</span>`;
   renderContestBanner();
   const hit = state.detailCache[pid];
-  if (hit && Date.now() - hit.t < DETAIL_CACHE_TTL) {
+  const fresh = hit && Date.now() - hit.t < DETAIL_CACHE_TTL;
+  if (fresh) {
     fillTaskDetail(hit.data);
   } else {
     $("task-title").textContent = "Loading...";
@@ -1328,14 +1345,13 @@ async function selectProblem(pid) {
   const pending = lastJobFor(pid);
   if (pending) resumeJob(pid, pending.id);   // keep waiting for an in-flight run
   try {
-    const p = await apiGet(`/api/problems/${encodeURIComponent(pid)}`);
+    const p = await getProblemDetail(pid);
     if (mySeq !== state.taskSeq) return;   // user moved to another problem: stale response
-    state.detailCache[pid] = { t: Date.now(), data: p };
-    fillTaskDetail(p);
+    if (!fresh) fillTaskDetail(p);
     refreshYourScore();
   } catch (e) {
     if (mySeq !== state.taskSeq) return;
-    if (!hit) $("task-body").textContent = "โหลดโจทย์ไม่สำเร็จ: " + e.message;
+    if (!fresh) $("task-body").textContent = "โหลดโจทย์ไม่สำเร็จ: " + e.message;
   }
 }
 
@@ -1432,6 +1448,7 @@ async function loadTaskMine() {
 
 /* ---------------- auth ---------------- */
 async function refreshMe() {
+  const previousIdentity = JSON.stringify([state.user && state.user.email, !!state.is_admin]);
   let embedded = null;
   try {
     const me = await apiGet("/api/auth/me");
@@ -1441,6 +1458,9 @@ async function refreshMe() {
   } catch (e) {
     state.user = null;
     state.is_admin = state.isAdmin = false;
+  }
+  if (previousIdentity !== JSON.stringify([state.user && state.user.email, !!state.is_admin])) {
+    clearGetCache();
   }
   state.myBestLoaded = false;
   state.myBest = {};

@@ -68,7 +68,7 @@ PDF_CACHE_TTL_S = 300.0
 
 # slug -> (Problem, tests_hash, updated_at, fetched_monotonic)
 _PROBLEMS_CACHE: "OrderedDict[str, tuple]" = OrderedDict()
-# slug -> (bytes, fetched_monotonic)
+# slug -> (bytes, fetched_monotonic, (updated_at, statement_pdf_path))
 _PDF_CACHE: "OrderedDict[str, tuple]" = OrderedDict()
 
 
@@ -81,7 +81,7 @@ def invalidate_cache(slug: Optional[str] = None) -> None:
         _PDF_CACHE.pop(slug, None)
 
 
-def invalidate_stale(hashmap: Dict[str, str]) -> list:
+def invalidate_stale(hashmap: Dict[str, str], extra: Optional[dict] = None) -> list:
     """Drop cached full problems whose version changed (or row vanished).
 
     The next access lazy-reloads them (row + Storage). Returns dropped slugs.
@@ -94,6 +94,12 @@ def invalidate_stale(hashmap: Dict[str, str]) -> list:
             _PROBLEMS_CACHE.pop(slug, None)
             _PDF_CACHE.pop(slug, None)
             dropped.append(slug)
+    # PDFs can change without any test change, including when no full problem
+    # has ever been cached. Check their independent metadata version too.
+    if extra is not None:
+        for slug, entry in list(_PDF_CACHE.items()):
+            if slug not in extra or entry[2] != _pdf_version(extra[slug]):
+                _PDF_CACHE.pop(slug, None)
     return dropped
 
 
@@ -116,7 +122,7 @@ def _pdf_get(slug: str) -> Optional[bytes]:
     entry = _PDF_CACHE.get(slug)
     if entry is None:
         return None
-    data, at = entry
+    data, at, _version = entry
     if time.monotonic() - at > PDF_CACHE_TTL_S:
         _PDF_CACHE.pop(slug, None)
         return None
@@ -124,8 +130,13 @@ def _pdf_get(slug: str) -> Optional[bytes]:
     return data
 
 
-def _pdf_put(slug: str, data: bytes) -> None:
-    _PDF_CACHE[slug] = (data, time.monotonic())
+def _pdf_version(row: dict) -> tuple:
+    return (str(row.get("updated_at") or ""),
+            str(row.get("statement_pdf_path") or ""))
+
+
+def _pdf_put(slug: str, data: bytes, row: dict) -> None:
+    _PDF_CACHE[slug] = (data, time.monotonic(), _pdf_version(row))
     _PDF_CACHE.move_to_end(slug)
     while len(_PDF_CACHE) > MAX_CACHED_PDFS:
         _PDF_CACHE.popitem(last=False)
@@ -241,7 +252,9 @@ def load_snapshot(client=None) -> tuple:
             hidden_manifest = row.get("hidden_tests") or []
             total = len(hidden_manifest) + len(prob.samples)
         extra[slug] = {"tests": total,
-                       "has_pdf": bool(row.get("statement_pdf_path"))}
+                       "has_pdf": bool(row.get("statement_pdf_path")),
+                       "updated_at": row.get("updated_at"),
+                       "statement_pdf_path": row.get("statement_pdf_path")}
     return meta, hashes, extra
 
 
@@ -556,7 +569,7 @@ def get_statement_pdf(slug: str, source: Optional[str] = None, client=None) -> b
     data = _download(cli, problem_bucket(), str(pdf_path))
     if not data.startswith(b"%PDF"):
         raise ProblemUnavailable(f"problem {slug!r} PDF looks corrupt (missing %PDF header)")
-    _pdf_put(slug, data)
+    _pdf_put(slug, data, row)
     return data
 
 
