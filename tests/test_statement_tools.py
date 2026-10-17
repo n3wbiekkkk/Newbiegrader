@@ -16,14 +16,22 @@ from tools import make_statement_tex as renderer
 
 class StatementLayout(unittest.TestCase):
     def test_compact_bilingual_header_and_right_page_number(self):
-        tex = renderer.build("synthetic", "เรื่องสังเคราะห์ (Synthetic)", 10.0, 128,
-                             "# Ignored title\n\nเนื้อเรื่อง\n")
+        # GitHub checks out this repo under a directory named Newbiegrader.
+        # Its font path is legitimate source text, not a rendered footer label.
+        preamble = renderer.PREAMBLE.replace(str(renderer.FONTDIR),
+                                             "/synthetic/Newbiegrader/tools/fonts")
+        with patch.object(renderer, "PREAMBLE", preamble):
+            tex = renderer.build("synthetic", "เรื่องสังเคราะห์ (Synthetic)", 10.0, 128,
+                                 "# Ignored title\n\nเนื้อเรื่อง\n")
         self.assertIn("\\fontsize{26}{31}", tex)
         self.assertIn("\\fontsize{16}{22}", tex)
         self.assertIn("10 seconds, 128 megabytes", tex)
         self.assertIn("\\fancyfoot[R]", tex)
         self.assertNotIn("Ignored title", tex)
-        self.assertNotIn("Newbiegrader", tex)
+        footer = next(line for line in tex.splitlines() if line.startswith("\\fancyfoot[R]"))
+        self.assertNotIn("Newbiegrader", footer)
+        self.assertIn("\\thepage", footer)
+        self.assertIn("Path=/synthetic/Newbiegrader/tools/fonts/", tex)
 
     def test_limits_line_handles_integer_and_fractional_seconds(self):
         for seconds, expected in ((1, "1 second,"), (10, "10 seconds,"),
