@@ -1012,12 +1012,15 @@ def run_one(cmd: list[str], stdin_data: str, time_limit: float, memory_mb: int,
             "killed": reason in ("timeout", "ole"), "reason": reason}
 
 def judge_test(cmd, tc: TestCase, prob: Problem, strict: bool,
-               verbose: bool, lang: Optional[str] = None) -> tuple[str, float, float, float, str, str]:
+               verbose: bool, lang: Optional[str] = None, *,
+               diagnostics: bool = True) -> tuple[str, float, float, float, str, str]:
     """Returns (verdict, wall_s, cpu_s, peak_mb, detail, actual_stdout).
 
     Raises SandboxUnavailable when mandatory isolation cannot be provided:
     the submission was not judged and must not receive any verdict.
     """
+    # Even a caller that forgets its reveal policy cannot expose hidden stderr.
+    diagnostics = diagnostics and tc.name in sample_names(prob)
     res = run_one(cmd, tc.input, prob.time_limit, prob.memory_limit, lang)
     wall, cpu, mem = res["wall"], res["cpu"], res["peak_mb"]
     checker = "exact" if strict else prob.checker
@@ -1032,14 +1035,14 @@ def judge_test(cmd, tc: TestCase, prob: Problem, strict: bool,
     if reason == "ole":
         return "OLE", wall, cpu, mem, f"stdout > {OUTPUT_LIMIT_BYTES // (1024 * 1024)}MB", ""
     if reason == "oom":
-        tail = (res["stderr"] or "")[-500:] if verbose else ""
+        tail = (res["stderr"] or "")[-500:] if verbose and diagnostics else ""
         return "MLE", wall, cpu, mem, tail or "killed (likely OOM)", ""
     if reason == "sigkill":
         # SIGKILL เกิดได้ 2 ทาง: OOM killer (MLE) กับ timeout killer (TLE)
         # ถ้า wall ชน time limit ให้เป็น TLE อย่าเหมาเป็น MLE
         if wall >= prob.time_limit * 0.9:
             return "TLE", wall, cpu, mem, "", ""
-        tail = (res["stderr"] or "")[-500:] if verbose else ""
+        tail = (res["stderr"] or "")[-500:] if verbose and diagnostics else ""
         return "MLE", wall, cpu, mem, tail or "killed (likely OOM)", ""
     if over_memory_limit(prob.memory_limit, mem, lang):
         # The kernel ceiling grants the runtime its virtual headroom, so a
@@ -1051,19 +1054,21 @@ def judge_test(cmd, tc: TestCase, prob: Problem, strict: bool,
     if reason.startswith("signal:"):
         sig = reason.split(":", 1)[1]
         hint = SIGNAL_HINTS.get(sig, sig)
-        tail = (res["stderr"] or "")[-2000:]
+        tail = (res["stderr"] or "")[-2000:] if diagnostics else ""
         detail = hint + (f"\n{tail}" if tail.strip() else "")
         return "RE", wall, cpu, mem, detail, ""
     if reason == "spawn-fail":
-        return "RE", wall, cpu, mem, res["stderr"] or "spawn failed", ""
+        detail = (res["stderr"] or "spawn failed") if diagnostics else "execution failed"
+        return "RE", wall, cpu, mem, detail, ""
     rc = res["returncode"]
     if rc is not None and rc != 0:
         err = res["stderr"] or ""
         if "MemoryError" in err or "bad_alloc" in err:
-            return "MLE", wall, cpu, mem, err[-2000:], ""
-        return "RE", wall, cpu, mem, err[-2000:] if err else f"exit code {rc}", ""
+            return "MLE", wall, cpu, mem, err[-2000:] if diagnostics else "memory limit exceeded", ""
+        detail = err[-2000:] if diagnostics and err else f"exit code {rc}"
+        return "RE", wall, cpu, mem, detail, ""
     ok = run_checker(checker, tc.expected, res["stdout"], prob.tolerance)
-    extra = (res["stderr"] or "")[-1000:] if (verbose and res["stderr"]) else ""
+    extra = (res["stderr"] or "")[-1000:] if (verbose and diagnostics and res["stderr"]) else ""
     if ok:
         return "AC", wall, cpu, mem, extra, ""
     return "WA", wall, cpu, mem, extra, res["stdout"]

@@ -528,6 +528,17 @@ def _redact_results(results: List[dict], reveal: str) -> List[dict]:
         item = {k: (_plain_text(v) if isinstance(v, str) else v)
                 for k, v in r.items()}
         public = bool(item.pop("public", False))
+        if not public or reveal == REVEAL_NONE:
+            # detail is user-controlled (including old persisted stderr).
+            # Never attempt to distinguish it by matching its text.
+            detail = item.pop("detail", None)
+            item.pop("stderr", None)
+            item.pop("stdout", None)
+            if detail:
+                item["detail"] = {
+                    "RE": "runtime error", "MLE": "memory limit exceeded",
+                    "TLE": "time limit exceeded", "OLE": "output limit exceeded",
+                }.get(item.get("verdict"), "execution diagnostic withheld")
         if reveal == REVEAL_ALL or (public and reveal != REVEAL_NONE):
             out.append(item)
             continue
@@ -949,6 +960,11 @@ async def _recover_jobs() -> None:
 async def _finish_job(jid: str, *, result: Optional[dict] = None, stored: Optional[dict] = None,
                       error: str = "", submission: Optional[dict] = None) -> None:
     job = _jobs.get(jid) or {"id": jid}
+    if job.get("kind") != "playground":
+        if result is not None:
+            result = _result_with_reveal(job, result, job.get("reveal") or REVEAL_SAMPLES)
+        if stored is not None or result is not None:
+            stored = _stored_result(job, stored if stored is not None else result)
     if QUEUE_MODE == "database":
         response = await _queue_rpc("finish", p_id=jid, p_worker=job.get("worker_id"),
                                     p_attempt=job.get("attempt"), p_error=error,
@@ -1146,21 +1162,24 @@ async def _heartbeat_job(job: dict) -> None:
             raise RuntimeError("judge ownership lost")
 
 
-def _stored_result(job: dict, result: dict) -> dict:
+def _result_with_reveal(job: dict, result: dict, reveal: str) -> dict:
     prob = PROBLEMS.get(job.get("problem", ""))
     samples = grader.sample_names(prob) if prob else set()
     raw = [{**r, "public": r.get("test") in samples and not r.get("hidden", False)}
            for r in result.get("results", [])]
-    reveal = REVEAL_NONE if job.get("reveal") == REVEAL_NONE else REVEAL_SAMPLES
     return {**result, "results": _redact_results(raw, reveal)}
+
+
+def _stored_result(job: dict, result: dict) -> dict:
+    reveal = REVEAL_NONE if job.get("reveal") == REVEAL_NONE else REVEAL_SAMPLES
+    return _result_with_reveal(job, result, reveal)
 
 
 def _submission_row(job: dict, result: dict, stored: Optional[dict] = None) -> dict:
     """DB row for one judged submission. Hidden test data is already stripped
     from `result` by run_submission (stored at REVEAL_SAMPLES level)."""
     prob = PROBLEMS.get(job.get("problem", ""))
-    results = (stored.get("results", []) if stored is not None
-               else _stored_result(job, result).get("results", []))
+    results = _stored_result(job, stored if stored is not None else result).get("results", [])
     return {
         "problem": job.get("problem", ""), "language": job.get("language", ""),
         "filename": job.get("filename"), "name": job.get("name", ""),
@@ -2332,7 +2351,8 @@ def run_submission(prob: grader.Problem, ext: str, source: str,
             for tc in prob.tests:
                 try:
                     judged.append((tc, grader.judge_test(
-                        cmd, tc, capped, False, False, lang)))
+                        cmd, tc, capped, False, False, lang,
+                        diagnostics=tc.name in samples and reveal != REVEAL_NONE)))
                 except grader.SandboxUnavailable:
                     # Fail closed: no test was judged, no verdict is recorded.
                     # The worker maps {"error": ...} to a job-level error.
@@ -2354,7 +2374,8 @@ def run_submission(prob: grader.Problem, ext: str, source: str,
                 results.append(item)
         else:
             with concurrent.futures.ThreadPoolExecutor(max_workers=JUDGE_JOBS) as ex:
-                futs = [ex.submit(grader.judge_test, cmd, tc, capped, False, False, lang)
+                futs = [ex.submit(grader.judge_test, cmd, tc, capped, False, False, lang,
+                                  diagnostics=tc.name in samples and reveal != REVEAL_NONE)
                         for tc in prob.tests]
                 for tc, f in zip(prob.tests, futs):
                     try:
@@ -2739,12 +2760,15 @@ async def job_status(request: Request, jid: str) -> dict:
         # Same 404 as unknown: don't confirm other users' job ids exist.
         raise HTTPException(status_code=404, detail="unknown job")
     status = job.get("status", "queued")
+    result = job.get("result") if status == "done" else None
+    if isinstance(result, dict) and job.get("kind") != "playground":
+        result = _result_with_reveal(job, result, job.get("reveal") or REVEAL_SAMPLES)
     return {
         "id": jid, "status": status, "problem": job.get("problem", ""),
         "kind": job.get("kind", "submit"), "error": job.get("error", "") or "",
         "queued_ahead": ((await _queue_rpc("diagnostics"))["queued"] if QUEUE_MODE == "database"
                          else _queue_depth_cached()) if status == "queued" else 0,
-        "result": job.get("result") if status == "done" else None,
+        "result": result,
         "created_at": job.get("created_at"), "started_at": job.get("started_at"),
         "finished_at": job.get("finished_at"),
     }
@@ -2888,6 +2912,8 @@ async def history_detail(request: Request, sid: str) -> dict:
     if row.get("user_email") != email and not _is_admin(email):
         raise HTTPException(status_code=403, detail="not your submission")
     row.pop("user_email", None)  # never expose login emails publicly
+    row["results"] = _stored_result({"problem": row.get("problem")},
+                                     {"results": row.get("results", [])})["results"]
     return row
 
 
