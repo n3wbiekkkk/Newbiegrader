@@ -1,26 +1,25 @@
 #!/usr/bin/env python3
-"""Generate a beautiful Thai statement.pdf from problems/<id>/statement.md
+"""Generate a Thai statement.pdf from problems/<id>/statement.md
 using LaTeX (tectonic + TH Sarabun New).
 
 House style (matches the TOI reference statements, e.g. monsters.TH.pdf):
-- header: 36pt bold title, then a 21pt limits line
+- header: 26pt bold Thai title with a smaller English name, then a 12pt limits line
   ("1 second, 256 megabytes"), no problem-id line, no rule
 - story paragraphs in full at 17pt — do NOT shorten
 - math stays at 12pt (as in the reference: $n$ renders smaller than
   the surrounding 17pt Thai), Latin runs in Latin Modern Roman,
   code/sample cells in Inconsolata
-- every fenced sample (input:/output:) becomes one ROW of a single bordered
-  longtable ("ตัวอย่างข้อมูลนำเข้า" / "ตัวอย่างข้อมูลส่งออก", 17pt
-  regular header, 14pt Inconsolata cells); the table breaks across
-  pages with a repeated header
-- list items render as plain lines (no bullets)
-- footer on every page: "Newbiegrader | <page>"
+- sample input/output pairs share a plain bordered two-column table, with
+  12pt Inconsolata cells (smaller only for wide output) and repeated headers
+- indented bullets and numbered rules, with headings kept with their content
+- page number at the bottom right; no decorative banner or invented subtasks
 
 Requires: tectonic (brew install tectonic). Fonts in tools/fonts/.
 
 Usage: python3 tools/make_statement_tex.py <problem_id>
 """
 import hashlib
+import argparse
 import json
 import os
 import re
@@ -80,7 +79,8 @@ def tex_code(s: str, msmall: bool = False) -> str:
         if re.fullmatch(r"[A-Za-z0-9]\^\w+", m or ""):
             out.append("\\mth{" + m + "}" if msmall else "$" + m + "$")
         else:
-            out.append("\\texttt{" + esc_plain(m) + "}" if m else "")
+            code = "\\texttt{" + esc_plain(m) + "}" if m else ""
+            out.append("{\\normalsize " + code + "}" if msmall and code else code)
     return "".join(out)
 
 
@@ -142,7 +142,7 @@ def tex_inline(s: str, bold: bool = False, sans: bool = False,
     """Markdown line -> LaTeX: **bold**, `code`, math shorthands.
     Thai runs stay in Sarabun; Latin/digit runs go to Latin Modern Roman
     (bold when requested). Pass sans=True for display titles.
-    Raw math segments (\(...\), \[...\], $$...$$) pass through untouched so
+    Raw math segments (\\(...\\), \\[...\\], $$...$$) pass through untouched so
     authors can write real LaTeX; a whole-line $$...$$ becomes display math.
     msmall=True (17.3pt body context): raw math goes through \\mth/\\dmth
     (back to 12pt, like the reference) and Latin/code math follows.
@@ -224,10 +224,7 @@ def md_blocks(md: str):
             blocks.append(("h1", line[2:].strip()))
         elif re.match(r"^\s*(?:[-*]|\d+[.)])\s+", line):
             flush()
-            if re.match(r"^\s*\d+[.)]\s+", line):
-                blocks.append(("li", line.strip()))
-            else:
-                blocks.append(("li", re.sub(r"^\s*[-*]\s+", "", line)))
+            blocks.append(("li", line))
         else:
             buf.append(line)
         i += 1
@@ -253,10 +250,17 @@ def tex_verbatim(s: str) -> str:
              .replace("~", "\\textasciitilde{}").replace("^", "\\^{}"))
 
 
-def render_samples_table(samples: list) -> str:
+def sample_font_size(samples: list) -> int:
+    maxlen = max((len(line) for pair in samples for body in pair
+                  for line in body.splitlines()), default=0)
+    # A 12pt Inconsolata line fits 37 characters inside the column borders.
+    return 12 if maxlen <= 37 else max(7, int(37 * 12 / maxlen))
+
+
+def render_samples_table(samples: list, multipage: bool = True) -> str:
     """All fenced samples as ONE bordered table (house style): a header row
-    plus one row per sample. longtable lets tall samples break across pages
-    with the header repeated. Cells are small monospace; source lines are
+    plus one row per sample. Pages can break between sample rows, with the
+    header repeated. Cells are small monospace; source lines are
     joined with LaTeX line breaks (sample I/O is ASCII-only by convention).
     The cell font auto-shrinks when a sample line is wider than the column
     (e.g. a 50-column output grid) so long lines never overflow the page.
@@ -269,30 +273,27 @@ def render_samples_table(samples: list) -> str:
         return "\\newline\n".join(tex_verbatim(l) if l.strip() else "~"
                                   for l in lines) or "~"
 
-    # Widest sample line drives the monospace size: ~28 chars fit at 14pt in a
-    # 0.44\linewidth column, so shrink proportionally beyond that (min 6pt).
-    maxlen = 0
-    for inp, outp in samples:
-        for ln in (inp + "\n" + outp).split("\n"):
-            maxlen = max(maxlen, len(ln))
-    size = 14 if maxlen <= 28 else max(6, (28 * 14) // maxlen)
-    lineskip = round(size * 17 / 14, 1)
+    size = sample_font_size(samples)
+    lineskip = round(size * 1.2, 1)
     font = "{\\fontsize{%d}{%s}\\selectfont\\ttfamily " % (size, lineskip)
 
-    head = ("\\rowcolor[gray]{0.94}\n"
-            "{\\centering\\fontsize{17.3}{21} ตัวอย่างข้อมูลนำเข้า\\par} &\n"
-            "{\\centering\\fontsize{17.3}{21} ตัวอย่างข้อมูลส่งออก\\par} \\\\\n"
+    head = ("{\\centering\\fontsize{16}{19}\\selectfont\\bfseries ตัวอย่างข้อมูลนำเข้า\\par} &\n"
+            "{\\centering\\fontsize{16}{19}\\selectfont\\bfseries ตัวอย่างข้อมูลส่งออก\\par} \\\\\n"
             "\\hline\n")
-    parts = ["{\\setlength{\\tabcolsep}{8pt}\\renewcommand{\\arraystretch}{1.4}"
-             "\\arrayrulecolor[gray]{0.7}\n",
-             "\\begin{longtable}{|p{0.44\\linewidth}|p{0.44\\linewidth}|}\n",
-             "\\hline\n", head,
-             "\\endfirsthead\n", "\\hline\n", head, "\\endhead\n"]
+    col = "p{\\dimexpr0.5\\linewidth-2\\tabcolsep-1.5\\arrayrulewidth\\relax}"
+    environment = "longtable" if multipage else "tabular"
+    parts = ["{\\fontsize{12}{14.4}\\selectfont\\setlength{\\parskip}{0pt}"
+             "\\setlength{\\tabcolsep}{6pt}\\renewcommand{\\arraystretch}{1.15}"
+             "\\arrayrulecolor[gray]{0.5}\\setlength{\\LTpre}{0pt}\\setlength{\\LTpost}{6pt}\n",
+             "\\begin{" + environment + "}{|" + col + "|" + col + "|}\n",
+             "\\hline\n", head]
+    if multipage:
+        parts.extend(["\\endfirsthead\n", "\\hline\n", head, "\\endhead\n"])
     for inp, outp in samples:
-        parts.append(font + cell(inp) + "} &\n"
-                     + font + cell(outp) + "} \\\\\n"
+        parts.append(font + cell(inp) + "\\par} &\n"
+                     + font + cell(outp) + "\\par} \\\\\n"
                      "\\hline\n")
-    parts.append("\\end{longtable}}\n\n\\medskip\n")
+    parts.append("\\end{" + environment + "}}\\par\n\n")
     return "".join(parts)
 
 
@@ -335,22 +336,26 @@ PREAMBLE = """\\documentclass[a4paper,12pt]{article}
 \\setlength{\\parindent}{0pt}
 \\pagestyle{fancy}
 \\fancyhf{}
-\\fancyfoot[C]{\\small{\\eng{}Newbiegrader} \\quad\\textbar\\quad {\\eng{}\\thepage}}
+\\fancyfoot[R]{{\\eng{}\\fontsize{10}{12}\\selectfont\\thepage}}
 \\renewcommand{\\headrulewidth}{0pt}
 % Body Thai is 17.3pt but math/Latin stay at 12pt (exactly like the
 % reference): mth/dmth typeset math back at normalsize.
 \\newcommand{\\mth}[1]{{\\normalsize $#1$}}
 \\newcommand{\\dmth}[1]{{\\normalsize \\[#1\\]}}
+\\newbox\\statementtailbox
+\\newdimen\\statementtailheight
 \\begin{document}
+\\XeTeXlinebreaklocale "th"
+\\XeTeXlinebreakskip = 0pt plus 1pt
 \\normalsize
 \\raggedright
 """.replace("ACCENT", ACCENT).replace("FONTPATH", str(FONTDIR) + "/")
 
 
 def _limits_line(tl: float, mem: int) -> str:
-    t = str(tl).rstrip("0").rstrip(".")
+    t = format(tl, "g")
     unit = "second" if float(t) == 1 else "seconds"
-    return "{\\fontsize{21}{26}\\selectfont{\\eng{}" + t + " " + unit + ", " + str(mem) + " megabytes}}\n\n"
+    return "{\\fontsize{12}{16}\\selectfont{\\eng{}" + t + " " + unit + ", " + str(mem) + " megabytes}}\n\n"
 
 
 # House style uses Thai section headings, matching the reference statement.
@@ -365,17 +370,28 @@ H2_TH = {
 
 
 def build(pid: str, title: str, tl: float, mem: int, md: str) -> str:
-    blocks = [b for b in md.split("\n") if b.strip()]
-    _ = blocks
     parts = [PREAMBLE]
     # One big bold title line, Thai + English alike (Latin runs fall
     # through to Latin Modern via tex_inline, as in the reference).
-    parts.append("{\\fontsize{36}{42}\\selectfont\\bfseries " + tex_inline(title) + "}\n\n")
-    parts.append("\\vspace{8pt}\n")
+    match = re.fullmatch(r"(.+?)\s+(\([^()]+\))", title)
+    heading = tex_inline(title)
+    if match:
+        heading = (tex_inline(match[1]) + " {\\fontsize{16}{22}\\selectfont "
+                   + tex_inline(match[2]) + "}")
+    parts.append("{\\fontsize{26}{31}\\selectfont\\bfseries " + heading + "}\\par\n")
     parts.append(_limits_line(tl, mem))
-    parts.append("\\vspace{10pt}\n")
-    story_done = False
     blocks = md_blocks(md)
+    # Resource limits already appear under the title. Keep other constraints
+    # in a Limits section, but suppress a section containing only that repeat.
+    cleaned = []
+    for kind, text in blocks:
+        if kind == "li" and re.fullmatch(
+                r"\s*[-*]\s*เวลา\s+[\d.]+\s+วินาที,?\s*หน่วยความจำ\s+\d+\s+MB\s*", text):
+            continue
+        cleaned.append((kind, text))
+    blocks = [block for i, block in enumerate(cleaned)
+              if not (block[0] == "h2" and block[1].lower() == "limits"
+                      and (i + 1 == len(cleaned) or cleaned[i + 1][0] == "h2"))]
     # Every fenced sample becomes one ROW of a single table placed where the
     # first fence stood (all fences live under ## ตัวอย่าง by convention).
     samples = []
@@ -392,20 +408,33 @@ def build(pid: str, title: str, tl: float, mem: int, md: str) -> str:
             inp = (first + ("\n" + rest if rest else "")).strip("\n")
         samples.append((inp, outp))
     table_done = False
+    tail_start = None
     for kind, text in blocks:
         if kind == "h1":
             continue  # title already in header
         if kind == "h2":
-            story_done = True
-            parts.append("\\vspace{28pt}\n{\\fontsize{25}{30}\\bfseries " + tex_inline(H2_TH.get(text.lower(), text)) + "}\n\n\\vspace{14pt}\n\\nopagebreak\n")
+            reserve = 80
+            if text == "ตัวอย่าง" and samples:
+                tail_start = len(parts)
+                height = max(len(body.rstrip("\n").split("\n")) for body in samples[0])
+                size = sample_font_size(samples)
+                reserve = min(620, 65 + height * size * 1.2)
+            parts.append("\\Needspace{" + str(reserve) + "pt}\\vspace{12pt}\n"
+                         "{\\fontsize{22}{26}\\selectfont\\bfseries "
+                         + tex_inline(H2_TH.get(text.lower(), text))
+                         + "}\\par\\nobreak\\vspace{4pt}\n")
         elif kind == "code":
-            story_done = True
             if not table_done:
                 parts.append(render_samples_table(samples))
                 table_done = True
         elif kind == "li":
-            story_done = True
-            parts.append("{\\fontsize{17.3}{20}\\selectfont " + tex_inline(text, msmall=True) + "}\\\\\n")
+            item = re.match(r"^(\s*)([-*]|\d+[.)])\s+(.*)", text)
+            indent = 12 * (1 + len(item[1].expandtabs(2)) // 2)
+            marker = "\\textbullet" if item[2] in ("-", "*") else tex_inline(item[2])
+            parts.append("{\\fontsize{17.3}{20}\\selectfont\\setlength{\\leftskip}{"
+                         + str(indent) + "pt}\\setlength{\\parskip}{2pt}"
+                         "\\hangindent=12pt\\noindent " + marker + "\\enspace "
+                         + tex_inline(item[3], msmall=True) + "\\par}\n")
         else:
             # Markdown paragraph: blank lines separate paragraphs; a single
             # soft line break inside one joins with a space so the story flows
@@ -417,11 +446,29 @@ def build(pid: str, title: str, tl: float, mem: int, md: str) -> str:
                 if not lines:
                     continue
                 parts.append("{\\fontsize{17.3}{20}\\selectfont " + tex_inline(" ".join(lines), msmall=True) + "}\n\n")
+    if tail_start is not None:
+        # Measure the actual typeset examples + explanation + existing scoring
+        # as one block. If it fits a fresh page, reserve exactly that height;
+        # otherwise retain longtable's normal multipage behavior. This avoids
+        # almost-empty final pages without guessing Thai line lengths.
+        tail = "".join(parts[tail_start:])
+        boxed = tail.replace(render_samples_table(samples),
+                             render_samples_table(samples, multipage=False))
+        parts[tail_start:] = [
+            "\\par\\begingroup\n\\setbox\\statementtailbox=\\vbox{\\hsize=\\linewidth\n"
+            "\\renewcommand{\\Needspace}[1]{}\n" + boxed + "}\n"
+            "\\statementtailheight=\\ht\\statementtailbox\n"
+            "\\advance\\statementtailheight by\\dp\\statementtailbox\n"
+            "\\ifdim\\statementtailheight<.92\\textheight\n"
+            # Account for the paragraph/baseline glue at the insertion point.
+            "\\advance\\statementtailheight by2\\baselineskip\n"
+            "\\Needspace{\\statementtailheight}\\unvbox\\statementtailbox\n"
+            "\\else\n" + tail + "\\fi\\endgroup\n"]
     parts.append("\\end{document}\n")
     return "".join(parts)
 
 
-def main(pid: str) -> None:
+def main(pid: str, output_dir: Path | None = None) -> None:
     pdir = ROOT / "problems" / pid
     cfg = json.loads((pdir / "config.json").read_text(encoding="utf-8"))
     md = (pdir / "statement.md").read_text(encoding="utf-8")
@@ -430,6 +477,8 @@ def main(pid: str) -> None:
     # Byte-deterministic builds: same .tex always yields identical bytes
     # (fixes xdvipdfmx subset tags/checksums/IDs). normalize_pdf pins dates.
     os.environ.setdefault("SOURCE_DATE_EPOCH", "0")
+    out = (output_dir / f"{pid}.pdf") if output_dir else pdir / "statement.pdf"
+    out.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
         src = Path(tmp) / "statement.tex"
         src.write_text(tex, encoding="utf-8")
@@ -439,11 +488,22 @@ def main(pid: str) -> None:
             print(r.stdout[-3000:])
             print(r.stderr[-3000:])
             raise SystemExit(f"tectonic failed for {pid}")
-        shutil.move(str(Path(tmp) / "statement.pdf"), str(pdir / "statement.pdf"))
-    out = pdir / "statement.pdf"
+        shutil.move(str(Path(tmp) / "statement.pdf"), str(out))
     out.write_bytes(normalize_pdf(out.read_bytes()))
     print(f"wrote {out} ({out.stat().st_size // 1024} KB)")
 
 
 if __name__ == "__main__":
-    main(sys.argv[1])
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("problems", nargs="*", help="problem IDs to render")
+    parser.add_argument("--all", action="store_true", help="render all local problems")
+    parser.add_argument("--output-dir", type=Path, help="preview directory; leaves installed PDFs unchanged")
+    args = parser.parse_args()
+    if args.all and args.problems:
+        parser.error("use either problem IDs or --all")
+    ids = sorted(p.name for p in (ROOT / "problems").iterdir()
+                 if (p / "config.json").is_file()) if args.all else args.problems
+    if not ids:
+        parser.error("provide problem IDs or --all")
+    for pid in ids:
+        main(pid, args.output_dir)

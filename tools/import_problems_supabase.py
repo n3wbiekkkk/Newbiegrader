@@ -24,6 +24,8 @@ Exit code 0 only when nothing failed.
 from __future__ import annotations
 
 import argparse
+import datetime as dt
+import hashlib
 import json
 import os
 import sys
@@ -184,6 +186,50 @@ def import_one(client, bucket_name: str, slug: str, dry: bool) -> tuple[str, str
     return status, f"tests={len(prob.tests)} hash={tests_hash}"
 
 
+def import_statement_one(client, bucket_name: str, slug: str, dry: bool) -> tuple[str, str]:
+    """Update public prose/PDF only; never upsert tests or publication flags.
+
+    Upload to a content-addressed private path before switching the row, so a
+    failed upload cannot pair a new statement with a missing/partial PDF. Old
+    assets remain available for rollback. An updated_at guard rejects races.
+    """
+    try:
+        pdir = grader.PROBLEMS_DIR / slug
+        cfg = json.loads((pdir / "config.json").read_text(encoding="utf-8"))
+        md = (pdir / "statement.md").read_text(encoding="utf-8")
+        pdf = (pdir / "statement.pdf").read_bytes()
+        if not md.strip() or not pdf.startswith(b"%PDF-"):
+            return "failed", "empty statement or invalid PDF"
+        rows = client.table("problems").select(
+            "slug,no,title,time_limit,memory_limit,statement_md,statement_pdf_path,updated_at"
+        ).eq("slug", slug).limit(1).execute().data or []
+        if not rows:
+            return "failed", "statement-only update requires an existing problem"
+        row = rows[0]
+        for key in ("no", "title", "time_limit", "memory_limit"):
+            if cfg.get(key) != row.get(key):
+                return "failed", f"local/remote {key} mismatch; no metadata changed"
+        if not row.get("updated_at"):
+            return "failed", "missing version; cannot safely update statement"
+        digest = hashlib.sha256(pdf).hexdigest()
+        path = f"{slug}/statements/{digest}.pdf"
+        if row.get("statement_md") == md and row.get("statement_pdf_path") == path:
+            return "skipped", "statement and PDF unchanged"
+        if dry:
+            return "updated", f"statement-only pdf={len(pdf)} bytes"
+        _upload_many(client, bucket_name, [(path, pdf, "application/pdf")], dry=False)
+        result = client.table("problems").update({
+            "statement_md": md, "statement_pdf_path": path,
+            "updated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        }).eq("slug", slug).eq("updated_at", row["updated_at"]).execute()
+        if not result.data:
+            return "failed", "problem changed during upload; retry after review"
+        problem_store.invalidate_cache(slug)
+        return "updated", f"statement-only pdf={len(pdf)} bytes sha256={digest}"
+    except Exception as e:
+        return "failed", f"statement update: {type(e).__name__}"
+
+
 def _park_numbers(client) -> int:
     """Move every `problems.no` onto unique negatives to free the positive range.
 
@@ -242,6 +288,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="private Storage bucket (default: %(default)s)")
     ap.add_argument("--dry-run", action="store_true",
                     help="validate + report without writing Postgres or Storage")
+    ap.add_argument("--statements-only", action="store_true",
+                    help="update existing prose/PDF only; preserve tests, IDs and visibility")
     ap.add_argument("--renumber", action="store_true",
                     help="first park the existing DB numbers on negatives so a full "
                          "local renumber (tools/number_problems.py --renumber) can be "
@@ -250,6 +298,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="also delete Storage test objects for this problem that no "
                          "longer exist locally (stale after a shrinking test set)")
     args = ap.parse_args(argv)
+    if args.statements_only and (args.renumber or args.prune):
+        ap.error("--statements-only cannot renumber or prune assets")
     slugs = _local_slugs(args.problems)
     if not slugs:
         print("no problems to import")
@@ -265,7 +315,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"warning: supabase unavailable, offline dry check only ({e})",
                   file=sys.stderr)
             client = None
-    elif not args.dry_run:
+    elif not args.dry_run or args.statements_only:
         _client()  # prints the missing-env error + exits 2
     if client is not None:
         # Fail fast when the migration has not been applied.
@@ -280,6 +330,9 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"problems table not readable ({e}); run supabase/schema.sql first",
                       file=sys.stderr)
                 return 1
+    if args.statements_only and client is None:
+        print("statement-only updates require reachable remote metadata", file=sys.stderr)
+        return 2
     if args.renumber and client is not None and not args.dry_run:
         try:
             parked = _park_numbers(client)
@@ -290,7 +343,8 @@ def main(argv: list[str] | None = None) -> int:
     counts = {"created": 0, "updated": 0, "skipped": 0, "failed": 0}
     failures: list[str] = []
     for slug in slugs:
-        status, detail = import_one(client, args.bucket, slug, dry=args.dry_run) \
+        importer = import_statement_one if args.statements_only else import_one
+        status, detail = importer(client, args.bucket, slug, dry=args.dry_run) \
             if client is not None else _dry_only(slug)
         counts[status] = counts.get(status, 0) + 1
         mark = {"created": "+", "updated": "~", "skipped": "=", "failed": "x"}[status]

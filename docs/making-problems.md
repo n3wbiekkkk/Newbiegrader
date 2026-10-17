@@ -11,7 +11,7 @@
 ## 0. หลักการ (อย่าละเมิด)
 
 - 1 โจทย์ = 1 โฟลเดอร์ `problems/<id>/` + reference solution `examples/<id>_ref.py`
-- `<id>` = ตัวเล็ก snake_case อังกฤษ (`distinct_groups`, `kai_gai_codex`) — ห้ามเว้นวรรค/ตัวใหญ่
+- `<id>` = ตัวเล็ก snake_case อังกฤษ (`arrange_tray`, `kai_gai_codex`) — ห้ามเว้นวรรค/ตัวใหญ่
 - **อย่าแก้ `grader.py` / `server.py` / `static/app.js` พร้อมกับงานอื่น** (คู่มือ agent.md §14 ข้อ 13)
 - ตัวอย่างใน statement **ต้องตรงกับเทสต์ทุก byte** (canonical) — ไม่ใช่แค่ค่าตรง
 - เทสต์ต้องแน่น: ถ้าโค้ดผิด (off-by-one ฯลฯ) ยัง AC = เทสต์หลวม ต้องเติมเทสต์ ไม่ใช่ลดเกณฑ์
@@ -85,7 +85,7 @@ python3 tools/number_problems.py --check      # ยืนยัน ต่อเ�
 ````markdown
 # ชื่อไทย (English Name)
 
-<เนื้อเรื่องภาษาไทย มีตัวละคร/บริบท เหมือนโจทย์ข้ออื่น ไม่ย่อทิ้ง>
+<เนื้อเรื่องภาษาไทยที่สัมพันธ์กับชื่อโจทย์ ตามด้วยเป้าหมายและกติกาที่ชัดเจน>
 
 ## Input
 - บรรทัดแรก: ...
@@ -136,6 +136,10 @@ output:
     (validator จะ WARN "examples must be short" ถ้า sample มีเกิน 40 token)
     ให้เลือกเทสต์ hidden ที่เล็กที่สุดที่ยังมี output ต่างจากตัวอย่างเดิม
 - **ห้ามมี section ใบ้วิธีทำ** (เช่น "แนวคิด", "复杂度") — ผิดกติกาโจทย์
+- เนื้อเรื่องต้องอธิบายได้ว่าทำไมจึงต้องแก้ปัญหานี้ ใช้ตัวละครและคำศัพท์ให้คงเส้นคงวา
+  ไม่ยัดบริบทที่ไม่เกี่ยวกับชื่อ ไม่เฉลยอัลกอริทึม และไม่เพิ่มเงื่อนไขจากเรื่องเล่า
+- เมื่อตกแต่งโจทย์เดิม ให้เก็บข้อมูลเข้า–ออก กติกาเฉพาะ ตัวอย่าง และเกณฑ์คะแนนเดิม
+  ตรวจ hash ของ config และทุกไฟล์เทสต์ก่อน–หลัง ห้ามเปลี่ยนเพื่อให้เข้ากับเรื่องใหม่
 - เขียนข้อความให้เหมือนเว็บ/tool render: ดูข้อ "การเขียน markdown ให้ PDF สวย" ด้านล่าง
 
 ### การเขียน markdown ให้ PDF สวย (ตัวแปลงของ `make_statement_tex.py`)
@@ -159,12 +163,21 @@ output:
 
 ```sh
 python3 tools/make_statement_tex.py <id> 2>&1 | grep -v "absolute path"
+python3 tools/make_statement_tex.py <id> --output-dir output/pdf/previews
+python3 tools/make_statement_tex.py --all  # หลังตรวจ preview แล้ว
 pdftotext problems/<id>/statement.pdf - | head -40
 pdftoppm -png -r 60 problems/<id>/statement.pdf /tmp/pdfcheck/<id>
-# แล้วเปิดดูภาพทุกหน้า (มีหัวเรื่อง + ตารางตัวอย่าง + footer "Newbiegrader | n")
+# แล้วเปิดดูภาพทุกหน้า (หัวเรื่อง + ตารางตัวอย่าง + เลขหน้าล่างขวา)
 ```
 
 - build ต้องขึ้น `wrote problems/<id>/statement.pdf (NN KB)`
+- รูปแบบมาตรฐาน: A4 ขอบ 2.2 ซม., ชื่อไทย 26pt พร้อมชื่ออังกฤษที่เล็กกว่า,
+  บรรทัดเวลา/หน่วยความจำ 12pt, เนื้อหาไทย 17.3pt, หัวข้อ 22pt, เลขหน้าล่างขวา
+- ตัวอย่างทั้งสามชุดอยู่ในตาราง input/output สองคอลัมน์ ไม่มีแถบสี
+  หัวตารางซ้ำเมื่อข้ามหน้า ลดขนาด monospace เฉพาะกรณีบรรทัดกว้าง เช่นภาพ ASCII
+- ไม่บังคับทุกข้อให้สองหน้า: เก็บหัวข้อกับเนื้อหาและไม่ตัดแถวตัวอย่างกลางชุด
+  ให้ตารางตัวอย่างขนาดสั้นอยู่กับคำอธิบายเมื่อมีพื้นที่พอบนหน้าใหม่
+- มีการให้คะแนนเฉพาะเมื่อ statement เดิมระบุไว้จริง ไม่แต่ง subtask เพิ่ม
 - ถ้า build พัง: มักเป็น backslash หลุด (เช่น `\n`, `\mth` ใน comment ของ preamble)
   — เปิด log ของ tectonic ที่ tool พ่นออกมา
 - **กับดักโจทย์เดิม**: ถ้าโจทย์นี้เคยมี `statement.pdf` อยู่แล้ว และ `statement.md`
@@ -178,6 +191,23 @@ new=$(pdftotext problems/<id>/statement.pdf - 2>/dev/null | wc -c)
 # ถ้า new < 0.8*old ให้ย้อนกลับ อย่าใช้ PDF ใหม่
 git checkout -- problems/<id>/statement.pdf
 ```
+
+---
+
+### เผยแพร่เฉพาะเนื้อเรื่อง/PDF ของโจทย์เดิม
+
+ใช้ client ฝั่งเครื่องมือที่ได้รับ `SUPABASE_URL` และ `SUPABASE_KEY` จาก environment
+โดยไม่พิมพ์ค่าลง terminal หรือใส่ค่าในคำสั่ง:
+
+```sh
+python3 tools/import_problems_supabase.py --statements-only --dry-run
+python3 tools/import_problems_supabase.py --statements-only
+```
+
+โหมดนี้ตรวจ title/เลข/เวลา/หน่วยความจำกับแถวเดิมก่อน อัปโหลด PDF ไปยัง private path
+ที่มี SHA-256 แล้วจึงเปลี่ยน `statement_md`, `statement_pdf_path`, `updated_at`
+พร้อม version guard ไม่แตะเทสต์ เฉลย หรือสถานะเผยแพร่ และไม่ลบ PDF รุ่นเก่า
+ห้ามใช้ร่วมกับ `--renumber` หรือ `--prune` เก็บ snapshot แถวเดิมและ PDF ไว้ก่อนรันเสมอ
 
 ---
 
