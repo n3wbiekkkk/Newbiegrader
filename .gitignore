@@ -8,3 +8,4 @@ venv/
 .tmp_fmt*
 graphify-out/
 agent.md
+problems/

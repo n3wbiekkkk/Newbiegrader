@@ -9,16 +9,16 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY grader.py server.py judge_runner.py worker.py problem_store.py container_entrypoint.py ./
-COPY problems ./problems
 COPY static ./static
 
-# Sandbox needs this: the judge child drops to `nobody` (see build_limits in
-# grader.py), so tests must not be world-readable — otherwise submissions can
-# `open('/app/problems/...')` and cheat. Backend stays root ONLY to allow the
-# setuid drop; the child itself never runs as root and gets RLIMITs + (if the
-# host allows) its own network namespace. Keep .env OUT of the image: secrets
-# come from host env vars, never from files.
-RUN chmod -R go-rwx ./problems
+# Problem data is NOT baked into the image. At runtime the backend reads from
+# Supabase (GRADER_PROBLEM_SOURCE=supabase: Postgres rows + private Storage
+# bucket); the problem source of truth is versioned outside this repo. Sandbox
+# security is unaffected: hidden test bytes are fetched per submission and the
+# judge child drops to `nobody` (see build_limits in grader.py) with RLIMITs +
+# (if the host allows) its own network namespace, so tests are never readable
+# from the app process. Backend stays root ONLY to allow the setuid drop. Keep
+# .env OUT of the image: secrets come from host env vars, never from files.
 
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
