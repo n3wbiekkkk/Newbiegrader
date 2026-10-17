@@ -1152,6 +1152,26 @@ async function renderLeaderboard() {
   }
 }
 
+/* Statements arrive as PDFs, one per problem. Reuse of a single <iframe> would
+ * make every new src a nested same-origin navigation, and those land in the
+ * joint session history: the first Back press after opening a problem then only
+ * rewound the statement frame ("Back did nothing"), and the frame showed the
+ * previous problem's PDF. A fresh element per PDF never adds an entry. */
+function showPdfFrame(url) {
+  const cur = document.getElementById("pdf-frame");
+  if (cur && cur.dataset.src === url) {   // same problem: keep the loaded frame
+    cur.classList.remove("hidden");
+    return;
+  }
+  const fr = document.createElement("iframe");
+  fr.id = "pdf-frame";
+  fr.title = "problem statement PDF";
+  fr.dataset.src = url;
+  fr.src = url;
+  if (cur) cur.replaceWith(fr);
+  else document.getElementById("pane-statement").appendChild(fr);
+}
+
 /* ---------------- task detail ---------------- */
 const DETAIL_CACHE_TTL = 60 * 1000;
 
@@ -1173,15 +1193,11 @@ function fillTaskDetail(p) {
   renderSampleButtons(p);
   const pdfUrl = `${API}/api/problems/${encodeURIComponent(p.id)}/pdf`;
   if (p.has_pdf) {
-    const fr = $("pdf-frame");
-    fr.classList.remove("hidden");
-    if (fr.dataset.src !== pdfUrl) {
-      fr.dataset.src = pdfUrl;
-      fr.src = pdfUrl;
-    }
+    showPdfFrame(pdfUrl);
     $("task-body").classList.add("hidden");
   } else {
-    $("pdf-frame").classList.add("hidden");
+    const fr = document.getElementById("pdf-frame");
+    if (fr) fr.classList.add("hidden");
     const tb = $("task-body");
     tb.classList.remove("hidden");
     tb.innerHTML = renderMd(p.statement || "(no statement)");
