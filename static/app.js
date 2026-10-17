@@ -10,6 +10,7 @@ const API = (window.GRADER_API_BASE || "").replace(/\/$/, "");
 const state = {
   problems: [],
   stats: {},
+  statsLoaded: false,
   myBest: {},
   myBestLoaded: false,
   detailCache: {},
@@ -347,24 +348,41 @@ function inlineMd(s) {
   return s;
 }
 
-/* Minimal markdown: fences, h1-h3, unordered lists, paragraphs. */
+/* Small escaped renderer for the statement format; no raw HTML or scripts. */
 function renderMd(src) {
   const blocks = [];
   src = src.replace(/```(\w*)\n([\s\S]*?)```/g, (_m, _lang, code) => {
     blocks.push(`<div class="code-copy-wrap"><button class="icon-btn code-copy" type="button" data-copy title="คัดลอกโค้ดตัวอย่าง" aria-label="คัดลอกโค้ดตัวอย่าง">${icon("copy")}</button><pre><code>${esc(code.replace(/\n$/, ""))}</code></pre></div>`);
     return `\u0000${blocks.length - 1}\u0000`;
   });
-  const lines = src.split("\n").map((line) => {
+  const labels = { Input: "ข้อมูลนำเข้า", Output: "ข้อมูลส่งออก", Limits: "ข้อจำกัด",
+    Subtask: "การให้คะแนน", Subtasks: "การให้คะแนน" };
+  const lines = [], lists = [];
+  const closeList = () => { const list = lists.pop(); lines.push(`</li></${list.type}>`); };
+  for (const line of src.split("\n")) {
+    const item = line.match(/^(\s*)(-|\d+\.)\s+(.*)$/);
+    if (item) {
+      const indent = item[1].length, type = item[2] === "-" ? "ul" : "ol";
+      while (lists.length && indent < lists[lists.length - 1].indent) closeList();
+      if (lists.length && indent === lists[lists.length - 1].indent && type !== lists[lists.length - 1].type) closeList();
+      if (!lists.length || indent > lists[lists.length - 1].indent) {
+        lines.push(`<${type}>`);
+        lists.push({ indent, type });
+      } else lines.push("</li>");
+      lines.push(`<li>${inlineMd(item[3])}`);
+      continue;
+    }
+    while (lists.length) closeList();
     const ph = line.match(/^\u0000(\d+)\u0000$/);
-    if (ph) return blocks[Number(ph[1])] || "";
-    if (/^###\s+/.test(line)) return `<h3>${inlineMd(line.replace(/^###\s+/, ""))}</h3>`;
-    if (/^##\s+/.test(line)) return `<h2>${inlineMd(line.replace(/^##\s+/, ""))}</h2>`;
-    if (/^#\s+/.test(line)) return `<h1>${inlineMd(line.replace(/^#\s+/, ""))}</h1>`;
-    if (/^-\s+/.test(line)) return `<li>${inlineMd(line.replace(/^-\s+/, ""))}</li>`;
-    if (/^\s*$/.test(line)) return "";
-    return `<p>${inlineMd(line)}</p>`;
-  });
-  return lines.join("\n").replace(/((?:<li>.*<\/li>\n?)+)/g, "<ul>$1</ul>");
+    if (ph) { lines.push(blocks[Number(ph[1])] || ""); continue; }
+    const heading = line.match(/^(#{1,3})\s+(.*)$/);
+    if (heading) {
+      const level = heading[1].length;
+      lines.push(`<h${level}>${inlineMd(labels[heading[2]] || heading[2])}</h${level}>`);
+    } else if (line.trim()) lines.push(`<p>${inlineMd(line)}</p>`);
+  }
+  while (lists.length) closeList();
+  return lines.join("\n");
 }
 
 function badge(text, cls) {
@@ -651,8 +669,10 @@ async function fetchStats() {
   try {
     const s = await apiGet("/api/stats");
     state.stats = (s && s.configured && s.stats) || {};
+    state.statsLoaded = !!(s && s.configured);
   } catch (e) {
     state.stats = {};
+    state.statsLoaded = false;
   }
 }
 
@@ -851,11 +871,19 @@ window.addEventListener("hashchange", router);
 function renderHome() {
   let subs = 0, acc = 0;
   Object.values(state.stats).forEach((s) => { subs += s.subs || 0; acc += s.accepted || 0; });
-  $("stat-subs").textContent = subs;
-  $("stat-accepted").textContent = acc;
+  $("stat-subs").textContent = state.statsLoaded ? subs : "—";
+  $("stat-accepted").textContent = state.statsLoaded ? acc : "—";
   $("stat-mine").textContent = state.user
     ? `${Object.values(state.myBest || {}).filter((v) => v === 100).length}`
     : "—";
+  const starters = state.problems.filter((p) => !p.hidden && p.difficulty === "easy")
+    .sort((a, b) => (a.no || 9999) - (b.no || 9999)).slice(0, 3);
+  $("home-problems").innerHTML = starters.length ? starters.map((p) =>
+    `<a class="home-problem" href="#/task/${encodeURIComponent(p.id)}">` +
+    `<span class="home-problem-no">${esc(String(p.no || "—").padStart(2, "0"))}</span>` +
+    `<span>${problemNameHtml(p.title)}<span class="home-problem-topic">${esc((p.tags || []).slice(0, 2).join(" / "))}</span></span>` +
+    `<span class="row-arrow" aria-hidden="true">↗</span></a>`).join("")
+    : `<p class="dim">ยังไม่มีโจทย์แนะนำ <a class="text-link" href="#/tasks">ไปหน้าโจทย์ทั้งหมด</a></p>`;
   renderResumeCard();
 }
 
@@ -897,6 +925,13 @@ function renderResumeCard() {
 /* ---------------- tasks (sidebar + cards) ---------------- */
 function noLabel(p) {
   return p && p.no ? `<span class="pno">#${esc(String(p.no))}</span>` : "";
+}
+
+function problemNameHtml(title) {
+  const name = String(title || "");
+  const match = name.match(/^(.*?)\s*\(([^()]*)\)\s*$/);
+  return `<span class="problem-name">${esc(match ? match[1] : name)}</span>` +
+    (match ? `<span class="problem-english">${esc(match[2])}</span>` : "");
 }
 
 function byPidOf(list, pid) {
@@ -946,9 +981,12 @@ function sortProblemList(list) {
 }
 
 function taskScoreHtml(pid) {
+  if (state.user && !state.myBestLoaded) return `<span class="score-untried">กำลังโหลด…</span>`;
   const tried = state.myBest && state.myBest[pid] != null;
   const s = tried ? state.myBest[pid] : 0;
-  return `<div class="score-bar"><div class="score-fill" style="width:${s}%"></div></div><span class="${tried ? scoreCls(s) : "dim"}">${s} points</span>`;
+  if (!tried) return `<span class="score-untried"><span class="status-ring" aria-hidden="true"></span>ยังไม่ได้ลอง</span>`;
+  if (s === 100) return `<span class="score-solved">${icon("check")}ผ่านแล้ว</span>`;
+  return `<span class="${scoreCls(s)}">${esc(String(s))} <span class="dim">/ 100</span></span>`;
 }
 
 function renderTasksTable() {
@@ -968,12 +1006,12 @@ function renderTasksTable() {
   box.innerHTML = "";
   $("tasks-empty").classList.toggle("hidden", list.length > 0);
   if (!state.problems.length) {
-    $("tasks-empty").textContent = "ยังไม่มีโจทย์ — ส่งไฟล์ PDF มาเพื่อสร้างข้อใหม่";
+    $("tasks-empty").textContent = "ยังไม่มีโจทย์ให้แสดง ลองกลับมาใหม่อีกครั้ง";
     $("tasks-empty").classList.remove("hidden");
     return;
   }
   if (!state.user && state.filter.status !== "all") {
-    $("tasks-empty").textContent = "login ก่อนใช้ตัวกรอง Tried / Solved";
+    $("tasks-empty").innerHTML = `<div class="empty-state"><p>เข้าสู่ระบบเพื่อดูโจทย์ที่คุณเคยลองทำ</p><a class="btn-ghost" href="#/login">เข้าสู่ระบบ</a></div>`;
     $("tasks-empty").classList.remove("hidden");
     return;
   }
@@ -1004,13 +1042,15 @@ function renderTasksTable() {
     card.className = "task-card";
     card.href = "#/task/" + encodeURIComponent(p.id);
     card.innerHTML = `
+      <span class="tc-number">${esc(String(p.no || "—").padStart(2, "0"))}</span>
       <div class="tc-main">
-        <div class="tc-title">${noLabel(p)} ${esc(p.title)} <span class="dim">${esc(p.id)}</span></div>
+        <div class="tc-title">${problemNameHtml(p.title)}</div>
+        <div class="tc-code">${esc(p.id)}</div>
         ${showTag ? `<div class="tc-tags">${tags || '<span class="dim">—</span>'}</div>` : ""}
-        <div class="tc-meta">${diffBadge(p.difficulty)}<span class="dim">${p.tests} tests · Solved ${st.solvers ?? 0}</span>${
-          p.hidden ? badge("ซ่อนจาก Task", "hidden") : ""}</div>
+        ${st.solvers > 0 || p.hidden ? `<div class="tc-meta">${st.solvers > 0 ? `<span>ผ่านแล้ว ${esc(String(st.solvers))} คน</span>` : ""}${p.hidden ? badge("ซ่อนจาก Task", "hidden") : ""}</div>` : ""}
       </div>
-      <div class="tc-side score-wrap">${taskScoreHtml(p.id)}</div>`;
+      <div class="tc-difficulty">${diffBadge(p.difficulty)}</div>
+      <div class="tc-side score-wrap">${taskScoreHtml(p.id)}<span class="row-arrow" aria-hidden="true">↗</span></div>`;
     card.onmouseenter = () => prefetchDetail(p.id);
     card.onfocus = () => prefetchDetail(p.id);
     box.appendChild(card);
@@ -1155,34 +1195,13 @@ async function renderLeaderboard() {
   }
 }
 
-/* Statements arrive as PDFs, one per problem. Reuse of a single <iframe> would
- * make every new src a nested same-origin navigation, and those land in the
- * joint session history: the first Back press after opening a problem then only
- * rewound the statement frame ("Back did nothing"), and the frame showed the
- * previous problem's PDF. A fresh element per PDF never adds an entry. */
-function showPdfFrame(url) {
-  const cur = document.getElementById("pdf-frame");
-  if (cur && cur.dataset.src === url) {   // same problem: keep the loaded frame
-    cur.classList.remove("hidden");
-    return;
-  }
-  const fr = document.createElement("iframe");
-  fr.id = "pdf-frame";
-  fr.title = "problem statement PDF";
-  fr.dataset.src = url;
-  fr.src = url;
-  if (cur) cur.replaceWith(fr);
-  else document.getElementById("pane-statement").appendChild(fr);
-}
-
 /* ---------------- task detail ---------------- */
 const DETAIL_CACHE_TTL = 60 * 1000;
 const _detailInflight = new Map();
 
 function fillTaskDetail(p) {
   setTitle("tasks", `#${p.no || "?"} ${p.title}`);
-  $("task-title").innerHTML = `${noLabel(p)} ${esc(p.title)} <span class="dim">${esc(p.id)}</span>`;
-  const extra = [p.difficulty, ...((p.tags || []))].filter(Boolean).join(" · ");
+  $("task-title").innerHTML = `<span class="task-number">PROBLEM ${esc(String(p.no || "—").padStart(2, "0"))} <span>/ ${esc(p.id)}</span></span>${problemNameHtml(p.title)}`;
   $("task-meta").innerHTML =
     `${diffBadge(p.difficulty)}` +
     `<span class="meta-chip">TL ${esc(String(p.time_limit))}s</span>` +
@@ -1193,17 +1212,17 @@ function fillTaskDetail(p) {
   $("task-counts").textContent = `ตัวอย่างสาธารณะ ${nSamples} ข้อ`;
   renderSampleButtons(p);
   const pdfUrl = `${API}/api/problems/${encodeURIComponent(p.id)}/pdf`;
-  if (p.has_pdf) {
-    showPdfFrame(pdfUrl);
-    $("task-body").classList.add("hidden");
-  } else {
-    const fr = document.getElementById("pdf-frame");
-    if (fr) fr.classList.add("hidden");
-    const tb = $("task-body");
-    tb.classList.remove("hidden");
-    tb.innerHTML = renderMd(p.statement || "(no statement)");
-    bindCopyButtons(tb);
-  }
+  $("statement-open").classList.toggle("hidden", !p.has_pdf);
+  if (p.has_pdf) $("statement-open").href = pdfUrl;
+  else $("statement-open").removeAttribute("href");
+  // Readable immediately on every screen; the original PDF is an explicit
+  // link rather than an automatic download/native viewer that can stay blank.
+  const fr = document.getElementById("pdf-frame");
+  if (fr) fr.classList.add("hidden");
+  const tb = $("task-body");
+  tb.classList.remove("hidden");
+  tb.innerHTML = renderMd(p.statement || "ยังไม่มีเนื้อหาโจทย์ กรุณาเปิดไฟล์ PDF ด้านบน");
+  bindCopyButtons(tb);
 }
 
 /* ---------------- public sample viewer (fetched on click, never prefetched) */
@@ -1500,20 +1519,37 @@ $("signup-btn").onclick = () => {
   location.hash = "#/login/register";
 };
 
-$("logout-btn").onclick = async () => {
+async function signOut() {
+  const button = $("logout-btn");
+  button.disabled = true;
   try {
-    await fetch(API + "/api/auth/logout", { method: "POST", credentials: "include" });
-  } catch (e) { /* ignore */ }
+    await apiPostJson("/api/auth/logout", {});
+  } catch (e) {
+    toast("ออกจากระบบไม่สำเร็จ กรุณาลองอีกครั้ง", "t-err");
+    button.disabled = false;
+    return;
+  }
+  button.disabled = false;
   // Identity changed: the cached problem list (and the solved marks) must not
   // survive into the next session on a shared machine. Same for drafts and
   // remembered job ids — a school computer is shared.
   try { localStorage.removeItem(PROBLEMS_CACHE_KEY); } catch (e) { /* ignore */ }
   clearGetCache();   // GET cache holds per-user answers (history?mine=1): must not leak to the next login
   clearLocalWorkspace();
+  $("editor").value = "";
+  $("run-input").value = "";
+  fi.value = "";
+  state.file = null;
+  state.current = null;
+  $("file-chip").classList.add("hidden");
+  setDraftHint(false);
   state.jobResults = {};
   await refreshMe();
-  loadHistory();
-};
+  location.hash = "#/tasks";
+  renderTasksTable();
+  toast("ออกจากระบบแล้ว");
+}
+$("logout-btn").onclick = signOut;
 
 /* ---------------- admin overview ---------------- */
 function uptimeText(s) {
@@ -1690,24 +1726,52 @@ async function doPasswordAuth() {
   }
 }
 
-/* Cookie consent (PDPA): the site only sets strictly-necessary cookies
- * (login session + remember-me). The banner just records the choice. */
-const COOKIE_CONSENT_KEY = "ng_cookie_consent";
+/* A versioned notice for essential cookies, not a fake consent toggle.
+ * Acknowledgement is not an authentication requirement or tracking consent. */
+const COOKIE_NOTICE_KEY = "ng_cookie_notice_v2";
+let cookieNoticeAcknowledged = false;
 
-function maybeShowCookieBanner() {
-  let choice = null;
-  try { choice = localStorage.getItem(COOKIE_CONSENT_KEY); } catch (e) { /* ignore */ }
-  if (choice) return;
+function cookieNoticeSeen() {
+  if (cookieNoticeAcknowledged) return true;
+  try { return localStorage.getItem(COOKIE_NOTICE_KEY) === "acknowledged"; }
+  catch (e) { return false; }
+}
+
+function fitCookieNotice() {
+  const bar = $("cookie-banner");
+  document.body.style.paddingBottom = bar.classList.contains("hidden")
+    ? "" : `${bar.getBoundingClientRect().height + 32}px`;
+}
+
+function acknowledgeCookieNotice() {
+  cookieNoticeAcknowledged = true;
+  try { localStorage.setItem(COOKIE_NOTICE_KEY, "acknowledged"); } catch (e) { /* session-only fallback */ }
+  $("cookie-banner").classList.add("hidden");
+  fitCookieNotice();
+  const source = $("cookie-settings");
+  if (document.querySelector("#view-settings.active")) source.focus();
+}
+
+function maybeShowCookieBanner(force = false) {
+  if (!force && cookieNoticeSeen()) return;
   const bar = $("cookie-banner");
   if (!bar) return;
   bar.classList.remove("hidden");
-  const pick = (v) => {
-    try { localStorage.setItem(COOKIE_CONSENT_KEY, v); } catch (e) { /* ignore */ }
-    bar.classList.add("hidden");
+  $("cookie-ack").onclick = acknowledgeCookieNotice;
+  $("cookie-more").onclick = () => {
+    const details = $("cookie-details");
+    const open = details.classList.toggle("hidden") === false;
+    $("cookie-more").setAttribute("aria-expanded", String(open));
+    $("cookie-more").textContent = open ? "ย่อรายละเอียด" : "รายละเอียด";
+    fitCookieNotice();
   };
-  $("cookie-accept").onclick = () => pick("accepted");
-  $("cookie-decline").onclick = () => pick("declined");
+  fitCookieNotice();
+  if (force) $("cookie-more").focus();
 }
+window.addEventListener("resize", fitCookieNotice);
+window.addEventListener("storage", (event) => {
+  if (event.key === COOKIE_NOTICE_KEY && event.newValue === "acknowledged") acknowledgeCookieNotice();
+});
 
 /* ---------------- language + file ---------------- */
 document.querySelectorAll(".lang-btn").forEach((b) => {
@@ -2722,7 +2786,7 @@ function setLang(lang) {
 async function renderSettings() {
   const body = $("settings-body");
   if (!state.user) {
-    body.innerHTML = `<span class="dim">login ด้วย Google ก่อนตั้งค่า</span>`;
+    body.innerHTML = `<span class="dim">เข้าสู่ระบบเพื่อแก้ไขข้อมูลบัญชี</span>`;
     return;
   }
   body.innerHTML = skel(3);
@@ -3093,6 +3157,7 @@ let tagsExpanded = false;
 function renderTagList() {
   const box = $("tag-list");
   if (!box) return;
+  $("tag-filter-label").textContent = state.filter.tag ? `หมวดโจทย์ · ${state.filter.tag}` : "หมวดโจทย์";
   // Rank by how many problems carry the tag: the useful ones come first instead
   // of opening the sidebar with 28 equal chips.
   const counts = {};
@@ -3128,8 +3193,10 @@ function setTagFilter(t) {
 
 function setStatusFilter(s) {
   state.filter.status = s;
-  document.querySelectorAll("[data-status]").forEach((b) =>
-    b.classList.toggle("active", b.dataset.status === s));
+  document.querySelectorAll("[data-status]").forEach((b) => {
+    b.classList.toggle("active", b.dataset.status === s);
+    b.setAttribute("aria-pressed", String(b.dataset.status === s));
+  });
   renderTasksTable();
 }
 
@@ -3158,6 +3225,13 @@ function buildFilterOptions() {
 
 /* ---------------- init ---------------- */
 async function init() {
+  $("quick-search").onclick = openPalette;
+  $("cookie-settings").onclick = () => maybeShowCookieBanner(true);
+  maybeShowCookieBanner();
+  const wideFilters = window.matchMedia("(min-width: 901px)");
+  const fitFilters = () => { $("tag-filters").open = wideFilters.matches; };
+  fitFilters();
+  wideFilters.addEventListener("change", fitFilters);
   bindEditorKeys();
   setLang(lastLang() || state.lang);   // remember the language, default Python
   window.addEventListener("beforeunload", saveDraft);
@@ -3173,7 +3247,11 @@ async function init() {
       if ($("q")) $("q").value = state.filter.q;
       if ($("f-diff")) $("f-diff").value = state.filter.diff || "";
       document.querySelectorAll("[data-status]").forEach((b) =>
-        b.classList.toggle("active", (b.dataset.status || "all") === (state.filter.status || "all")));
+        {
+        const on = (b.dataset.status || "all") === (state.filter.status || "all");
+        b.classList.toggle("active", on);
+        b.setAttribute("aria-pressed", String(on));
+      });
     }
   } catch (e) { /* ignore */ }
   $("q").oninput = (e) => {
@@ -3204,7 +3282,7 @@ async function init() {
   $("auth-go").onclick = doPasswordAuth;
   $("auth-pass").onkeydown = (e) => { if (e.key === "Enter") doPasswordAuth(); };
   $("google-btn").onclick = () => {
-    location.href = API + "/api/auth/login?" + new URLSearchParams({ next: "#/tasks" }).toString();
+    location.href = API + "/api/auth/login?" + new URLSearchParams({ next: "#/tasks", remember: String($("auth-remember").checked) }).toString();
   };
   $("report-send").onclick = async () => {
     if (!state.user) {
@@ -3261,7 +3339,7 @@ async function init() {
   if (healthErr && !state.problems.length) {
     show("home");
     document.querySelector("#view-home .hero .lede").textContent =
-      "เชื่อมต่อ server ไม่ได้: " + healthErr.message + " — ตั้งค่า config.js ให้ชี้ไป backend";
+      "เชื่อมต่อระบบไม่ได้ในขณะนี้ ลองโหลดหน้าอีกครั้งในอีกสักครู่";
     return;
   }
   // Session cookie gone but remember-me alive (browser cleanup, expiry):
@@ -3296,6 +3374,7 @@ async function init() {
   // 4. stats never block rendering
   fetchStats().then(() => {
     if (document.querySelector("#view-home.active")) renderHome();
+    else if (document.querySelector("#view-tasks.active")) renderTasksTable();
   });
 
   if ((location.hash || "").includes("login=failed")) {
