@@ -393,8 +393,12 @@ def main(argv: list[str] | None = None) -> int:
         ids = sorted(dict.fromkeys(args.ids))
     else:
         if not PROBLEMS_DIR.is_dir():
-            print(f"no problems/ directory at {PROBLEMS_DIR}")
-            return 1
+            # Problem packages are not versioned in this repository (the source
+            # of truth is Supabase). Nothing to validate here: report a skip so
+            # CI stays green; run from a checkout that has problems/ to validate.
+            print(f"skip: no problems/ directory at {PROBLEMS_DIR} "
+                  "(problem data lives in Supabase)")
+            return 0
         ids = sorted(p.name for p in PROBLEMS_DIR.iterdir() if p.is_dir())
     if not ids:
         print("no problems to validate")

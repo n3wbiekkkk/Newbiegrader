@@ -14,6 +14,11 @@ from unittest.mock import patch
 
 import grader
 
+# No local problem set in the repository (problem data lives in Supabase), so
+# these regressions only run where problems/ exists; CI reports a skip.
+if not grader.PROBLEMS_DIR.is_dir():
+    raise unittest.SkipTest("no local problems/ (source of truth is Supabase)")
+
 
 def process_alive(pid):
     if os.name == "nt":

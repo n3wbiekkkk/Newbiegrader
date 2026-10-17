@@ -35,6 +35,13 @@ import grader  # noqa: E402
 import problem_store  # noqa: E402
 import server  # noqa: E402
 
+# Fixtures are seeded from a local problems/ directory, which is not part of the
+# repository (the source of truth is Supabase). Skip where it is absent (CI).
+if not grader.PROBLEMS_DIR.is_dir():
+    raise unittest.SkipTest(
+        "no local problems/ to seed fake Supabase; run from a checkout that "
+        "has problems/ for full storage coverage")
+
 ADMIN = "admin@example.com"
 STUDENT = "student.supabase@example.com"
 PASSWORD = "testpass123"

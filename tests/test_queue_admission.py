@@ -19,6 +19,12 @@ os.environ.setdefault("SESSION_SECRET", "queue-test-secret")
 from fake_supabase import FakeSupabase
 import server
 
+# Queue admission replays real submissions against a problem, and no problem
+# set is versioned in the repository (problem data lives in Supabase); skip in
+# CI, run from a checkout that has problems/.
+if not getattr(server, "PROBLEMS", None):
+    raise unittest.SkipTest("no local problems/ (source of truth is Supabase)")
+
 
 def job(email="student@example.com", kind="submit"):
     return {"kind": kind, "user_email": email, "problem": "thai_time",

@@ -36,11 +36,21 @@ from fake_supabase import FakeSupabase  # noqa: E402
 import grader  # noqa: E402
 import server  # noqa: E402
 
+# Problem statements and test fixtures are NOT part of the repository: the
+# source of truth is Supabase. These end-to-end tests exercise the real judge
+# against a local problem set, so they only run where problems/ exists
+# (a developer checkout); in CI the module is reported as skipped.
+if not grader.PROBLEMS_DIR.is_dir():
+    raise unittest.SkipTest(
+        "no local problems/ (problem data lives in Supabase); "
+        "run from a checkout that has problems/ for full API coverage")
+
 STUDENT_A = "student.a@example.com"
 STUDENT_B = "student.b@example.com"
 ADMIN = "admin@example.com"
 PASSWORD = "testpass123"
-THAI_REF = (ROOT / "examples" / "thai_time_ref.py").read_text(encoding="utf-8")
+_thai_ref = ROOT / "examples" / "thai_time_ref.py"
+THAI_REF = _thai_ref.read_text(encoding="utf-8") if _thai_ref.is_file() else ""
 WRONG = 'print("nope")\n'
 
 

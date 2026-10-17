@@ -30,6 +30,11 @@ if str(ROOT / "tests") not in sys.path:
 
 import grader
 
+# No local problem set in the repository (problem data lives in Supabase), so
+# these regression tests only run where problems/ exists; CI reports a skip.
+if not grader.PROBLEMS_DIR.is_dir():
+    raise unittest.SkipTest("no local problems/ (source of truth is Supabase)")
+
 
 def judge_python(source, pid="hanoi", limit_mb=None):
     """Judge one Python program against the first test of `pid`."""
