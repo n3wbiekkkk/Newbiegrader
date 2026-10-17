@@ -3169,30 +3169,32 @@ async function init() {
   if (loadProblemsCache()) buildFilterOptions();
   router();
 
-  // 2. health gates everything else
-  try {
-    const h = await apiGet("/api/health");
+  // 2. fire the list, the identity and the health light together. Health used
+  // to gate everything, so a slow proxy cost two round trips before the list
+  // was even requested; now it only drives the status label.
+  const problemsFresh = problemsCacheAgeMs() < 60 * 1000 && state.problems.length > 0;
+  let healthErr = null;
+  const healthP = apiGet("/api/health").then(() => {
     $("health").textContent = "online";
     $("health").classList.add("ok");
-  } catch (e) {
+  }).catch((e) => {
+    healthErr = e;
     $("health").textContent = "offline";
-    if (!state.problems.length) {
-      show("home");
-      document.querySelector("#view-home .hero .lede").textContent =
-        "เชื่อมต่อ server ไม่ได้: " + e.message + " — ตั้งค่า config.js ให้ชี้ไป backend";
-    }
-    return;
-  }
-
-  // 3. one parallel batch instead of sequential round trips.
-  // The problems list changes rarely (server caches 20s, browser cache 1h):
-  // skip the refetch when the cache was just written (<60s) to save a
-  // proxied round trip on every navigation/reload.
-  const problemsFresh = problemsCacheAgeMs() < 60 * 1000 && state.problems.length > 0;
+  });
+  // The problems list changes rarely (server caches 20-30s, browser cache 1h):
+  // skip the refetch when the cache was just written (<60s) to save a proxied
+  // round trip on every navigation/reload.
   const [data] = await Promise.all([
     problemsFresh ? Promise.resolve(null) : apiGet("/api/problems").catch(() => null),
     refreshMe(),
+    healthP,
   ]);
+  if (healthErr && !state.problems.length) {
+    show("home");
+    document.querySelector("#view-home .hero .lede").textContent =
+      "เชื่อมต่อ server ไม่ได้: " + healthErr.message + " — ตั้งค่า config.js ให้ชี้ไป backend";
+    return;
+  }
   // Session cookie gone but remember-me alive (browser cleanup, expiry):
   // silently restore the login before the first route render.
   if (!state.user) {
