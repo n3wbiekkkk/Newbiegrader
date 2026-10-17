@@ -1294,13 +1294,16 @@ class ApiE2E(unittest.TestCase):
 
 
     def test_remember_me_restore_and_logout(self):
-        # Opt-out registration sets no remember cookie; default login does.
+        # Long-lived login is opt-in; opting out leaves only the session.
         # Losing the session cookie must not log the user out while the
         # remember cookie survives; logout kills both.
         from urllib.parse import urlsplit as _urlsplit
         _parts = _urlsplit(server.FRONTEND_URL)
         browser = {"Origin": f"{_parts.scheme}://{_parts.hostname}"}
         self.login("remember.me@example.com")
+        self.client.post("/api/auth/password", json={
+            "email": "remember.me@example.com", "password": "testpass123", "remember": True},
+            headers=browser)
         jar = self.client.cookies
         names = [c.name for c in jar.jar]
         self.assertIn("ng_remember", names)
@@ -1313,7 +1316,7 @@ class ApiE2E(unittest.TestCase):
 
         # back to the remembered account, then lose only the session cookie
         self.client.post("/api/auth/password", json={
-            "email": "remember.me@example.com", "password": "testpass123"},
+            "email": "remember.me@example.com", "password": "testpass123", "remember": True},
             headers=browser)
         jar = self.client.cookies
         token = next(c.value for c in jar.jar if c.name == "ng_remember")

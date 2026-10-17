@@ -265,6 +265,9 @@ async def _security_headers(request: Request, call_next):
     resp.headers["X-Frame-Options"] = "SAMEORIGIN"
     resp.headers["Referrer-Policy"] = "no-referrer"
     resp.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    if request.url.path.startswith("/api/auth/"):
+        resp.headers["Cache-Control"] = "no-store"
+        resp.headers["Pragma"] = "no-cache"
     resp.headers["Content-Security-Policy"] = (
         "default-src 'self'; script-src 'self'; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
@@ -1440,7 +1443,16 @@ def _cookie_secure() -> bool:
 def _issue_remember(resp, email: str) -> None:
     resp.set_cookie(_REMEMBER_COOKIE, _remember_signer.dumps({"email": email}),
                     max_age=REMEMBER_MAX_AGE, httponly=True,
-                    samesite="lax", secure=_cookie_secure())
+                    samesite="lax", secure=_cookie_secure(), path="/")
+
+
+def _set_remember_choice(resp, email: str, remember: bool) -> None:
+    """Long-lived login is explicit opt-in; opting out clears an older cookie."""
+    if remember is True:
+        _issue_remember(resp, email)
+    else:
+        resp.delete_cookie(_REMEMBER_COOKIE, path="/", httponly=True,
+                           samesite="lax", secure=_cookie_secure())
 
 
 def _read_remember(request: Request) -> str:
@@ -1491,7 +1503,7 @@ def _google_userinfo(code: str) -> dict:
 
 
 @app.get("/api/auth/login")
-def auth_login(request: Request, next: str = "#/"):
+def auth_login(request: Request, next: str = "#/", remember: bool = False):
     if not GOOGLE_CLIENT_ID:
         raise HTTPException(status_code=500, detail="google oauth not configured")
     if not next.startswith("#/"):
@@ -1499,6 +1511,7 @@ def auth_login(request: Request, next: str = "#/"):
     state = secrets.token_urlsafe(16)
     request.session["oauth_state"] = state
     request.session["oauth_next"] = next
+    request.session["oauth_remember"] = remember
     q = urlencode({
         "client_id": GOOGLE_CLIENT_ID, "redirect_uri": GOOGLE_REDIRECT_URI,
         "response_type": "code", "scope": "openid email profile",
@@ -1530,6 +1543,7 @@ async def auth_callback(request: Request, code: str = "", state: str = "", error
     # session cookie is set first-party (works even when browsers block
     # third-party cookies). /api/auth/finish is proxied by the frontend host.
     token = _login_signer.dumps({"user": request.session["user"],
+                                 "remember": request.session.pop("oauth_remember", False),
                                  "jti": secrets.token_urlsafe(16)})
     request.session.clear()
     return RedirectResponse(
@@ -1569,7 +1583,7 @@ def auth_finish(request: Request, token: str = "", next: str = "#/"):
         "picture": user.get("picture", ""),
     }
     resp = RedirectResponse(FRONTEND_URL + "/#/" + next.lstrip("#/"), status_code=307)
-    _issue_remember(resp, request.session["user"]["email"])
+    _set_remember_choice(resp, request.session["user"]["email"], data.get("remember") is True)
     return resp
 
 
@@ -1614,7 +1628,7 @@ def auth_restore(request: Request) -> dict:
 def auth_logout(request: Request) -> dict:
     request.session.clear()
     resp = _json_response({"ok": True})
-    resp.delete_cookie(_REMEMBER_COOKIE, samesite="lax", secure=_cookie_secure())
+    _set_remember_choice(resp, "", False)
     return resp
 
 
@@ -1848,8 +1862,7 @@ async def auth_register(request: Request) -> dict:
                                "provider": "password"}
     user = request.session["user"]
     resp = _json_response({"ok": True, "user": user})
-    if body.get("remember", True):
-        _issue_remember(resp, email)
+    _set_remember_choice(resp, email, body.get("remember") is True)
     return resp
 
 
@@ -1884,8 +1897,7 @@ async def auth_password(request: Request) -> dict:
                                "picture": "", "provider": "password"}
     me = request.session["user"]
     resp = _json_response({"ok": True, "user": me})
-    if body.get("remember", True):
-        _issue_remember(resp, me["email"])
+    _set_remember_choice(resp, me["email"], body.get("remember") is True)
     return resp
 
 
