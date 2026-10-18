@@ -201,6 +201,8 @@ class FakeSupabase:
             raise Exception(f'column "{unknown[0]}" of relation "{table}" does not exist')
 
     def rpc(self, name, params=None):
+        if name.startswith("auth_"):
+            return _AuthRPC(self, name, params or {})
         return _QueueRPC(self, name, params or {})
 
     # --- views ---
@@ -253,6 +255,62 @@ class FakeSupabase:
     # --- test helpers ---
     def rows(self, table):
         return self.tables.setdefault(table, [])
+
+
+class _AuthRPC:
+    """Synthetic transaction model; also verify the real SQL in auth_sql.sql."""
+    def __init__(self, db, name, params):
+        self.db, self.name, self.params = db, name, params
+
+    def execute(self):
+        with self.db.lock:
+            return _Resp(copy.deepcopy(self._execute()))
+
+    def _execute(self):
+        p = self.params
+        if self.name == "auth_email_budget":
+            now = dt.datetime.now(dt.timezone.utc).timestamp()
+            email, network = p["p_email_key"], p["p_network_key"]
+            limits = ([("send:global", 100, 86400), ("send:network:" + network, 50, 3600),
+                       ("send:hour:" + email, 5, 3600), ("send:minute:" + email, 1, 60)]
+                      if p["p_action"] == "request" else
+                      [("verify:global", 1000, 3600), ("verify:network:" + network, 100, 900),
+                       ("verify:email:" + email, 8, 900)])
+            rows = self.db.rows("auth_rate_buckets")
+            rows[:] = [r for r in rows if r["expires_at"] > now]
+            for key, limit, seconds in limits:
+                row = next((r for r in rows if r["bucket"] == key), None)
+                if row and row["attempts"] >= limit:
+                    return {"allowed": False, "retry_after": max(1, int(row["expires_at"] - now) + 1)}
+            for key, limit, seconds in limits:
+                row = next((r for r in rows if r["bucket"] == key), None)
+                if row:
+                    row["attempts"] += 1
+                else:
+                    rows.append({"bucket": key, "attempts": 1, "expires_at": now + seconds})
+            return {"allowed": True}
+        self.db.table("users")
+        email = p["p_email"]
+        row = next((r for r in self.db.rows("users") if r["email"] == email), None)
+        if self.name == "auth_google_identity" and row and row.get("email_verified_at"):
+            if row.get("google_subject") != p["p_subject"]:
+                return {"link_required": True}
+            return {k: row[k] for k in ("email", "name", "auth_version")}
+        if self.name == "auth_email_complete" and row and row.get("email_auth_subject") \
+                and row["email_auth_subject"] != p["p_subject"]:
+            raise ValueError("identity subject mismatch")
+        if not row:
+            row = {"email": email, "auth_version": 0}
+            self.db.rows("users").append(row)
+        row.update({"auth_version": row.get("auth_version", 0) + 1,
+                    "name": p["p_name"], "email_verified_at": dt.datetime.now(dt.timezone.utc).isoformat()})
+        if self.name == "auth_google_identity":
+            row.update({"password_hash": "", "google_subject": p["p_subject"]})
+        elif self.name == "auth_email_complete":
+            row.update({"password_hash": p["p_password_hash"], "email_auth_subject": p["p_subject"]})
+        else:
+            raise AssertionError(self.name)
+        return {k: row[k] for k in ("email", "name", "auth_version")}
 
 
 class _FakeStorage:

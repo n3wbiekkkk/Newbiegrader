@@ -154,23 +154,12 @@ class SupabaseProblems(unittest.TestCase):
     # ---------- helpers ----------
     def login(self, email: str, name: str = "Tester") -> None:
         self.client.cookies.clear()
-        r = self.client.post("/api/auth/register",
-                             json={"email": email, "password": PASSWORD, "name": name},
-                             headers=BROWSER)
-        if r.status_code == 409:
-            r = self.client.post("/api/auth/password",
-                                 json={"email": email, "password": PASSWORD},
-                                 headers=BROWSER)
-        elif r.status_code == 403 and server._is_admin(email):
-            existing = [u for u in self.fake.tables.get("users", [])
-                        if u.get("email") == email]
-            if not existing:
-                self.fake.table("users").insert({
-                    "email": email, "name": name,
-                    "password_hash": server._hash_password(PASSWORD)}).execute()
-            r = self.client.post("/api/auth/password",
-                                 json={"email": email, "password": PASSWORD},
-                                 headers=BROWSER)
+        if not any(u.get("email") == email for u in self.fake.rows("users")):
+            self.fake.table("users").insert({
+                "email": email, "name": name, "password_hash": server._hash_password(PASSWORD),
+                "email_verified_at": "2026-10-18T00:00:00+00:00", "auth_version": 1}).execute()
+        r = self.client.post("/api/auth/password",
+                             json={"email": email, "password": PASSWORD}, headers=BROWSER)
         self.assertEqual(r.status_code, 200, r.text)
 
     def submit(self, problem: str, code: str, expect: int = 202):

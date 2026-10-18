@@ -491,3 +491,155 @@ grant all on public.submissions, public.profiles, public.reports, public.users,
   to service_role;
 grant select on public.leaderboard_scores, public.problem_stats to service_role;
 drop policy if exists problems_public_read on public.problems;
+
+-- ============================================================================
+-- 2026-10-18: verified email identities. REVIEW before applying to production.
+-- Additive: existing passwords are NOT marked verified. Old sessions lack a
+-- version and are rejected by the new backend. Do not deploy it before this SQL.
+-- ============================================================================
+alter table public.users add column if not exists email_verified_at timestamptz;
+alter table public.users add column if not exists email_auth_subject uuid;
+alter table public.users add column if not exists google_subject text;
+alter table public.users add column if not exists auth_version bigint not null default 0;
+create unique index if not exists users_email_auth_subject_unique
+  on public.users(email_auth_subject) where email_auth_subject is not null;
+create unique index if not exists users_google_subject_unique
+  on public.users(google_subject) where google_subject is not null;
+
+create table if not exists public.auth_rate_buckets (
+  bucket text primary key,
+  window_start timestamptz not null,
+  attempts integer not null check (attempts > 0),
+  expires_at timestamptz not null
+);
+create index if not exists auth_rate_buckets_expiry on public.auth_rate_buckets(expires_at);
+alter table public.auth_rate_buckets enable row level security;
+revoke all on public.auth_rate_buckets from public, anon, authenticated;
+grant all on public.auth_rate_buckets to service_role;
+
+-- One transaction for every replica. Hash keys are supplied by the trusted
+-- backend; no email addresses or OTPs are stored in this abuse-control table.
+-- Global send ceiling is deliberately small for the initial Gmail test sender.
+create or replace function public.auth_email_budget(
+  p_email_key text, p_network_key text, p_action text
+) returns jsonb language plpgsql security invoker set search_path = pg_catalog, public as $$
+declare
+  limits jsonb;
+  item jsonb;
+  current_time_ timestamptz := clock_timestamp();
+  start_ timestamptz;
+  seconds_ integer;
+  hits_ integer;
+  retry_ integer := 0;
+begin
+  if p_email_key !~ '^[0-9a-f]{64}$' or p_network_key !~ '^[0-9a-f]{64}$'
+     or p_action not in ('request', 'verify') then
+    raise exception 'invalid auth budget';
+  end if;
+  perform pg_advisory_xact_lock(hashtext('newbiegrader-email-budget'));
+  current_time_ := clock_timestamp();
+  if p_action = 'request' then
+    limits := jsonb_build_array(
+      jsonb_build_array('send:global', 100, 86400),
+      jsonb_build_array('send:network:' || p_network_key, 50, 3600),
+      jsonb_build_array('send:hour:' || p_email_key, 5, 3600),
+      jsonb_build_array('send:minute:' || p_email_key, 1, 60));
+  else
+    limits := jsonb_build_array(
+      jsonb_build_array('verify:global', 1000, 3600),
+      jsonb_build_array('verify:network:' || p_network_key, 100, 900),
+      jsonb_build_array('verify:email:' || p_email_key, 8, 900));
+  end if;
+  for item in select value from jsonb_array_elements(limits) loop
+    seconds_ := (item->>2)::integer;
+    start_ := current_time_;
+    select attempts into hits_ from public.auth_rate_buckets
+      where bucket = item->>0 and expires_at > current_time_;
+    if coalesce(hits_, 0) >= (item->>1)::integer then
+      select expires_at into start_ from public.auth_rate_buckets where bucket = item->>0;
+      retry_ := greatest(retry_, ceil(extract(epoch from (start_ - current_time_)))::integer);
+    end if;
+  end loop;
+  if retry_ > 0 then
+    return jsonb_build_object('allowed', false, 'retry_after', retry_);
+  end if;
+  delete from public.auth_rate_buckets where expires_at <= current_time_;
+  for item in select value from jsonb_array_elements(limits) loop
+    seconds_ := (item->>2)::integer;
+    start_ := current_time_;
+    insert into public.auth_rate_buckets as b(bucket, window_start, attempts, expires_at)
+      values (item->>0, start_, 1, start_ + make_interval(secs => seconds_))
+    on conflict (bucket) do update set
+      attempts = case when b.expires_at > current_time_ then b.attempts + 1 else 1 end,
+      window_start = case when b.expires_at > current_time_ then b.window_start else excluded.window_start end,
+      expires_at = case when b.expires_at > current_time_ then b.expires_at else excluded.expires_at end;
+  end loop;
+  return jsonb_build_object('allowed', true);
+end $$;
+
+-- Call only AFTER a successful server-to-server /verify response. The password
+-- is chosen after email proof, never recovered from a pending signup/session.
+-- The row lock serializes credential replacement; every replacement revokes
+-- all previous session/remember versions without rewriting any history owner.
+create or replace function public.auth_email_complete(
+  p_email text, p_subject uuid, p_password_hash text, p_name text
+) returns jsonb language plpgsql security invoker set search_path = pg_catalog, public as $$
+declare
+  account_ public.users%rowtype;
+begin
+  if p_email is null or p_email <> lower(btrim(p_email)) or length(p_email) > 254
+     or p_subject is null or p_password_hash not like 'pbkdf2$%' then
+    raise exception 'invalid verified identity';
+  end if;
+  perform pg_advisory_xact_lock(hashtext('identity:' || p_email));
+  select * into account_ from public.users where email = p_email for update;
+  if found and account_.email_auth_subject is not null and account_.email_auth_subject <> p_subject then
+    raise exception 'identity subject mismatch';
+  end if;
+  insert into public.users as u(email, name, password_hash, email_verified_at, email_auth_subject, auth_version)
+    values (p_email, left(p_name, 50), p_password_hash, clock_timestamp(), p_subject, 1)
+  on conflict (email) do update set name = excluded.name, password_hash = excluded.password_hash,
+    email_verified_at = excluded.email_verified_at, email_auth_subject = excluded.email_auth_subject,
+    auth_version = u.auth_version + 1
+  returning * into account_;
+  return jsonb_build_object('email', account_.email, 'name', account_.name,
+                           'auth_version', account_.auth_version);
+end $$;
+
+-- Google subjects are bound explicitly. A verified password account is NOT
+-- silently linked because an OAuth response happens to have the same email.
+-- A first trusted Google claim clears any unverified legacy password.
+create or replace function public.auth_google_identity(
+  p_email text, p_subject text, p_name text
+) returns jsonb language plpgsql security invoker set search_path = pg_catalog, public as $$
+declare
+  account_ public.users%rowtype;
+begin
+  if p_email is null or p_email <> lower(btrim(p_email)) or p_subject is null
+     or length(p_subject) not between 1 and 255 then
+    raise exception 'invalid google identity';
+  end if;
+  perform pg_advisory_xact_lock(hashtext('identity:' || p_email));
+  select * into account_ from public.users where email = p_email for update;
+  if found and account_.email_verified_at is not null then
+    if account_.google_subject is distinct from p_subject then
+      return jsonb_build_object('link_required', true);
+    end if;
+  else
+    insert into public.users as u(email, name, password_hash, email_verified_at, google_subject, auth_version)
+      values (p_email, left(p_name, 50), '', clock_timestamp(), p_subject, 1)
+    on conflict (email) do update set name = excluded.name, password_hash = '',
+      email_verified_at = excluded.email_verified_at, google_subject = excluded.google_subject,
+      auth_version = u.auth_version + 1
+    returning * into account_;
+  end if;
+  return jsonb_build_object('email', account_.email, 'name', account_.name,
+                           'auth_version', account_.auth_version);
+end $$;
+
+revoke all on function public.auth_email_budget(text,text,text) from public, anon, authenticated;
+revoke all on function public.auth_email_complete(text,uuid,text,text) from public, anon, authenticated;
+revoke all on function public.auth_google_identity(text,text,text) from public, anon, authenticated;
+grant execute on function public.auth_email_budget(text,text,text) to service_role;
+grant execute on function public.auth_email_complete(text,uuid,text,text) to service_role;
+grant execute on function public.auth_google_identity(text,text,text) to service_role;

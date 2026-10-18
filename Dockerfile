@@ -9,7 +9,7 @@ COPY requirements.txt ./
 RUN python -m pip install --no-cache-dir --upgrade pip==26.2.1 setuptools==84.0.0 \
  && python -m pip install --no-cache-dir -r requirements.txt
 
-COPY grader.py server.py judge_runner.py worker.py problem_store.py container_entrypoint.py job_sandbox.py ./
+COPY grader.py server.py judge_runner.py worker.py problem_store.py container_entrypoint.py job_sandbox.py email_auth.py ./
 COPY static ./static
 COPY tools/plagiarism.py ./tools/plagiarism.py
 

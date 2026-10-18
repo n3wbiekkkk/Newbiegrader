@@ -27,7 +27,7 @@ jobs:
           pip-audit -r requirements.txt
 
       - name: Byte-compile Python sources
-        run: python3 -m compileall -q grader.py server.py judge_runner.py worker.py container_entrypoint.py job_sandbox.py tools
+        run: python3 -m compileall -q grader.py server.py judge_runner.py worker.py container_entrypoint.py job_sandbox.py email_auth.py tools
 
       - name: Syntax check frontend
         run: node --check static/app.js
@@ -120,3 +120,9 @@ jobs:
 
       - name: Verify server-only database privileges and RLS
         run: psql -X -v ON_ERROR_STOP=1 -f tests/security_sql.sql
+
+      - name: Verify email identity claims, revocation and shared budgets
+        run: psql -X -v ON_ERROR_STOP=1 -f tests/auth_sql.sql
+
+      - name: Verify concurrent email budgets and identity claims
+        run: python3 tests/auth_concurrency.py

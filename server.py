@@ -62,6 +62,7 @@ sys.path.insert(0, str(ROOT))
 
 import grader  # noqa: E402  (CLI grader module, import-safe: guarded by __main__)
 import problem_store  # noqa: E402  (local|supabase problem repository, storage only)
+import email_auth  # noqa: E402
 
 class AuthQueryLogFilter(logging.Filter):
     """Uvicorn logs a raw request target, including OAuth bearer query values."""
@@ -79,7 +80,7 @@ logging.getLogger("uvicorn.access").addFilter(AuthQueryLogFilter())
 STATIC_DIR = ROOT / "static"
 
 BUILD_SOURCE_FILES = ("grader.py", "server.py", "judge_runner.py", "problem_store.py",
-                      "container_entrypoint.py", "worker.py", "job_sandbox.py")
+                      "container_entrypoint.py", "worker.py", "job_sandbox.py", "email_auth.py")
 
 
 def _source_fingerprint(root: Path = ROOT) -> str:
@@ -1538,13 +1539,13 @@ _session_secret = os.environ.get("SESSION_SECRET", "").strip()
 if not _session_secret:
     _session_secret = secrets.token_hex(32)
     print("[web] WARNING: SESSION_SECRET not set, sessions die on restart", file=sys.stderr)
-_login_signer = URLSafeTimedSerializer(_session_secret, salt="login-once")
+_login_signer = URLSafeTimedSerializer(_session_secret, salt="login-once-v2")
 # "Remember me": a long-lived signed cookie holding only the email. When the
 # session cookie is gone (browser cleanup, expiry) but this one survives,
 # GET /api/auth/restore silently re-establishes the session. It is HttpOnly +
 # Secure + SameSite=lax like the session cookie, and dies with logout.
 # NOTE: like sessions, it only survives restarts when SESSION_SECRET is set.
-_remember_signer = URLSafeTimedSerializer(_session_secret, salt="remember-me")
+_remember_signer = URLSafeTimedSerializer(_session_secret, salt="remember-me-v2")
 REMEMBER_MAX_AGE = 365 * 24 * 3600
 _REMEMBER_COOKIE = "ng_remember"
 
@@ -1553,28 +1554,80 @@ def _cookie_secure() -> bool:
     return os.environ.get("SESSION_SECURE", "true").lower() != "false"
 
 
-def _issue_remember(resp, email: str) -> None:
-    resp.set_cookie(_REMEMBER_COOKIE, _remember_signer.dumps({"email": email}),
+def _issue_remember(resp, user: dict) -> None:
+    resp.set_cookie(_REMEMBER_COOKIE, _remember_signer.dumps({"user": user}),
                     max_age=REMEMBER_MAX_AGE, httponly=True,
                     samesite="lax", secure=_cookie_secure(), path="/")
 
 
-def _set_remember_choice(resp, email: str, remember: bool) -> None:
+def _set_remember_choice(resp, user: dict, remember: bool) -> None:
     """Long-lived login is explicit opt-in; opting out clears an older cookie."""
     if remember is True:
-        _issue_remember(resp, email)
+        _issue_remember(resp, user)
     else:
         resp.delete_cookie(_REMEMBER_COOKIE, path="/", httponly=True,
                            samesite="lax", secure=_cookie_secure())
 
 
-def _read_remember(request: Request) -> str:
+def _read_remember(request: Request) -> dict:
     try:
         data = _remember_signer.loads(request.cookies.get(_REMEMBER_COOKIE, ""),
                                       max_age=REMEMBER_MAX_AGE)
-        return str(data.get("email") or "").strip().lower()
+        user = data.get("user")
+        return user if isinstance(user, dict) else {}
     except Exception:
-        return ""
+        return {}
+
+
+def _identity_row(email: str) -> dict:
+    if _sb is None:
+        raise HTTPException(status_code=503, detail="identity service unavailable")
+    try:
+        result = _sb.table("users").select(
+            "email,name,email_verified_at,auth_version").eq("email", email).limit(1).execute()
+        return (result.data or [{}])[0]
+    except Exception:
+        # Do not include provider/DB exception text in auth logs or responses.
+        raise HTTPException(status_code=503, detail="identity service unavailable") from None
+
+
+def _current_identity(user) -> dict:
+    """Every protected API route gets a currently verified, versioned identity."""
+    if not isinstance(user, dict) or type(user.get("auth_version")) is not int \
+            or user["auth_version"] < 1:
+        return {}
+    try:
+        email = email_auth.normalize_email(user.get("email"))
+    except ValueError:
+        return {}
+    row = _identity_row(email)
+    if not row.get("email_verified_at") or row.get("auth_version") != user["auth_version"]:
+        return {}
+    return {"email": email, "name": row.get("name") or email,
+            "picture": user.get("picture", ""), "provider": user.get("provider", ""),
+            "auth_version": row["auth_version"]}
+
+
+class VerifiedIdentityMiddleware:
+    """Must run INSIDE SessionMiddleware, before any route reads session.user."""
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and scope.get("session", {}).get("user"):
+            if scope.get("path") == "/api/auth/logout":
+                scope["session"].pop("user", None)
+            else:
+                try:
+                    user = await asyncio.to_thread(_current_identity, scope["session"]["user"])
+                except HTTPException:
+                    return await JSONResponse({"detail": "identity service unavailable"}, 503, headers={"Cache-Control": "no-store"})(
+                        scope, receive, send)
+                if user:
+                    scope["session"]["user"] = user
+                else:
+                    scope["session"].pop("user", None)
+        await self.app(scope, receive, send)
 
 
 def _json_response(payload: dict):
@@ -1582,6 +1635,7 @@ def _json_response(payload: dict):
     # in-flight change; this keeps remember-me self-contained.
     from fastapi.responses import JSONResponse
     return JSONResponse(payload)
+app.add_middleware(VerifiedIdentityMiddleware)
 app.add_middleware(
     SessionMiddleware,
     secret_key=_session_secret,
@@ -1610,7 +1664,7 @@ def _google_userinfo(code: str) -> dict:
                       headers={"Authorization": f"Bearer {access}"})
     with urlopen(req2, timeout=15) as r2:
         info = json.load(r2)
-    if not info.get("email") or info.get("email_verified") is not True:
+    if not info.get("email") or info.get("email_verified") is not True or not info.get("sub"):
         raise RuntimeError("google did not return a verified email")
     return info
 
@@ -1642,13 +1696,23 @@ async def auth_callback(request: Request, code: str = "", state: str = "", error
     try:
         info = await asyncio.to_thread(_google_userinfo, code)
     except Exception as e:
-        print(f"[web] oauth exchange failed: {e}", file=sys.stderr)
+        print("[web] oauth exchange failed", file=sys.stderr)
         return RedirectResponse(FRONTEND_URL + "/#/?login=failed", status_code=307)
-    request.session["user"] = {
-        "email": str(info["email"]).strip().lower(),
-        "name": info.get("name") or info["email"],
-        "picture": info.get("picture", ""),
-    }
+    try:
+        email = email_auth.normalize_email(info["email"])
+        # Google warns that email_verified alone is not current inbox proof for
+        # third-party addresses. Require Gmail or the matching hosted domain.
+        if not (email.endswith("@gmail.com") or info.get("hd") == email.split("@", 1)[1]):
+            raise ValueError("email proof required")
+        identity = await asyncio.to_thread(_auth_rpc, "auth_google_identity", {
+            "p_email": email, "p_subject": str(info["sub"]),
+            "p_name": str(info.get("name") or email)[:50]})
+        if identity.get("link_required"):
+            return RedirectResponse(FRONTEND_URL + "/#/login?email_proof=required", status_code=307)
+        request.session["user"] = {**identity, "picture": info.get("picture", ""),
+                                   "provider": "google"}
+    except Exception:
+        return RedirectResponse(FRONTEND_URL + "/#/login?email_proof=required", status_code=307)
     next_url = request.session.pop("oauth_next", "#/")
     if not isinstance(next_url, str) or not next_url.startswith("#/"):
         next_url = "#/"
@@ -1672,7 +1736,7 @@ _login_jti_lock = threading.Lock()
 def auth_finish(request: Request, token: str = "", next: str = "#/"):
     try:
         data = _login_signer.loads(token, max_age=300)
-        user = data.get("user") or {}
+        user = _current_identity(data.get("user"))
         jti = str(data.get("jti") or "")
         if not user.get("email") or not jti:
             raise ValueError("no email")
@@ -1692,13 +1756,9 @@ def auth_finish(request: Request, token: str = "", next: str = "#/"):
         return RedirectResponse(FRONTEND_URL + "/#/?login=failed", status_code=307)
     if not next.startswith("#/"):
         next = "#/"
-    request.session["user"] = {
-        "email": str(user["email"]).strip().lower(),
-        "name": user.get("name") or user["email"],
-        "picture": user.get("picture", ""),
-    }
+    request.session["user"] = user
     resp = RedirectResponse(FRONTEND_URL + "/#/" + next.lstrip("#/"), status_code=307)
-    _set_remember_choice(resp, request.session["user"]["email"], data.get("remember") is True)
+    _set_remember_choice(resp, request.session["user"], data.get("remember") is True)
     return resp
 
 
@@ -1732,10 +1792,10 @@ def auth_restore(request: Request) -> dict:
     """
     if (request.session.get("user") or {}).get("email"):
         return {"ok": True, "restored": False}
-    email = _read_remember(request)
-    if not email:
+    user = _current_identity(_read_remember(request))
+    if not user:
         return {"ok": True, "restored": False}
-    request.session["user"] = {"email": email, "name": email, "picture": ""}
+    request.session["user"] = user
     return {"ok": True, "restored": True}
 
 
@@ -1743,7 +1803,7 @@ def auth_restore(request: Request) -> dict:
 def auth_logout(request: Request) -> dict:
     request.session.clear()
     resp = _json_response({"ok": True})
-    _set_remember_choice(resp, "", False)
+    _set_remember_choice(resp, {}, False)
     return resp
 
 
@@ -1942,71 +2002,140 @@ def _require_users_table() -> None:
         raise HTTPException(status_code=404, detail="accounts not configured")
 
 
+def _auth_rpc(name: str, params: dict) -> dict:
+    if _sb is None:
+        raise HTTPException(status_code=503, detail="identity service unavailable")
+    try:
+        result = _sb.rpc(name, params).execute().data
+        if not isinstance(result, dict):
+            raise ValueError()
+        return result
+    except Exception:
+        raise HTTPException(status_code=503, detail="identity service unavailable") from None
+
+
+def _auth_email(body: dict) -> str:
+    try:
+        return email_auth.normalize_email(body.get("email"))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="bad email") from None
+
+
+def _email_budget(request: Request, email: str, action: str) -> None:
+    result = _auth_rpc("auth_email_budget", {
+        "p_email_key": hashlib.sha256(email.encode()).hexdigest(),
+        "p_network_key": hashlib.sha256(_client_ip(request).encode()).hexdigest(),
+        "p_action": action})
+    if result.get("allowed") is not True:
+        raise HTTPException(status_code=429, detail="too many attempts, please wait",
+                            headers={"Retry-After": str(max(1, int(result.get("retry_after") or 60)))})
+
+
+def _email_provider_config() -> tuple:
+    key = os.environ.get("SUPABASE_AUTH_KEY", "").strip()
+    if not key or not _sb_url:
+        raise HTTPException(status_code=503, detail="email verification unavailable")
+    return _sb_url, key
+
+
 @app.post("/api/auth/register")
-async def auth_register(request: Request) -> dict:
+@app.post("/api/auth/email/request")
+async def auth_register(request: Request):
+    """Begin signup/recovery with the same response; never reserve an app account."""
     _require_users_table()
     body = await _json_object(request)
-    email = str(body.get("email", "")).strip().lower()
-    password = str(body.get("password", ""))
-    name = str(body.get("name", "")).strip()[:50] or email.split("@")[0]
-    _check_rate_limit(request, email)
-    if not EMAIL_RE.match(email):
-        raise HTTPException(status_code=400, detail="bad email")
+    email = _auth_email(body)
     if _is_admin(email):
-        # Admin emails must be created out-of-band, never via open registration:
-        # otherwise anyone can claim an admin address and inherit its rights.
-        raise HTTPException(status_code=403, detail="this email is reserved")
-    if not (PW_MIN <= len(password) <= PW_MAX):
+        raise HTTPException(status_code=403, detail="this email is reserved; use Google")
+    config = _email_provider_config()
+    await asyncio.to_thread(_email_budget, request, email, "request")
+    # Do not keep a preselected password or issue an authenticated session.
+    request.session.clear()
+    try:
+        await asyncio.to_thread(email_auth.request_code, *config, email)
+    except email_auth.Unavailable:
+        raise HTTPException(status_code=503, detail="email verification unavailable") from None
+    request.session["email_challenge"] = {"email": email, "issued_at": int(time.time())}
+    resp = _json_response({"ok": True, "verification_required": True,
+                           "message": "check your email for a verification code"})
+    resp.status_code = 202
+    _set_remember_choice(resp, {}, False)
+    return resp
+
+
+@app.post("/api/auth/email/verify")
+async def auth_email_verify(request: Request):
+    _require_users_table()
+    body = await _json_object(request)
+    config = _email_provider_config()
+    challenge = request.session.get("email_challenge") or {}
+    email = _auth_email(body)
+    issued = challenge.get("issued_at")
+    if challenge.get("email") != email or type(issued) is not int \
+            or not 0 <= time.time() - issued <= 600:
+        raise HTTPException(status_code=400, detail="request a new verification code")
+    password = body.get("password")
+    if not isinstance(password, str) or not PW_MIN <= len(password) <= PW_MAX:
         raise HTTPException(status_code=400, detail="password must be 8-128 characters")
+    await asyncio.to_thread(_email_budget, request, email, "verify")
+    code = body.get("code")
+    if not isinstance(code, str) or not re.fullmatch(r"[0-9]{6}", code):
+        raise HTTPException(status_code=400, detail="invalid or expired verification code")
     try:
-        exists = await asyncio.to_thread(lambda: _sb.table("users").select("email").eq("email", email).limit(1).execute())
-    except Exception as e:
-        raise _db_err(e)
-    if exists.data:
-        raise HTTPException(status_code=409, detail="email already registered")
+        subject = await asyncio.to_thread(email_auth.verify_code, *config, email, code)
+    except email_auth.InvalidCode:
+        raise HTTPException(status_code=400, detail="invalid or expired verification code") from None
+    except email_auth.Unavailable:
+        raise HTTPException(status_code=503, detail="email verification unavailable") from None
+    # Consumed OTP + failed DB write requires a fresh code; never trust a replay.
+    request.session.clear()
     pw_hash = await asyncio.to_thread(_hash_password, password)
-    try:
-        await asyncio.to_thread(lambda: _sb.table("users").insert(
-            {"email": email, "name": name, "password_hash": pw_hash}).execute())
-    except Exception as e:
-        raise _db_err(e)
-    request.session["user"] = {"email": email, "name": name, "picture": "",
-                               "provider": "password"}
-    user = request.session["user"]
-    resp = _json_response({"ok": True, "user": user})
-    _set_remember_choice(resp, email, body.get("remember") is True)
+    name = str(body.get("name") or "").strip()[:50] or email.split("@")[0]
+    user = await asyncio.to_thread(_auth_rpc, "auth_email_complete", {
+        "p_email": email, "p_subject": subject, "p_password_hash": pw_hash, "p_name": name})
+    request.session["user"] = {**user, "provider": "password", "picture": ""}
+    resp = _json_response({"ok": True, "user": request.session["user"]})
+    _set_remember_choice(resp, request.session["user"], body.get("remember") is True)
     return resp
 
 
 @app.post("/api/auth/password")
-async def auth_password(request: Request) -> dict:
+async def auth_password(request: Request):
     _require_users_table()
     body = await _json_object(request)
-    email = str(body.get("email", "")).strip().lower()
-    password = str(body.get("password", ""))
+    email = _auth_email(body)
+    password = body.get("password")
+    if not isinstance(password, str) or not PW_MIN <= len(password) <= PW_MAX:
+        raise HTTPException(status_code=401, detail="wrong email or password")
     _check_rate_limit(request, email)
     try:
-        res = await asyncio.to_thread(lambda: _sb.table("users").select("email,name,password_hash").eq(
+        res = await asyncio.to_thread(lambda: _sb.table("users").select(
+            "email,name,password_hash,email_verified_at,auth_version").eq(
             "email", email).limit(1).execute())
-    except Exception as e:
-        raise _db_err(e)
+    except Exception:
+        raise HTTPException(status_code=503, detail="identity service unavailable") from None
     rows = res.data or []
-    user = rows[0] if rows else None
-    if not user:
-        # Same cost as a real check: don't let timing reveal valid emails.
+    account = rows[0] if rows else {}
+    if not account:
         await asyncio.to_thread(_dummy_verify, password)
         raise HTTPException(status_code=401, detail="wrong email or password")
-    ok = await asyncio.to_thread(_verify_password, password,
-                                 (user or {}).get("password_hash", ""))
+    stored = account.get("password_hash", "")
+    if not stored:
+        await asyncio.to_thread(_dummy_verify, password)
+        raise HTTPException(status_code=401, detail="wrong email or password")
+    ok = await asyncio.to_thread(_verify_password, password, stored)
     if not ok:
         raise HTTPException(status_code=401, detail="wrong email or password")
+    if not account.get("email_verified_at") or not account.get("auth_version"):
+        raise HTTPException(status_code=403, detail="verify your email and choose a new password",
+                            headers={"X-Email-Verification-Required": "true"})
     _clear_account_attempts(email)
-    request.session["user"] = {"email": user["email"],
-                               "name": user.get("name") or user["email"],
-                               "picture": "", "provider": "password"}
-    me = request.session["user"]
-    resp = _json_response({"ok": True, "user": me})
-    _set_remember_choice(resp, me["email"], body.get("remember") is True)
+    user = {"email": account["email"], "name": account.get("name") or email,
+            "picture": "", "provider": "password", "auth_version": account["auth_version"]}
+    request.session.clear()
+    request.session["user"] = user
+    resp = _json_response({"ok": True, "user": user})
+    _set_remember_choice(resp, user, body.get("remember") is True)
     return resp
 
 
