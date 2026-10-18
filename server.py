@@ -1111,6 +1111,7 @@ async def _finish_job(jid: str, *, result: Optional[dict] = None, stored: Option
 async def _judge_worker(idx: int) -> None:
     if GRADER_ROLE == "api":
         raise RuntimeError("API role cannot run judge workers")
+    poll_delay = .25
     while True:
         if QUEUE_MODE == "database":
             try:
@@ -1119,11 +1120,13 @@ async def _judge_worker(idx: int) -> None:
                                            p_lease_seconds=LEASE_SECONDS)
                     if job:
                         await _run_job(job)
+                    poll_delay = .25 if job else min(2.0, poll_delay * 2)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
                 print(f"[web] worker unavailable: {e}", file=sys.stderr)
-            await asyncio.sleep(0.25)
+                poll_delay = min(30.0, max(1.0, poll_delay * 2))
+            await asyncio.sleep(poll_delay)
             continue
         # A queue token is a wakeup; choose student work before a rejudge.
         await _queue().get()

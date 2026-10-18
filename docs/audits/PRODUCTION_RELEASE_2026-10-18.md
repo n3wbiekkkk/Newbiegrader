@@ -1,5 +1,9 @@
 # Production release verification — 2026-10-18
 
+Later runtime-hardening checkpoint: engine **2.0.6**, deployed backend commit
+`6d7ba08`; see the follow-up at the end of this file. Earlier 2.0.4 facts below
+remain historical evidence, not the current backend version.
+
 This checkpoint supersedes the **not deployed / host unverified** statements in
 JOB_ISOLATION.md and PRACTICE_RELEASE.md. It does not close the remaining security
 findings or establish readiness for unrestricted public submissions.
@@ -113,3 +117,52 @@ Credentials remain outside the repository with owner-only permissions.
 
 Next priority: enforce and test hard aggregate limits for every judge job (S04),
 then resolve the remaining public-host gates before accepting untrusted traffic.
+
+## Runtime hardening follow-up — production VERIFIED
+
+- `b1531ba`: `grader.py:787` refuses Linux/root launch when any required rlimit
+  fails; `tests/test_critical_resource_setup.py:18` covers 14 injected failures.
+  CONFIRMED corrected setup path; **S04 aggregate enforcement remains OPEN**.
+- `6d7ba08`: `job_sandbox.py:195`, `grader.py:872`, `server.py:825` add mandatory
+  inherited network syscall filtering and fail-closed worker startup. Compiler
+  and runtime denied network endpoint creation in synthetic canaries even with
+  netns unavailable. Anonymous Unix stream pairs remain for local IPC/asyncio.
+  No namespace, capability or privileged setting was added.
+- Production now reports **2.0.6**, code fingerprint
+  `9d693b95bc193fdf23a5957fd9942df6118387c773b403cc8406f872921d4e86`.
+  Eight synthetic operator canaries passed on actual x86_64 / Landlock ABI 6:
+  Python/C/C++ STL, private-header/outside-file denial, practice/contest policy,
+  and socket creation denial. No real user workloads or database writes.
+- Actual volume remains mounted; state directory/ledger root-owned 0700/0600
+  and nonempty. memory.events reported zero OOM kills at observation, not a
+  hostile-load containment result. No credential values were exposed.
+- PR #8 passed all GitHub checks and merged as `bd246eb`. Backend deployment
+  used the tested `6d7ba08` source. The prior image for incident review is **96894**;
+  retain the identity volume/ledger if rollback is needed. No rollback executed.
+- `83493ad` adds idle/outage queue backoff (`server.py:1114`, regression
+  `tests/test_queue_admission.py:31`) and accurate README guarantees. It is
+  prepared for the future database-mode rollout; production remains **local**.
+  The subsequent repository code fingerprint is
+  `70caa654913a07aada6ac6d59d04cac501e2bf62e1f0e38ee8fea0cc9bc46ff6`;
+  do not confuse that with the deployed network-release fingerprint above.
+- Final local full suite **283 passed, zero skips**, 105.627 s; critical **143
+  passed, zero skips**, 25.188 s; Node **34 passed**; validator **68/68**;
+  byte compilation/plagiarism passed. Final clean image at 0.5 CPU / 512 MiB
+  also passed all eight canaries. No security assertion was disabled.
+- Disposable PostgreSQL 17: schema twice and queue/security SQL assertions pass;
+  four actual concurrent consumers produced one claim; expired lease recovered
+  and stale attempt refused. Production RPC bodies/privileges match, and the
+  backend's diagnostics call returned 200 with zero queued/running rows.
+  See QUEUE_ROLLOUT.md; zero durable rows is not an atomic local drain.
+- S05 still OPEN. Three legacy password accounts were counted without printing
+  identities/hashes. Maintainer confirmed no mail provider; SMTP/OTP setup and
+  migration acceptance criteria are prepared in `docs/EMAIL_VERIFICATION_SETUP.md`.
+  No email was sent, provider configured, account migrated or production schema
+  changed. Existing accounts must not be auto-marked verified.
+
+Primary remaining gates: provider-supported aggregate job/storage bounds,
+verified email plus legacy session migration, and actual pause/drain before
+database-queue cutover. Remaining session/replay, healthcheck, backup/restore,
+retention, contest-query budgets and static-header work is not claimed complete.
+
+Private evidence: `~/.local/share/newbiegrader-validation/runtime-enforcement-hlp2u8fm/`.

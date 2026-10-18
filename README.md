@@ -55,10 +55,10 @@ Every problem ships with a reference solution, and every recorded verdict can be
 Wall-clock timeouts, measured peak memory and process isolation (resource limits, privilege drop and a network namespace where available). Each test reports its own time and memory usage.
 
 ### Undisclosed tests
-Hidden tests return only a verdict and resource figures. Inputs, expected outputs and diffs are served solely for tests declared public, and all test data is redacted before it is returned to a client or persisted.
+Contest hidden tests return verdicts and resource figures. In practice, an owner can inspect input, expected output and actual output for failed cases. Upcoming/running contest problems withhold that extra practice feedback. The same policy applies to responses, history and persisted results.
 
 ### Asynchronous judging
-Submissions are accepted immediately and placed in a durable queue. Page reloads, navigation and server restarts never lose a submission.
+Submissions return a job ID for polling. With `GRADER_QUEUE_MODE=database`, admission is durable and completion/history commit together under a worker lease. The default `local` mode uses an in-memory queue with best-effort persistence; it cannot guarantee recovery after a restart or database outage. Database workers back off while idle and during outages to reduce unnecessary RPC traffic.
 
 ### Contests
 Timed Codeforces-style rounds with registration, frozen scoreboards and organizer announcements. Contest-only problems stay out of the public task list. Practice statistics exclude contest submissions.
@@ -97,7 +97,7 @@ Host capacity is read from the container at startup, and worker counts, memory c
 ## Design Principles
 
 1. **One judging engine.** Every verdict flows through the same grader entry points, and no judging logic is duplicated in request handlers.
-2. **No test-data disclosure.** Every payload carrying test data passes through result redaction before it reaches a client and before it is stored.
+2. **Controlled feedback.** Every result passes through the practice/contest disclosure policy before it reaches a client and before it is stored.
 
 ## Stack
 

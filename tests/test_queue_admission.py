@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import asynccontextmanager
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 from starlette.requests import Request
@@ -25,6 +26,53 @@ server = test_server()
 def job(email="student@example.com", kind="submit"):
     return {"kind": kind, "user_email": email, "problem": "security_canary",
             "language": "python", "source": "print(1)", "reveal": "samples"}
+
+
+class DatabaseWorkerBackoff(unittest.IsolatedAsyncioTestCase):
+    async def delays(self, outcomes, count):
+        delays = []
+
+        @asynccontextmanager
+        async def slot():
+            yield
+
+        async def claim(*_args, **_kwargs):
+            outcome = outcomes.pop(0) if outcomes else None
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+        async def sleep(delay):
+            delays.append(delay)
+            if len(delays) == count:
+                raise asyncio.CancelledError
+
+        from unittest.mock import AsyncMock
+        with patch.object(server, "QUEUE_MODE", "database"), \
+                patch.object(server, "GRADER_ROLE", "combined"), \
+                patch.object(server, "_host_slot", slot), \
+                patch.object(server, "_queue_rpc", side_effect=claim), \
+                patch.object(server, "_run_job", new_callable=AsyncMock) as run, \
+                patch.object(server.asyncio, "sleep", side_effect=sleep):
+            with self.assertRaises(asyncio.CancelledError):
+                await server._judge_worker(0)
+        return delays, run.await_count
+
+    async def test_idle_polling_backs_off_with_a_bounded_admission_delay(self):
+        delays, runs = await self.delays([], 5)
+        self.assertEqual(delays, [.5, 1, 2, 2, 2])
+        self.assertEqual(runs, 0)
+
+    async def test_claimed_work_resets_the_poll_delay(self):
+        delays, runs = await self.delays([None, None, {"id": "synthetic"}, None], 4)
+        self.assertEqual(delays, [.5, 1, .25, .5])
+        self.assertEqual(runs, 1)
+
+    async def test_outage_backs_off_and_recovery_resets_delay(self):
+        delays, runs = await self.delays([RuntimeError("synthetic outage")] * 8 +
+                                       [{"id": "synthetic"}], 9)
+        self.assertEqual(delays, [1, 2, 4, 8, 16, 30, 30, 30, .25])
+        self.assertEqual(runs, 1)
 
 
 class QueueAdmission(unittest.IsolatedAsyncioTestCase):

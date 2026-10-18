@@ -1,5 +1,10 @@
 # Newbiegrader security audit — 2026-10-18
 
+Later production verification and the mandatory compiler/runtime network filter
+are recorded in [PRODUCTION_RELEASE_2026-10-18.md](PRODUCTION_RELEASE_2026-10-18.md)
+and [NETWORK_FILTER.md](NETWORK_FILTER.md). Earlier rollout/network uncertainty
+below is historical; aggregate resource containment and identity ownership remain open.
+
 See [PRACTICE_RELEASE.md](PRACTICE_RELEASE.md) for the later explicitly approved
 practice-feedback policy and completed test-data publication. Sample-only secrecy
 statements below concern the original checkpoint and contest/legacy feedback.
