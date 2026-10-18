@@ -2477,12 +2477,13 @@ def run_submission(prob: grader.Problem, ext: str, source: str,
                     "peak_mb": round(mem, 2),
                     "public": tc.name in samples,
                 }
-                if v == "WA":
-                    item["diff"] = grader.show_diff(tc.expected, actual)[:DETAIL_HEAD]
+                if v == "WA" or (v != "AC" and tc.name in samples and reveal != REVEAL_NONE):
+                    if v == "WA":
+                        item["diff"] = grader.show_diff(tc.expected, actual)[:DETAIL_HEAD]
                     item["input"] = tc.input[:2000]
                     item["expected"] = tc.expected[:2000]
                     item["actual"] = actual[:2000]
-                elif detail:
+                if detail:
                     item["detail"] = detail[:DETAIL_HEAD]
                 results.append(item)
         else:
@@ -2504,12 +2505,13 @@ def run_submission(prob: grader.Problem, ext: str, source: str,
                             "peak_mb": round(mem, 2),
                             "public": tc.name in samples,
                         }
-                        if v == "WA":
-                            item["diff"] = grader.show_diff(tc.expected, actual)[:DETAIL_HEAD]
+                        if v == "WA" or (v != "AC" and tc.name in samples and reveal != REVEAL_NONE):
+                            if v == "WA":
+                                item["diff"] = grader.show_diff(tc.expected, actual)[:DETAIL_HEAD]
                             item["input"] = tc.input[:2000]
                             item["expected"] = tc.expected[:2000]
                             item["actual"] = actual[:2000]
-                        elif detail:
+                        if detail:
                             item["detail"] = detail[:DETAIL_HEAD]
                         results.append(item)
 

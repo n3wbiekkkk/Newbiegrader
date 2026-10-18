@@ -2110,6 +2110,7 @@ function renderResults(d, secs) {
   const body = $("result-body");
   body.classList.remove("dim");
   body.innerHTML = html;
+  bindCopyButtons(body);
   body.querySelectorAll("tr.test-row").forEach((tr) => {
     const toggle = () => {
       const det = body.querySelector(`tr.detail-row[data-i="${tr.dataset.i}"]`);
@@ -2138,29 +2139,30 @@ function renderResults(d, secs) {
 function detailHtml(r) {
   if (r.hidden) return hiddenDetailHtml(r);
   if (r.verdict === "AC") return `<span class="dim">ผ่านเทสต์นี้</span>`;
-  if (r.verdict === "TLE")
-    return `<p class="dim">ใช้เวลา ${esc(String(r.wall_s))}s เกิน limit — ถ้าเขียนซ้ำซ้อนเป็น O(n²) ให้ลองหาวิธีที่เร็วกว่า หรือเลิกอ่าน input ทีละบรรทัด</p>`;
-  if (r.verdict === "MLE")
-    return `<p class="dim">ใช้หน่วยความจำเกิน limit</p><pre>${esc(r.detail || "")}</pre>`;
-  if (r.verdict === "OLE")
-    return `<p class="dim">พิมพ์ผลลัพธ์ออกมามากเกินไป (${esc(r.detail || "")}) — ตรวจว่ามี print ในลูปไม่รู้จบหรือเปล่า</p>`;
-  if (r.verdict === "WA") {
-    return `<p class="io-title">ส่วนต่าง (· = ช่องว่าง, → = แท็บ) — <span class="d-del">บรรทัดสีแดงคือคำตอบที่ถูก</span> / <span class="d-add">สีเขียวคือที่โปรแกรมพิมพ์</span></p>${diffHtml(r.diff || "")}
-      <div class="io-grid">
-        ${ioBlockHtml("input (ตัวอย่างสาธารณะ)", r.input || "")}
-        ${ioBlockHtml("expected", r.expected || "")}
-      </div>
-      ${ioBlockHtml("actual (ที่โปรแกรมพิมพ์)", r.actual || "")}`;
-  }
-  return `<pre>${esc(r.detail || VERDICT_TH[r.verdict] || r.verdict)}</pre>`;
-}
-
-/* Hidden tests arrive without input/expected/actual/diff — never render any of
- * them (even if a payload ever carried them), and never try to fetch them. */
-function hiddenDetailHtml(r) {
   let html = `<p class="dim">${esc(verdictHint(r))}</p>`;
   if (r.detail) html += `<pre>${esc(r.detail)}</pre>`;
+  if (r.verdict === "WA" && r.diff) {
+    html += `<p class="io-title">ส่วนต่าง (· = ช่องว่าง, → = แท็บ) — <span class="d-del">บรรทัดสีแดงคือคำตอบที่ถูก</span> / <span class="d-add">สีเขียวคือที่โปรแกรมพิมพ์</span></p>${diffHtml(r.diff)}`;
+  }
+  // Older history rows may lack diagnostics. Do not present missing data as
+  // empty input/output; never fetch any hidden fixture to fill the gap.
+  if (typeof r.input === "string" && typeof r.expected === "string") {
+    html += `<div class="io-grid">
+      ${ioBlockHtml("input (เคสสาธารณะ)", r.input)}
+      ${ioBlockHtml("expected output (คำตอบที่ถูก)", r.expected)}
+    </div>`;
+    if (typeof r.actual === "string") {
+      html += ioBlockHtml("actual output (ที่โปรแกรมพิมพ์ก่อนหยุด)", r.actual);
+    }
+    html += `<p class="dim">แสดงข้อมูลแต่ละช่องไม่เกิน 2,000 ตัวอักษร</p>`;
+  }
   return html;
+}
+
+/* Hidden input/output stay private, including when a payload carries them. */
+function hiddenDetailHtml(r) {
+  return `<p class="dim">${esc(verdictHint(r))}</p>` +
+    `<p class="dim">เคสนี้ไม่เปิดเผย input/output เพื่อรักษาชุดทดสอบลับ ลองเทียบผลด้วย input ของคุณในแท็บรันโค้ด</p>`;
 }
 
 function verdictHint(r) {

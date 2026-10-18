@@ -42,7 +42,7 @@ OUTPUT_LIMIT_BYTES = 32 * 1024 * 1024  # stdout เกินนี้ -> OLE (�
 # score differently (checker rules, limits handling, verdict mapping). Stored on
 # every submission together with the per-problem tests hash so old rows can be
 # told apart from new ones (and optionally rejudged).
-GRADER_VERSION = "2.0.1"
+GRADER_VERSION = "2.0.2"
 
 # ---------- host capability (container aware) ----------
 def cgroup_root() -> str:
@@ -1075,6 +1075,8 @@ def judge_test(cmd, tc: TestCase, prob: Problem, strict: bool,
     diagnostics = diagnostics and tc.name in sample_names(prob)
     res = run_one(cmd, tc.input, prob.time_limit, prob.memory_limit, lang)
     wall, cpu, mem = res["wall"], res["cpu"], res["peak_mb"]
+    # Only public diagnostics may carry output printed before a crash/limit.
+    actual = res["stdout"][:2000] if diagnostics else ""
     checker = "exact" if strict else prob.checker
     reason = res.get("reason", "")
 
@@ -1083,47 +1085,48 @@ def judge_test(cmd, tc: TestCase, prob: Problem, strict: bool,
             "network isolation unavailable; refusing to run (not a verdict)")
 
     if reason == "timeout":
-        return "TLE", wall, cpu, mem, "", ""
+        return "TLE", wall, cpu, mem, "", actual
     if reason == "ole":
-        return "OLE", wall, cpu, mem, f"stdout > {OUTPUT_LIMIT_BYTES // (1024 * 1024)}MB", ""
+        return "OLE", wall, cpu, mem, f"stdout > {OUTPUT_LIMIT_BYTES // (1024 * 1024)}MB", actual
     if reason == "oom":
         tail = (res["stderr"] or "")[-500:] if verbose and diagnostics else ""
-        return "MLE", wall, cpu, mem, tail or "killed (likely OOM)", ""
+        return "MLE", wall, cpu, mem, tail or "killed (likely OOM)", actual
     if reason == "sigkill":
         # SIGKILL เกิดได้ 2 ทาง: OOM killer (MLE) กับ timeout killer (TLE)
         # ถ้า wall ชน time limit ให้เป็น TLE อย่าเหมาเป็น MLE
         if wall >= prob.time_limit * 0.9:
-            return "TLE", wall, cpu, mem, "", ""
+            return "TLE", wall, cpu, mem, "", actual
         tail = (res["stderr"] or "")[-500:] if verbose and diagnostics else ""
-        return "MLE", wall, cpu, mem, tail or "killed (likely OOM)", ""
+        return "MLE", wall, cpu, mem, tail or "killed (likely OOM)", actual
     if over_memory_limit(prob.memory_limit, mem, lang):
         # The kernel ceiling grants the runtime its virtual headroom, so a
         # program can finish inside it while still exceeding the limit it is
         # judged against: the measured peak RSS decides (and is what we report).
         return ("MLE", wall, cpu, mem,
                 f"peak {mem:.1f}MB > limit {mem_limit_mb(prob.memory_limit, lang):.0f}MB"
-                + memory_note(prob.memory_limit, lang), "")
+                + memory_note(prob.memory_limit, lang), actual)
     if reason.startswith("signal:"):
         sig = reason.split(":", 1)[1]
         hint = SIGNAL_HINTS.get(sig, sig)
         tail = (res["stderr"] or "")[-2000:] if diagnostics else ""
         detail = hint + (f"\n{tail}" if tail.strip() else "")
-        return "RE", wall, cpu, mem, detail, ""
+        return "RE", wall, cpu, mem, detail, actual
     if reason == "spawn-fail":
         detail = (res["stderr"] or "spawn failed") if diagnostics else "execution failed"
-        return "RE", wall, cpu, mem, detail, ""
+        return "RE", wall, cpu, mem, detail, actual
     rc = res["returncode"]
     if rc is not None and rc != 0:
         err = res["stderr"] or ""
         if "MemoryError" in err or "bad_alloc" in err:
-            return "MLE", wall, cpu, mem, err[-2000:] if diagnostics else "memory limit exceeded", ""
+            return "MLE", wall, cpu, mem, err[-2000:] if diagnostics else "memory limit exceeded", actual
         detail = err[-2000:] if diagnostics and err else f"exit code {rc}"
-        return "RE", wall, cpu, mem, detail, ""
+        return "RE", wall, cpu, mem, detail, actual
     ok = run_checker(checker, tc.expected, res["stdout"], prob.tolerance)
     extra = (res["stderr"] or "")[-1000:] if (verbose and diagnostics and res["stderr"]) else ""
     if ok:
         return "AC", wall, cpu, mem, extra, ""
     return "WA", wall, cpu, mem, extra, res["stdout"]
+
 
 # ---------- run ----------
 def cmd_run(args) -> int:

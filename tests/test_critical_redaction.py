@@ -115,6 +115,35 @@ class CriticalRedaction(unittest.TestCase):
         self.assertIn("public-input", public["detail"])
         self.assertIn("public-input", json.dumps(row["results"]))
 
+    def test_critical_public_runtime_failure_keeps_io_across_job_history_and_storage(self):
+        source = "import sys\nprint('partial public output', flush=True)\nsys.stderr.write(sys.stdin.read())\nsys.exit(7)\n"
+        for jobs, mode in ((1, "local"), (2, "database")):
+            with self.subTest(jobs=jobs, mode=mode):
+                result, persisted = self.execute_job(source, jobs=jobs, mode=mode)
+                for rows in (result["results"], persisted["results"]):
+                    public = next(r for r in rows if r["test"] == "01")
+                    self.assertEqual(public["verdict"], "RE")
+                    self.assertEqual(public["input"], self.problem.tests[0].input)
+                    self.assertEqual(public["expected"], self.problem.tests[0].expected)
+                    self.assertEqual(public["actual"], "partial public output\n")
+                    self.assertIn("public-input", public["detail"])
+                    hidden = next(r for r in rows if r["test"] == "1001")
+                    self.assertFalse({"input", "expected", "actual", "diff"} & hidden.keys())
+
+    def test_critical_limit_feedback_keeps_partial_stdout_only_for_public_cases(self):
+        base = {"stdout": "partial", "stderr": "", "wall": 1.2, "cpu": .1,
+                "peak_mb": 1, "returncode": 1}
+        for reason, verdict in (("timeout", "TLE"), ("ole", "OLE"), ("oom", "MLE"),
+                                ("signal:SIGSEGV", "RE"), ("", "RE")):
+            for diagnostics in (True, False):
+                with self.subTest(reason=reason, diagnostics=diagnostics), \
+                        patch.object(grader, "run_one", return_value=base | {"reason": reason}):
+                    for tc in self.problem.tests:
+                        judged = grader.judge_test(["synthetic"], tc, self.problem, False,
+                                                   False, diagnostics=diagnostics)
+                        self.assertEqual(judged[0], verdict)
+                        self.assertEqual(judged[-1], "partial" if diagnostics and tc.name == "01" else "")
+
     def test_critical_reveal_none_hides_public_stderr_too(self):
         result, row = self.execute_job(STDERR_SOURCE, reveal="none")
         self.assertNotIn("public-input", json.dumps(result))

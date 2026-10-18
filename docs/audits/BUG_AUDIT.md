@@ -2,7 +2,9 @@
 
 Scope, baseline and trust boundaries are in [SECURITY_AUDIT.md](SECURITY_AUDIT.md).
 Line references refer to this branch, not the earlier audit's F1–F12 numbering.
-All corrections are local; none has been pushed or deployed by this audit.
+Corrections are local pending release. The subsequent authorized feedback branch
+push and private problem fixes are recorded in [SUBMISSION_FEEDBACK.md](SUBMISSION_FEEDBACK.md);
+no backend deployment or problem-data publication is implied by that push.
 
 ## B01 — Public history bypasses the contest freeze
 
@@ -244,3 +246,10 @@ A passing fake database test is not proof of PostgREST/RLS behavior. Run
 `tests/queue_sql.sql` and `tests/security_sql.sql` against a disposable PostgreSQL
 database with Supabase-like grants, as CI now does. Never seed production with
 these fixtures. See final recorded counts in the production-readiness report.
+
+## B09 / B10 — Problem correctness and submission diagnostics follow-up
+
+See [SUBMISSION_FEEDBACK.md](SUBMISSION_FEEDBACK.md) for evidence, file:line,
+regressions, remaining risk and release/rollback requirements for the KAI-GAI
+reference/specification mismatch (Medium) and unbound result copy controls / I/O
+alignment (Low). Both are CONFIRMED, corrected locally and not deployed.
