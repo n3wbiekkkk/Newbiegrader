@@ -1,0 +1,55 @@
+[Unit]
+Description=Newbiegrader synthetic EC2 isolation verification (no database)
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/newbiegrader/current
+ExecCondition=/usr/bin/test ! -f /etc/newbiegrader/worker-enabled
+Environment=GRADER_RUNNER_CHILD=1
+Environment=SESSION_SECRET=synthetic-ec2-canary-session
+Environment=GRADER_REQUIRE_NETNS=0
+Environment=GRADER_ALLOW_UNISOLATED_JUDGE=1
+Environment=GRADER_REQUIRE_JOB_CGROUP=1
+Environment=GRADER_JOB_CGROUP_ROOT=/sys/fs/cgroup/system.slice/newbiegrader-canary.service
+Environment=GRADER_WORKSPACE_ROOT=/var/lib/newbiegrader/workspaces
+# Canary and real jobs must reserve identities from the same durable ledger.
+Environment=GRADER_SANDBOX_IDENTITY_DIR=/var/lib/newbiegrader/sandbox-identities
+Environment=GRADER_MEMORY_CAP_MB=128
+Environment=GRADER_JUDGE_WORKERS=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=TMPDIR=/var/lib/newbiegrader/workspaces
+ExecStart=/usr/local/lib/newbiegrader/venv/bin/python -u tools/ec2_canaries.py
+TimeoutStartSec=120
+TimeoutStopSec=10
+KillMode=control-group
+Delegate=cpu memory pids
+DelegateSubgroup=manager
+MemoryMax=1G
+MemorySwapMax=0
+CPUQuota=100%
+TasksMax=128
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_CHOWN CAP_DAC_OVERRIDE CAP_KILL CAP_FOWNER
+AmbientCapabilities=CAP_SETUID
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateMounts=yes
+TemporaryFileSystem=/var/lib/newbiegrader/workspaces:rw,nosuid,nodev,size=128M,nr_inodes=4096,mode=0755
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+ReadWritePaths=/var/lib/newbiegrader
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+StandardOutput=append:/var/lib/newbiegrader/ec2-canaries.jsonl
+StandardError=journal

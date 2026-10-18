@@ -79,7 +79,7 @@ logging.getLogger("uvicorn.access").addFilter(AuthQueryLogFilter())
 
 STATIC_DIR = ROOT / "static"
 
-BUILD_SOURCE_FILES = ("grader.py", "server.py", "judge_runner.py", "problem_store.py",
+BUILD_SOURCE_FILES = ("grader.py", "server.py", "judge_runner.py", "job_resources.py", "problem_store.py",
                       "container_entrypoint.py", "worker.py", "job_sandbox.py", "email_auth.py")
 
 
@@ -815,6 +815,9 @@ async def validate_runtime() -> None:
     posture = _judge_isolation_posture(
         role=GRADER_ROLE, strict=strict, acknowledged=acknowledged,
         can_sandbox=can_sandbox, netns_ok=netns_ok)
+    if GRADER_ROLE in ("combined", "worker"):
+        import job_resources
+        await asyncio.to_thread(job_resources.initialize)
     if can_sandbox and GRADER_ROLE in ("combined", "worker"):
         try:
             await asyncio.to_thread(grader.job_sandbox.landlock_abi)
@@ -998,6 +1001,9 @@ async def _update_job_db(jid: str, patch: dict) -> None:
 
 async def _create_job(row: dict, track_active: bool = True) -> dict:
     """Reserve capacity and per-account ownership atomically before any yield."""
+    if os.environ.get("GRADER_ACCEPT_JOBS", "1") != "1":
+        raise HTTPException(status_code=503, detail="submission admission is paused",
+                            headers={"Retry-After": "60"})
     jid = str(uuid.uuid4())
     row = {**row, "id": jid, "status": "queued", "result": None, "error": "",
            "created_at": _iso_now()}
@@ -1114,6 +1120,8 @@ async def _judge_worker(idx: int) -> None:
         raise RuntimeError("API role cannot run judge workers")
     poll_delay = .25
     while True:
+        import job_resources
+        job_resources.assert_healthy()
         if QUEUE_MODE == "database":
             try:
                 async with _host_slot():
