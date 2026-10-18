@@ -596,13 +596,14 @@ async def _store_submission(row: dict, target_id: Optional[str] = None) -> Optio
 
 
 # ---- feedback policy: which test data may be shown to whom ----
-# Public samples (config.json `samples`) are the only test data a normal user
-# ever sees. Hidden test input/expected never leave the server: results are
-# redacted BEFORE they are returned and BEFORE they are stored, so a history row
-# can never leak them either.
+# Contest feedback exposes public samples only (or none). The owner may inspect
+# failed practice cases, by explicit product policy. Upcoming/running contests
+# also restrict the practice path and reads of previously stored practice data.
+# Redact before returning AND persisting; practice provenance is server-generated.
 REVEAL_ALL = "all"          # admin: full detail
-REVEAL_SAMPLES = "samples"  # default for everyone: samples only
+REVEAL_SAMPLES = "samples"  # contest/default legacy feedback: samples only
 REVEAL_NONE = "none"        # live contest with show_samples = false
+REVEAL_PRACTICE = "practice-failures"  # owner: failed practice cases only
 
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
@@ -628,7 +629,9 @@ def _redact_results(results: List[dict], reveal: str) -> List[dict]:
         item = {k: (_plain_text(v) if isinstance(v, str) else v)
                 for k, v in r.items()}
         public = bool(item.pop("public", False))
-        if not public or reveal == REVEAL_NONE:
+        practice = (reveal == REVEAL_PRACTICE and item.get("practice_feedback") is True
+                    and item.get("verdict") in {"WA", "RE", "TLE", "MLE", "OLE"})
+        if (not public and not practice) or reveal == REVEAL_NONE:
             # detail is user-controlled (including old persisted stderr).
             # Never attempt to distinguish it by matching its text.
             detail = item.pop("detail", None)
@@ -639,9 +642,10 @@ def _redact_results(results: List[dict], reveal: str) -> List[dict]:
                     "RE": "runtime error", "MLE": "memory limit exceeded",
                     "TLE": "time limit exceeded", "OLE": "output limit exceeded",
                 }.get(item.get("verdict"), "execution diagnostic withheld")
-        if reveal == REVEAL_ALL or (public and reveal != REVEAL_NONE):
+        if reveal == REVEAL_ALL or practice or (public and reveal != REVEAL_NONE):
             out.append(item)
             continue
+        item.pop("practice_feedback", None)
         for k in ("diff", "input", "expected", "actual"):
             item.pop(k, None)
         item["hidden"] = True
@@ -1273,6 +1277,8 @@ async def _heartbeat_job(job: dict) -> None:
 
 
 def _result_with_reveal(job: dict, result: dict, reveal: str) -> dict:
+    if job.get("contest_id") and reveal == REVEAL_PRACTICE:
+        reveal = REVEAL_SAMPLES
     prob = PROBLEMS.get(job.get("problem", ""))
     samples = grader.sample_names(prob) if prob else set()
     raw = [{**r, "public": r.get("test") in samples and not r.get("hidden", False)}
@@ -1282,12 +1288,13 @@ def _result_with_reveal(job: dict, result: dict, reveal: str) -> dict:
 
 def _stored_result(job: dict, result: dict) -> dict:
     reveal = REVEAL_NONE if job.get("reveal") == REVEAL_NONE else REVEAL_SAMPLES
+    if job.get("reveal") == REVEAL_PRACTICE and not job.get("contest_id"):
+        reveal = REVEAL_PRACTICE
     return _result_with_reveal(job, result, reveal)
 
 
 def _submission_row(job: dict, result: dict, stored: Optional[dict] = None) -> dict:
-    """DB row for one judged submission. Hidden test data is already stripped
-    from `result` by run_submission (stored at REVEAL_SAMPLES level)."""
+    """Persist only feedback permitted by the server-selected job policy."""
     prob = PROBLEMS.get(job.get("problem", ""))
     results = _stored_result(job, stored if stored is not None else result).get("results", [])
     return {
@@ -1389,22 +1396,32 @@ def _live_hidden_pids(exclude_cid: str = "") -> set:
 
 
 def _effective_reveal(contest: Optional[dict], email: str, pid: str) -> str:
-    """Reveal level for one submission, including the practice path.
+    """Practice failures are open only outside any upcoming/running contest.
 
-    Practice submits (contest=None) to a problem that is currently hidden
-    inside a live show_samples=false contest must still get REVEAL_NONE.
+    Omitting contest= must never grant extra feedback for a protected problem.
+    Unknown policy/times fail closed, including reads of prior practice history.
     """
-    if _is_admin(email):
-        return REVEAL_ALL
     if contest is not None:
         return _reveal_for(contest, email)
-    if pid:
-        try:
-            if pid in _live_hidden_pids():
+    protected = False
+    try:
+        for row in _contest_policy_rows(fresh=True):
+            if pid not in {_resolve_pid(str(x)) for x in (row.get("problems") or [])}:
+                continue
+            # _contest_window's legacy invalid-date fallback is not a basis
+            # for declassifying fixtures. Require valid, timezone-aware dates.
+            start = dt.datetime.fromisoformat(str(row.get("starts_at")).replace("Z", "+00:00"))
+            end = dt.datetime.fromisoformat(str(row.get("ends_at")).replace("Z", "+00:00"))
+            if start.tzinfo is None or end.tzinfo is None or end <= start:
                 return REVEAL_NONE
-        except Exception:
-            return REVEAL_NONE
-    return REVEAL_SAMPLES
+            window = _contest_window(row)
+            if window != "ended":
+                protected = True
+                if window == "running" and row.get("show_samples") is False:
+                    return REVEAL_NONE
+    except Exception:
+        return REVEAL_NONE
+    return REVEAL_SAMPLES if protected else REVEAL_PRACTICE
 
 
 # ---- contest registration (Codeforces style) ----
@@ -2331,9 +2348,11 @@ def _contest_problem_sets() -> tuple:
             _contest_pid_cache.get("hide") or set())
 
 
-def _contest_policy_rows() -> List[dict]:
-    """Transient policy failures cannot make private problems public."""
+def _contest_policy_rows(*, fresh: bool = False) -> List[dict]:
+    """Transient failures cannot open policy; disclosure decisions bypass TTL."""
     try:
+        if fresh:
+            return _all_contest_rows() if _sb is not None else []
         return _cached_contest_rows()
     except Exception as exc:
         # A genuinely absent legacy table contains no contest policy. Other
@@ -2426,13 +2445,14 @@ def run_submission(prob: grader.Problem, ext: str, source: str,
                    reveal: str = REVEAL_SAMPLES) -> dict:
     """Judge one submission (runs inside a worker thread, never inline in the loop).
 
-    `reveal` decides how much test data the returned payload carries; the result
-    that gets persisted is always reduced to REVEAL_SAMPLES by the caller.
+    `reveal` decides which failures may carry test data. Storage re-applies the
+    server-selected policy; contest records never opt into practice feedback.
     """
     if not prob.tests:
         # Fail closed: an empty suite must never become Accepted.
         return {"error": "problem store unavailable (no tests)"}
     samples = grader.sample_names(prob)
+    practice = reveal == REVEAL_PRACTICE
     # The isolated runner receives trusted embedded tests but has no populated
     # metadata cache. Record these exact bytes, not a potentially stale API hash.
     executed_tests_hash = grader.tests_hash(prob)
@@ -2480,7 +2500,8 @@ def run_submission(prob: grader.Problem, ext: str, source: str,
                 try:
                     judged.append((tc, grader.judge_test(
                         cmd, tc, capped, False, False, lang,
-                        diagnostics=tc.name in samples and reveal != REVEAL_NONE)))
+                        diagnostics=(tc.name in samples or practice) and reveal != REVEAL_NONE,
+                        reveal_failed=practice)))
                 except grader.SandboxUnavailable:
                     # Fail closed: no test was judged, no verdict is recorded.
                     # The worker maps {"error": ...} to a job-level error.
@@ -2492,12 +2513,14 @@ def run_submission(prob: grader.Problem, ext: str, source: str,
                     "peak_mb": round(mem, 2),
                     "public": tc.name in samples,
                 }
-                if v == "WA" or (v != "AC" and tc.name in samples and reveal != REVEAL_NONE):
+                if v == "WA" or (v != "AC" and (tc.name in samples or practice) and reveal != REVEAL_NONE):
                     if v == "WA":
                         item["diff"] = grader.show_diff(tc.expected, actual)[:DETAIL_HEAD]
                     item["input"] = tc.input[:2000]
                     item["expected"] = tc.expected[:2000]
                     item["actual"] = actual[:2000]
+                if practice and v in {"WA", "RE", "TLE", "MLE", "OLE"}:
+                    item["practice_feedback"] = True
                 if detail:
                     item["detail"] = detail[:DETAIL_HEAD]
                 results.append(item)
@@ -2505,7 +2528,8 @@ def run_submission(prob: grader.Problem, ext: str, source: str,
             with concurrent.futures.ThreadPoolExecutor(max_workers=JUDGE_JOBS) as ex:
                 for stage in stages:
                     futs = [ex.submit(copy_context().run, grader.judge_test, cmd, tc, capped, False, False, lang,
-                                      diagnostics=tc.name in samples and reveal != REVEAL_NONE)
+                                      diagnostics=(tc.name in samples or practice) and reveal != REVEAL_NONE,
+                                      reveal_failed=practice)
                             for tc in stage]
                     # result() returns only after the supervisor reaps all
                     # descendants; sample readers cannot survive this barrier.
@@ -2520,12 +2544,14 @@ def run_submission(prob: grader.Problem, ext: str, source: str,
                             "peak_mb": round(mem, 2),
                             "public": tc.name in samples,
                         }
-                        if v == "WA" or (v != "AC" and tc.name in samples and reveal != REVEAL_NONE):
+                        if v == "WA" or (v != "AC" and (tc.name in samples or practice) and reveal != REVEAL_NONE):
                             if v == "WA":
                                 item["diff"] = grader.show_diff(tc.expected, actual)[:DETAIL_HEAD]
                             item["input"] = tc.input[:2000]
                             item["expected"] = tc.expected[:2000]
                             item["actual"] = actual[:2000]
+                        if practice and v in {"WA", "RE", "TLE", "MLE", "OLE"}:
+                            item["practice_feedback"] = True
                         if detail:
                             item["detail"] = detail[:DETAIL_HEAD]
                         results.append(item)
@@ -2910,7 +2936,10 @@ async def job_status(request: Request, jid: str) -> dict:
     status = job.get("status", "queued")
     result = job.get("result") if status == "done" else None
     if isinstance(result, dict) and job.get("kind") != "playground":
-        result = _result_with_reveal(job, result, job.get("reveal") or REVEAL_SAMPLES)
+        reveal = job.get("reveal") or REVEAL_SAMPLES
+        if reveal == REVEAL_PRACTICE:
+            reveal = await asyncio.to_thread(_effective_reveal, None, user["email"], job.get("problem", ""))
+        result = _result_with_reveal(job, result, reveal)
     return {
         "id": jid, "status": status, "problem": job.get("problem", ""),
         "kind": job.get("kind", "submit"), "error": job.get("error", "") or "",
@@ -3063,8 +3092,10 @@ async def history_detail(request: Request, sid: str) -> dict:
     if row.get("user_email") != email and not _is_admin(email):
         raise HTTPException(status_code=403, detail="not your submission")
     row.pop("user_email", None)  # never expose login emails publicly
-    row["results"] = _stored_result({"problem": row.get("problem")},
-                                     {"results": row.get("results", [])})["results"]
+    reveal = REVEAL_SAMPLES
+    if not row.get("contest_id") and any(r.get("practice_feedback") is True for r in row.get("results", [])):
+        reveal = await asyncio.to_thread(_effective_reveal, None, email, row.get("problem", ""))
+    row["results"] = _result_with_reveal(row, {"results": row.get("results", [])}, reveal)["results"]
     return row
 
 

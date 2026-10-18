@@ -1,5 +1,9 @@
 # Newbiegrader security audit — 2026-10-18
 
+See [PRACTICE_RELEASE.md](PRACTICE_RELEASE.md) for the later explicitly approved
+practice-feedback policy and completed test-data publication. Sample-only secrecy
+statements below concern the original checkpoint and contest/legacy feedback.
+
 ## Decision and evidence boundary
 
 **Not ready for unrestricted public execution.** The confirmed S01 database

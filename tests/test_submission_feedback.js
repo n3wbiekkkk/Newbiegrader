@@ -47,3 +47,10 @@ test('rendered result I/O copy buttons receive handlers, including history rende
   context.renderResults({verdict:'CE', passed:0, total:1, score:0, compile_error:'synthetic'}, null);
   assert.equal(bound, 1);
 });
+
+test('authorized practice failure labels do not pretend the case was a PDF sample', () => {
+  const html = context.detailHtml({ verdict:'WA', practice_feedback:true, input:'practice',
+    expected:'ok', actual:'wrong' });
+  assert.match(html, /input \(เคสที่ผิด\)/);
+  assert.doesNotMatch(html, /เคสสาธารณะ/);
+});

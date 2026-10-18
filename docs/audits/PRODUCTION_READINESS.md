@@ -8,6 +8,11 @@ isolation and identity ownership remain launch gates. Initial audit work made no
 production changes. After explicit approval, S01 permission SQL was applied and
 verified in production; no application data, push or deployment was performed.
 
+Later approved test-data publication: **68 problems / 1,178 cases**, with no
+backend deployment. The new owner-authorized practice feedback is documented in
+[PRACTICE_RELEASE.md](PRACTICE_RELEASE.md); kernel/identity/queue release gates
+still apply.
+
 See [security findings](SECURITY_AUDIT.md) and [correctness/operations findings](BUG_AUDIT.md).
 Status is scoped: a local regression pass is not a verified production rollout.
 

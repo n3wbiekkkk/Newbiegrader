@@ -11,8 +11,8 @@ Strict limits · Undisclosed tests · Asynchronous judging · Contests · Teache
 [![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue)](LICENSE)
 ![Python](https://img.shields.io/badge/python-3.11-3776AB?logo=python&logoColor=white)
 ![Problems](https://img.shields.io/badge/problems-68-brightgreen)
-![Test cases](https://img.shields.io/badge/test%20cases-974-brightgreen)
-![Grader](https://img.shields.io/badge/grader-v2.0.3-informational)
+![Test cases](https://img.shields.io/badge/test%20cases-1178-brightgreen)
+![Grader](https://img.shields.io/badge/grader-v2.0.4-informational)
 ![Frontend](https://img.shields.io/badge/frontend-no%20build%20step-orange)
 
 [Live Demo](https://newbiegrader.pages.dev) · [Report a Bug](../../issues) · [Discord](https://discord.gg/7NQDHFBpf6) · [Documentation](docs)
@@ -37,11 +37,11 @@ Strict limits · Undisclosed tests · Asynchronous judging · Contests · Teache
 
 Newbiegrader is a web-based programming judge designed for teaching competitive programming in Thai. Students submit solutions in **Python 3**, **C (C11)** or **C++ (C++17)** and receive automatic verdicts under real time and memory limits, the same way they would on a professional contest platform.
 
-The test data behind each problem is never disclosed. Only the public samples from the problem statement are shown, so students learn to reason about correctness instead of fitting their code to known answers.
+Practice submissions show input, expected output and actual output for failed cases to their owner. Contest submissions keep hidden tests private; upcoming/running contest problems also withhold extra feedback through the practice path. Previously disclosed practice data cannot be made secret again by reusing it in a contest. See the [feedback policy](docs/submission-feedback-policy.md).
 
 <div align="center">
 
-| 68 | 974 | v2.0.3 | 3 |
+| 68 | 1,178 | v2.0.4 | 3 |
 | :---: | :---: | :---: | :---: |
 | problems | test cases | grader engine | languages |
 

@@ -2148,7 +2148,7 @@ function detailHtml(r) {
   // empty input/output; never fetch any hidden fixture to fill the gap.
   if (typeof r.input === "string" && typeof r.expected === "string") {
     html += `<div class="io-grid">
-      ${ioBlockHtml("input (เคสสาธารณะ)", r.input)}
+      ${ioBlockHtml(r.practice_feedback ? "input (เคสที่ผิด)" : "input (เคสสาธารณะ)", r.input)}
       ${ioBlockHtml("expected output (คำตอบที่ถูก)", r.expected)}
     </div>`;
     if (typeof r.actual === "string") {

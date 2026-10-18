@@ -42,7 +42,7 @@ OUTPUT_LIMIT_BYTES = 32 * 1024 * 1024  # stdout เกินนี้ -> OLE (�
 # score differently (checker rules, limits handling, verdict mapping). Stored on
 # every submission together with the per-problem tests hash so old rows can be
 # told apart from new ones (and optionally rejudged).
-GRADER_VERSION = "2.0.3"
+GRADER_VERSION = "2.0.4"
 
 # ---------- host capability (container aware) ----------
 def cgroup_root() -> str:
@@ -1065,17 +1065,18 @@ def run_one(cmd: list[str], stdin_data: str, time_limit: float, memory_mb: int,
 
 def judge_test(cmd, tc: TestCase, prob: Problem, strict: bool,
                verbose: bool, lang: Optional[str] = None, *,
-               diagnostics: bool = True) -> tuple[str, float, float, float, str, str]:
+               diagnostics: bool = True, reveal_failed: bool = False) -> tuple[str, float, float, float, str, str]:
     """Returns (verdict, wall_s, cpu_s, peak_mb, detail, actual_stdout).
 
     Raises SandboxUnavailable when mandatory isolation cannot be provided:
     the submission was not judged and must not receive any verdict.
     """
-    # Even a caller that forgets its reveal policy cannot expose hidden stderr.
-    diagnostics = diagnostics and tc.name in sample_names(prob)
+    # Private diagnostics are withheld by default. The web explicitly opts in
+    # only for owner-authorized failed practice feedback.
+    diagnostics = diagnostics and (tc.name in sample_names(prob) or reveal_failed)
     res = run_one(cmd, tc.input, prob.time_limit, prob.memory_limit, lang)
     wall, cpu, mem = res["wall"], res["cpu"], res["peak_mb"]
-    # Only public diagnostics may carry output printed before a crash/limit.
+    # Authorized diagnostics may carry output printed before a crash/limit.
     actual = res["stdout"][:2000] if diagnostics else ""
     checker = "exact" if strict else prob.checker
     reason = res.get("reason", "")

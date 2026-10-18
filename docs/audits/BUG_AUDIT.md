@@ -252,4 +252,6 @@ these fixtures. See final recorded counts in the production-readiness report.
 See [SUBMISSION_FEEDBACK.md](SUBMISSION_FEEDBACK.md) for evidence, file:line,
 regressions, remaining risk and release/rollback requirements for the KAI-GAI
 reference/specification mismatch (Medium) and unbound result copy controls / I/O
-alignment (Low). Both are CONFIRMED, corrected locally and not deployed.
+alignment (Low). Both are CONFIRMED. B09 expected-output corrections are now
+verified in production after approval; B10 code is pushed but not deployed.
+See [PRACTICE_RELEASE.md](PRACTICE_RELEASE.md) for the final publication evidence.
