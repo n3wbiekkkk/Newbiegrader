@@ -1,5 +1,67 @@
 # EC2 migration work log and runbook
 
+## Latest checkpoint — stable HTTPS staging (2026-10-19)
+
+This checkpoint supersedes earlier notes saying Cloudflare connection approval
+was withheld. The latest task authorized safe staging setup and pushing the
+seven reviewed migration commits. **Production still uses JustRunMy.**
+
+- Installed official Cloudflare skills/MCP and completed OAuth; all four MCP
+  tools were exercised. Details: `CODEX_MCP_SETUP.md`.
+- Deployed a separate Pages project, `newbiegrader-aws-staging`, with an explicit
+  service binding to a private Worker, a specific VPC Service and a named tunnel.
+  Stable URL: `https://newbiegrader-aws-staging.pages.dev/api/health`.
+  No public Worker route or EC2 application port; no custom domain required.
+- Actual audit-Mac curl GET returned 200 / 68 problems before and after a named
+  tunnel restart at the **same** URL. Auth/jobs/submit/run probes returned 404.
+  HEAD health is 404 both directly on EC2 and through Pages: the existing API
+  defines GET only. Initial urllib 403 and rejected future compatibility date
+  are recorded in `EC2_CLOUDFLARE_SETUP.md`, not counted as passes.
+- Named tunnel readback returned healthy / four connections after reconnection;
+  systemd is enabled/active. Nginx/API remain loopback-only. Real worker remains
+  inactive, its enable flag absent, and admission disabled. No production queue
+  claim/admit or user submission was executed.
+- Existing Pages production canonical deployment remained
+  `ec40128a-991f-418b-916d-a1951180723d` before/after staging creation. Private
+  Worker readback confirms public subdomain and preview URLs disabled.
+- Account is Workers Free / $0 current plan. VPC is free **during open beta**;
+  no permanent free-price/SLA claim is made. No paid AWS resource was added.
+- Pushed exactly the seven reviewed commits (`8bceb7d` through `0fdfae2`) to
+  `origin/infra/ec2-migration`; remote head was verified. Gitleaks scanned that
+  commit range with complete redaction: zero findings; no AGENTS.md/private
+  credentials/artifacts were included. No main merge or production deploy.
+- Expanded the encrypted state backup with an explicit `--include-tunnel` option.
+  Actual new archive was decrypted only in memory: seven fixed members, root
+  ownership, 0600 environment/token files; no plaintext extraction. Two synthetic
+  regression tests cover opt-in file selection and private-directory refusal.
+
+This round reran the clean tracked/synthetic snapshot on Linux arm64/root in a
+network-disabled disposable Docker container (Python 3.11): **263 run, 260 pass,
+3 skipped** (`test_api_e2e`, `test_judge_limits`, `test_problems_supabase`, which
+need private problems). The separate critical gate passed **187/187, zero
+skips**; these overlap the full suite and must not be added to its total. Node
+on the audit Mac passed **57/57, zero skips**. The two new backup tests also ran
+on macOS: 2/2. Python byte-compilation and frontend syntax/ID/style guards passed.
+No kernel isolation changes were made this round; the previous 11 post-reboot
+EC2 canaries remain prior-checkpoint evidence, not a new execution claim.
+
+Supabase MCP read-only inspection returned PostgreSQL 17.11. A database dump
+connection is not currently configured in local connection variables, `.env`,
+`~/.pgpass` or `~/.pg_service.conf` (only presence/names checked). MCP SQL access
+and API service keys do not by themselves provide a pg_dump connection. DB and
+Storage backup/restore remains **UNVERIFIED**; see `EC2_BACKUP_RESTORE.md`.
+
+New follow-up commits remain local for review: `285a5fe` (private service-binding
+transport) and `efb1e2e` (encrypted tunnel backup). Only the explicitly approved original seven
+were pushed. Changed-file secret scanning found zero findings. A broader tracked
+snapshot scan also flagged one existing baseline document's public 64-hex source
+fingerprint; it was checked as a fingerprint, not treated as a leaked credential.
+No scan result is proof that every historic secret is absent.
+
+Current gates: finish backup/restore verification; prepare and approve the old
+local-queue maintenance/drain; approve controlled full-chain login/submission
+verification and final route change. Do not disable JustRunMy yet.
+
 ## Phase A — initial evidence and plan (2026-10-18)
 
 Branch: `infra/ec2-migration`, base `8845f4a`. Existing production is unchanged.
@@ -64,7 +126,7 @@ or restore an older identity ledger to hide an incomplete migration.
 Subsequent sections record executed work and remaining gates; a plan is not
 deployment evidence.
 
-## Executed staging checkpoint — 2026-10-19
+## Earlier staging checkpoint — before Cloudflare authorization (2026-10-19)
 
 **JustRunMy is still the production backend. Do not shut it down yet.** The
 operator declined Cloudflare OAuth/named-tunnel/VPC provisioning at this
@@ -261,7 +323,8 @@ sh deploy/ec2/verify-recovery.sh
 Only after reviewing the staging exposure:
 `sh deploy/ec2/install-staging-tunnel.sh`. It installs pinned cloudflared and
 the health-only listener, never a production origin. For the stable option,
-see [EC2_CLOUDFLARE_SETUP.md](EC2_CLOUDFLARE_SETUP.md); approval is currently absent.
+see [EC2_CLOUDFLARE_SETUP.md](EC2_CLOUDFLARE_SETUP.md). Named health-only staging
+is now deployed; full API/cutover approval remains separate.
 
 Read-only diagnostics: `systemctl show <unit> -p ActiveState -p Result -p MemoryCurrent`,
 `journalctl -u <unit>` (inspect locally; do not paste credentials/queries),
@@ -271,9 +334,9 @@ as a report command. Worker preflight reads configuration without displaying it.
 
 ### Remaining gates before closing JustRunMy
 
-1. Authorize and verify a stable HTTPS/Cloudflare connection, including tunnel
-   restart and real Pages cookie/CSRF/IP/redirect behavior. Prepared bridge code
-   is tested locally but **not deployed**; named tunnel does not exist.
+1. Stable health-only HTTPS and named-tunnel restart are now verified through
+   the separate staging Pages project. Real Pages cookie/CSRF/IP/redirect and
+   login/submission behavior remains unverified; production binding is unchanged.
 2. Approve a maintenance window; implement/verify an admission block on the
    **currently deployed old backend**, then inspect/drain its actual local queue.
    Merely setting a provider env variable without restarting its old code is
@@ -300,7 +363,7 @@ as a report command. Worker preflight reads configuration without displaying it.
 The current staging can be stopped without affecting production:
 
 ```sh
-sudo systemctl disable --now newbiegrader-staging-tunnel.service
+sudo systemctl disable --now newbiegrader-tunnel.service
 sudo systemctl stop newbiegrader-worker.service
 sudo rm -f /etc/newbiegrader/worker-enabled
 ```
@@ -341,7 +404,8 @@ stop/start was not performed and can change the auto-assigned public IP; use
 the instance ID in the AWS Console to rediscover it. Do not change SSH host-key
 verification to work around a different or unverified machine.
 
-Local commits (none pushed by this migration):
+Original migration commits (the seven-commit range ending at `0fdfae2` was
+pushed to `origin/infra/ec2-migration` at the latest checkpoint):
 
 - `8bceb7d`: inventory and gated rollout plan.
 - `cbfc28a`: delegated job containment, admission pause and fail-closed checks.
@@ -349,6 +413,7 @@ Local commits (none pushed by this migration):
 - `855ed85`: prepared Pages/Worker routing and tests; no live cutover.
 - `6cba18c`: EC2 units, bootstrap, pinned runtime, canaries and UID migration.
 - `335fe9d`: encrypted off-host configuration/UID backup and CI syntax coverage.
+- `0fdfae2`: final original staging results and cutover gates.
 
 Evidence logs are private under the audit Mac's
 `~/.local/share/newbiegrader-validation/ec2-migration-79vf4btl/`; they contain
@@ -358,7 +423,10 @@ test metadata/synthetic fixtures, not production credentials or user code.
 
 `python3 deploy/ec2/backup_state.py` was executed on the audit Mac using official
 Homebrew `age`. It holds a shared allocator-directory lock on EC2 and streams a
-fixed five-file tar archive through SSH directly into age encryption. No
+fixed five-file tar archive through SSH directly into age encryption. After
+named-tunnel provisioning, `--include-tunnel` was run to include its token and
+unit: seven members were verified in memory. The five-file mode remains usable
+before a named tunnel has been installed. No
 plaintext tar, configuration value, SSH private key or user data is written to
 the repository or printed. The private backup identity remains on this Mac.
 
