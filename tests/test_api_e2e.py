@@ -7,6 +7,8 @@ by tests/fake_supabase.py, so these tests never touch production data.
 """
 from __future__ import annotations
 
+from contextlib import ExitStack
+from unittest.mock import patch
 import datetime as dt
 import os
 import sys
@@ -76,6 +78,10 @@ class ApiE2E(unittest.TestCase):
         cls._ctx = TestClient(server.app)
         cls.client = cls._ctx.__enter__()
         cls.fake = FakeSupabase()
+        cls._auth_stack = ExitStack()
+        cls._auth_stack.enter_context(patch.dict(os.environ, {"SUPABASE_AUTH_KEY": "synthetic-public"}))
+        cls._auth_stack.enter_context(patch.object(server, "_sb_url", "https://synthetic.supabase.co"))
+        cls._auth_stack.enter_context(patch.object(server.email_auth, "request_code"))
         server._sb = cls.fake
         cls._defaults = {
             "MEMORY_CAP_MB": server.MEMORY_CAP_MB,
@@ -89,6 +95,7 @@ class ApiE2E(unittest.TestCase):
     def tearDownClass(cls):
         server._sb = None
         cls._ctx.__exit__(None, None, None)
+        cls._auth_stack.close()
 
     # ---------- helpers ----------
     def setUp(self):
@@ -121,25 +128,12 @@ class ApiE2E(unittest.TestCase):
 
     def login(self, email: str, name: str = "Tester") -> None:
         self.client.cookies.clear()
-        r = self.client.post("/api/auth/register",
-                             json={"email": email, "password": PASSWORD, "name": name},
-                             headers=BROWSER)
-        if r.status_code == 409:
-            r = self.client.post("/api/auth/password",
-                                 json={"email": email, "password": PASSWORD},
-                                 headers=BROWSER)
-        elif r.status_code == 403 and server._is_admin(email):
-            # Admin addresses are reserved (never self-registered in prod):
-            # seed the account out-of-band, then log in via password.
-            existing = [u for u in self.fake.tables.get("users", [])
-                        if u.get("email") == email]
-            if not existing:
-                self.fake.table("users").insert({
-                    "email": email, "name": name,
-                    "password_hash": server._hash_password(PASSWORD)}).execute()
-            r = self.client.post("/api/auth/password",
-                                 json={"email": email, "password": PASSWORD},
-                                 headers=BROWSER)
+        if not any(u.get("email") == email for u in self.fake.rows("users")):
+            self.fake.table("users").insert({
+                "email": email, "name": name, "password_hash": server._hash_password(PASSWORD),
+                "email_verified_at": "2026-10-18T00:00:00+00:00", "auth_version": 1}).execute()
+        r = self.client.post("/api/auth/password",
+                             json={"email": email, "password": PASSWORD}, headers=BROWSER)
         self.assertEqual(r.status_code, 200, r.text)
 
     def submit(self, problem: str, code: str, expect: int = 202,
@@ -572,10 +566,7 @@ class ApiE2E(unittest.TestCase):
             self.assertIn("account", blocked.json()["detail"])
 
             # a different student on the same (shared) network is unaffected
-            other = self.client.post("/api/auth/register", json={
-                "email": "rate.limit.b@example.com", "password": "testpass123", "name": "B"},
-                headers=BROWSER)
-            self.assertEqual(other.status_code, 200, other.text)
+            self.login("rate.limit.b@example.com", "B")
 
             # one wrong try then a success resets the counter for that account
             server._account_tries.clear()
@@ -763,7 +754,8 @@ class ApiE2E(unittest.TestCase):
         r = self.client.post("/api/auth/register",
                              json={"email": "cookieless@example.com",
                                    "password": PASSWORD, "name": "C"})
-        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.status_code, 202, r.text)
+        self.assertIsNone(self.client.get("/api/auth/me").json()["user"])
 
     def test_csrf_session_cookie_requires_headers_on_mutations(self):
         # Representative mutation matrix: session cookie + no headers -> 403
@@ -1251,10 +1243,7 @@ class ApiE2E(unittest.TestCase):
         names = [c.name for c in jar.jar]
         self.assertIn("ng_remember", names)
         self.client.cookies.clear()
-        r = self.client.post("/api/auth/register", json={
-            "email": "remember.no@example.com", "password": "testpass123",
-            "name": "No", "remember": False}, headers=browser)
-        self.assertEqual(r.status_code, 200, r.text)
+        self.login("remember.no@example.com", "No")
         self.assertNotIn("ng_remember", [c.name for c in self.client.cookies.jar])
 
         # back to the remembered account, then lose only the session cookie
@@ -1285,7 +1274,8 @@ class ApiE2E(unittest.TestCase):
 
 class PreMigrationFallback(unittest.TestCase):
     """Production runs this code BEFORE supabase/schema.sql is re-run: the new
-    columns/tables/views are missing. Nothing may hard-fail."""
+    submission columns/tables/views are missing. Identity migration is mandatory;
+    this class models older judge storage, not an authentication fallback."""
 
     OLD_SUB_COLS = {"id", "created_at", "problem", "language", "filename", "name",
                     "user_email", "verdict", "accepted", "passed", "total", "score",
@@ -1297,7 +1287,7 @@ class PreMigrationFallback(unittest.TestCase):
         cls.client = cls._ctx.__enter__()
         cls.fake = FakeSupabase(
             columns={"submissions": cls.OLD_SUB_COLS,
-                     "users": {"email", "name", "password_hash"},
+                     "users": {"email", "name", "password_hash", "email_verified_at", "auth_version"},
                      "profiles": {"user_email", "display_name", "default_language"}},
             missing={"judge_jobs", "contests"}, views=False)
         server._sb = cls.fake
@@ -1323,13 +1313,11 @@ class PreMigrationFallback(unittest.TestCase):
 
     def _register(self, email: str, name: str) -> None:
         self.client.cookies.clear()
-        r = self.client.post("/api/auth/register", json={
-            "email": email, "password": "testpass123", "name": name})
-        self.assertIn(r.status_code, (200, 409), r.text)
-        if r.status_code == 409:
-            r = self.client.post("/api/auth/password",
-                                 json={"email": email, "password": "testpass123"})
-            self.assertEqual(r.status_code, 200, r.text)
+        self.fake.table("users").upsert({"email": email, "name": name,
+            "password_hash": server._hash_password("testpass123"),
+            "email_verified_at": "2026-10-18T00:00:00Z", "auth_version": 1}, on_conflict="email").execute()
+        r = self.client.post("/api/auth/password", json={"email": email, "password": "testpass123"})
+        self.assertEqual(r.status_code, 200, r.text)
 
     def _submit_and_wait(self, problem: str, code: str) -> dict:
         from urllib.parse import urlsplit as _urlsplit

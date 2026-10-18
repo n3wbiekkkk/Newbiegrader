@@ -334,7 +334,7 @@
         <button class="tab-btn active" data-authtab="login" type="button">เข้าสู่ระบบ</button>
         <button class="tab-btn" data-authtab="register" type="button">สมัครสมาชิก</button>
       </div>
-      <div id="auth-err" class="status bad hidden"></div>
+      <div id="auth-err" class="status bad hidden" role="status" aria-live="polite"></div>
       <div class="settings-row" id="row-name" style="display:none">
         <label for="auth-name">ชื่อที่โชว์</label>
         <input id="auth-name" type="text" maxlength="50" autocomplete="nickname">
@@ -343,7 +343,12 @@
         <label for="auth-email">อีเมล</label>
         <input id="auth-email" type="email" autocomplete="email">
       </div>
-      <div class="settings-row">
+      <div class="settings-row hidden" id="row-auth-code">
+        <label for="auth-code">รหัสยืนยันจากอีเมล</label>
+        <input id="auth-code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="8" pattern="[0-9]{8}">
+        <p class="dim">กรอกรหัสภายใน 10 นาที แล้วตั้งรหัสผ่านใหม่ด้านล่าง</p>
+      </div>
+      <div class="settings-row" id="row-auth-pass">
         <label for="auth-pass">รหัสผ่าน (8 ตัวอักษรขึ้นไป)</label>
         <input id="auth-pass" type="password" autocomplete="current-password">
       </div>
@@ -352,7 +357,9 @@
       </div>
       <div class="submit-row">
         <button id="auth-go" type="button" class="submit-btn">เข้าสู่ระบบ</button>
+        <button id="auth-resend" type="button" class="ghost-btn hidden">ส่งรหัสอีกครั้ง</button>
       </div>
+      <button id="auth-recover" type="button" class="ghost-btn">ลืมรหัสผ่าน / ยืนยันอีเมลบัญชีเดิม</button>
       <hr class="sep">
       <div class="or-divider"><span>หรือ</span></div>
       <button id="google-btn" type="button" class="google-btn"><svg class="ic"><use href="#i-login"/></svg><span>Continue with Google</span></button>
@@ -518,6 +525,6 @@
 </div>
 
 <script src="/config.js?v=6"></script>
-<script src="/app.js?v=43"></script>
+<script src="/app.js?v=45"></script>
 </body>
 </html>

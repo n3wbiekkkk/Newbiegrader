@@ -857,7 +857,14 @@ function router() {
     renderAdmin();
     return;
   }
-  if (h === "#/login") { show("login"); setTitle("login"); setAuthMode("login"); return; }
+  if (h === "#/login" || h.startsWith("#/login?")) {
+    show("login"); setTitle("login"); setAuthMode("login");
+    if (h.includes("email_proof=required")) {
+      $("auth-err").textContent = "กรุณาเข้าสู่ระบบด้วยรหัสผ่าน หรือยืนยันอีเมลเพื่อตั้งรหัสผ่านใหม่ บัญชี Google จะไม่ถูกผูกกับบัญชีเดิมโดยอัตโนมัติ";
+      $("auth-err").classList.remove("hidden");
+    }
+    return;
+  }
   if (h === "#/login/register") { show("login"); setTitle("login"); setAuthMode("register"); return; }
   show("home");
   setTitle("home");
@@ -1640,66 +1647,116 @@ async function loadAdminReports() {
 
 /* ---------------- password auth ---------------- */
 let authMode = "login";
+let authPendingEmail = "";
+let authBusy = false;
+
+function renderAuthStep() {
+  const verifying = !!authPendingEmail;
+  $("row-name").style.display = verifying ? "" : "none";
+  $("row-auth-code").classList.toggle("hidden", !verifying);
+  $("row-auth-pass").classList.toggle("hidden", authMode !== "login" && !verifying);
+  $("auth-email").readOnly = verifying;
+  $("auth-pass").autocomplete = authMode === "login" ? "current-password" : "new-password";
+  $("auth-go").textContent = verifying ? "ยืนยันอีเมลและตั้งรหัสผ่าน" :
+    (authMode === "login" ? "เข้าสู่ระบบ" : "ส่งรหัสยืนยันอีเมล");
+  $("auth-resend").classList.toggle("hidden", !verifying);
+  $("auth-recover").classList.toggle("hidden", authMode !== "login");
+}
 
 function setAuthMode(m) {
+  if (authBusy) return;
   authMode = m;
+  authPendingEmail = "";
+  $("auth-pass").value = "";
+  $("auth-code").value = "";
   document.querySelectorAll("[data-authtab]").forEach((b) =>
     b.classList.toggle("active", b.dataset.authtab === m));
-  $("row-name").style.display = m === "register" ? "" : "none";
-  $("auth-pass").autocomplete = m === "register" ? "new-password" : "current-password";
-  $("auth-go").innerHTML = m === "register" ? "สมัครสมาชิก" : "เข้าสู่ระบบ";
+  renderAuthStep();
   $("auth-err").classList.add("hidden");
 }
 document.querySelectorAll("[data-authtab]").forEach((b) => {
   b.onclick = () => setAuthMode(b.dataset.authtab);
 });
+$("auth-recover").onclick = () => setAuthMode("register");
 
-async function doPasswordAuth() {
-  const email = $("auth-email").value.trim();
+async function doPasswordAuth(resend = false) {
+  if (authBusy) return;
+  const email = (authPendingEmail || $("auth-email").value).trim().toLowerCase();
   const password = $("auth-pass").value;
+  const verifying = !!authPendingEmail && !resend;
   const err = $("auth-err");
-  err.classList.add("hidden");
-  if (!email || !password) {
-    err.textContent = "กรอกอีเมลกับรหัสผ่านก่อน";
-    err.classList.remove("hidden");
+  err.classList.remove("hidden");
+  err.classList.remove("bad");
+  if (!email || ((verifying || authMode === "login") && !password)) {
+    err.classList.add("bad");
+    err.textContent = "กรอกอีเมลและรหัสผ่านให้ครบ";
     return;
   }
-  const payload = { email, password };
-  if (authMode === "register") payload.name = $("auth-name").value.trim();
-  payload.remember = $("auth-remember").checked;
+  if (verifying && !/^[0-9]{8}$/.test($("auth-code").value.trim())) {
+    err.classList.add("bad");
+    err.textContent = "กรอกรหัสยืนยัน 8 หลักจากอีเมล";
+    return;
+  }
+  const payload = { email };
+  let path = "/api/auth/email/request";
+  if (verifying) {
+    path = "/api/auth/email/verify";
+    Object.assign(payload, { code: $("auth-code").value.trim(), password,
+      name: $("auth-name").value.trim(), remember: $("auth-remember").checked });
+  } else if (authMode === "login") {
+    path = "/api/auth/password";
+    Object.assign(payload, { password, remember: $("auth-remember").checked });
+  }
+  authBusy = true;
+  for (const id of ["auth-go", "auth-resend", "auth-recover", "google-btn"]) $(id).disabled = true;
   err.textContent = "กำลังดำเนินการ...";
-  err.classList.remove("hidden");
   try {
-    const r = await fetch(API + (authMode === "register" ? "/api/auth/register" : "/api/auth/password"), {
+    const r = await fetch(API + path, {
       method: "POST", credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
     const d = await r.json().catch(() => ({}));
     if (!r.ok) {
-      // Registering an email that already exists is the most common stumble:
-      // switch to the login form and keep what they typed.
-      if (r.status === 409 && authMode === "register") {
-        setAuthMode("login");
-        const em = $("auth-email");
-        if (em) em.value = email;
-        err.textContent = "อีเมลนี้มีบัญชีแล้ว — ใส่รหัสผ่านเพื่อเข้าสู่ระบบ";
+      if (r.status === 403 && r.headers.get("X-Email-Verification-Required") === "true") {
+        authBusy = false;
+        setAuthMode("register");
+        err.textContent = "บัญชีเดิมต้องยืนยันอีเมลและตั้งรหัสผ่านใหม่ กดส่งรหัสยืนยันเพื่อดำเนินการ";
         err.classList.remove("hidden");
         return;
       }
       if (r.status === 429) {
-        err.textContent = d.detail || "พยายามบ่อยเกินไป รอสักครู่แล้วลองใหม่";
-        err.classList.remove("hidden");
+        err.classList.add("bad");
+        err.textContent = "พยายามบ่อยเกินไป กรุณารอ " + (r.headers.get("Retry-After") || "60") + " วินาที";
         return;
       }
-      throw new Error(d.detail || `HTTP ${r.status}`);
+      throw new Error(r.status === 503 ? "ระบบยืนยันอีเมลไม่พร้อม กรุณาลองภายหลัง" :
+        (d.detail || `HTTP ${r.status}`));
     }
+    if (d.verification_required) {
+      authPendingEmail = email;
+      $("auth-email").value = email;
+      $("auth-pass").value = "";
+      $("auth-code").value = "";
+      renderAuthStep();
+      err.textContent = "ส่งคำขอรหัสยืนยันแล้ว กรุณาตรวจ Inbox และ Spam จากนั้นตั้งรหัสผ่านใหม่";
+      $("auth-code").focus();
+      return;
+    }
+    $("auth-pass").value = "";
+    $("auth-code").value = "";
+    authPendingEmail = "";
     await refreshMe();
     location.hash = "#/tasks";
   } catch (e) {
+    err.classList.add("bad");
     err.textContent = e.message;
+  } finally {
+    authBusy = false;
+    for (const id of ["auth-go", "auth-resend", "auth-recover", "google-btn"]) $(id).disabled = false;
   }
 }
+$("auth-resend").onclick = () => doPasswordAuth(true);
 
 /* A versioned notice for essential cookies, not a fake consent toggle.
  * Acknowledgement is not an authentication requirement or tracking consent. */
@@ -3256,7 +3313,8 @@ async function init() {
   if ($("hist-verdict")) $("hist-verdict").onchange = loadHistory;
   if ($("hist-group")) $("hist-group").onchange = loadHistory;
   $("hist-refresh").onclick = loadHistory;
-  $("auth-go").onclick = doPasswordAuth;
+  $("auth-go").onclick = () => doPasswordAuth();
+  $("auth-code").onkeydown = (e) => { if (e.key === "Enter") doPasswordAuth(); };
   $("auth-pass").onkeydown = (e) => { if (e.key === "Enter") doPasswordAuth(); };
   $("google-btn").onclick = () => {
     location.href = API + "/api/auth/login?" + new URLSearchParams({ next: "#/tasks", remember: String($("auth-remember").checked) }).toString();

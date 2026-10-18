@@ -28,6 +28,7 @@ class AuthCookies(unittest.TestCase):
             self.stack.enter_context(patch.object(server, key, value))
         app = FastAPI()
         app.middleware("http")(server._security_headers)
+        app.add_middleware(server.VerifiedIdentityMiddleware)
         app.add_middleware(SessionMiddleware, secret_key="synthetic-cookie-session-secret",
                            session_cookie="ng_session", max_age=30 * 86400,
                            same_site="lax", https_only=True)
@@ -40,7 +41,10 @@ class AuthCookies(unittest.TestCase):
         app.get("/api/auth/callback")(server.auth_callback)
         app.get("/api/auth/finish")(server.auth_finish)
         self.client = self.stack.enter_context(TestClient(app, base_url="https://testserver", follow_redirects=False))
-        self.client.post("/api/auth/register", json={"email": EMAIL, "password": PASSWORD})
+        server._sb.table("users").insert({"email": EMAIL, "name": "Synthetic",
+            "password_hash": server._hash_password(PASSWORD),
+            "email_verified_at": "2026-10-18T00:00:00Z", "auth_version": 1,
+            "google_subject": "synthetic-google-sub"}).execute()
 
     def login(self, **kwargs):
         return self.client.post("/api/auth/password", json={"email": EMAIL, "password": PASSWORD, **kwargs})
@@ -61,9 +65,12 @@ class AuthCookies(unittest.TestCase):
         self.client.cookies.delete("ng_session")
         self.assertFalse(self.client.get("/api/auth/restore").json()["restored"])
 
-    def test_register_opt_out_clears_another_accounts_remember_cookie(self):
+    def test_account_switch_opt_out_clears_another_accounts_remember_cookie(self):
         self.login(remember=True)
-        response = self.client.post("/api/auth/register", json={
+        server._sb.table("users").insert({"email": "other-cookie@example.invalid", "name": "Other",
+            "password_hash": server._hash_password(PASSWORD),
+            "email_verified_at": "2026-10-18T00:00:00Z", "auth_version": 1}).execute()
+        response = self.client.post("/api/auth/password", json={
             "email": "other-cookie@example.invalid", "password": PASSWORD, "remember": False})
         self.assertEqual(response.status_code, 200)
         self.assertNotIn("ng_remember", self.client.cookies)
@@ -109,7 +116,7 @@ class AuthCookies(unittest.TestCase):
                 self.client.cookies.clear()
                 response = self.client.get("/api/auth/login", params={"next": "#/tasks", "remember": str(remember).lower()})
                 oauth_state = parse_qs(urlsplit(response.headers["location"]).query)["state"][0]
-                with patch.object(server, "_google_userinfo", return_value={"email": EMAIL, "name": "Synthetic"}):
+                with patch.object(server, "_google_userinfo", return_value={"email": EMAIL, "name": "Synthetic", "sub": "synthetic-google-sub", "hd": "example.invalid"}):
                     response = self.client.get("/api/auth/callback", params={"code": "synthetic-code", "state": oauth_state})
                 args = parse_qs(urlsplit(response.headers["location"]).query)
                 response = self.client.get("/api/auth/finish", params={k: v[0] for k, v in args.items()})

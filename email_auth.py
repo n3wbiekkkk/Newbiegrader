@@ -1,0 +1,79 @@
+"""Stateless email proof through Supabase Auth; never mutate the DB client.
+
+Only the verified subject is returned. Provider access/refresh tokens and error
+bodies must never enter application cookies, responses, or logs.
+"""
+import json
+import re
+import uuid
+from urllib.error import HTTPError
+from urllib.parse import urlsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+
+class Unavailable(Exception):
+    pass
+
+
+class InvalidCode(Exception):
+    pass
+
+
+def normalize_email(value):
+    if not isinstance(value, str):
+        raise ValueError("bad email")
+    email = value.strip().lower()
+    if len(email) > 254 or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email, re.ASCII) \
+            or not email.isascii():
+        raise ValueError("bad email")
+    return email
+
+
+class _NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _post(url, key, path, body, *, verify=False):
+    parsed = urlsplit(url)
+    if not key or parsed.scheme != "https" or not parsed.hostname or parsed.username \
+            or parsed.password or parsed.query or parsed.fragment or parsed.path not in ("", "/"):
+        raise Unavailable()
+    request = Request(url.rstrip("/") + "/auth/v1/" + path,
+                      data=json.dumps(body).encode(), method="POST",
+                      headers={"apikey": key, "Content-Type": "application/json"})
+    try:
+        with build_opener(_NoRedirect()).open(request, timeout=15) as response:
+            raw = response.read(131073)
+            if len(raw) > 131072:
+                raise Unavailable()
+            result = json.loads(raw)
+            if not isinstance(result, dict):
+                raise Unavailable()
+            return result
+    except HTTPError as exc:
+        exc.close()
+        if verify and exc.code in (400, 401, 403, 422):
+            raise InvalidCode() from None
+        raise Unavailable() from None
+    except (InvalidCode, Unavailable):
+        raise
+    except Exception:
+        raise Unavailable() from None
+
+
+def request_code(url, key, email):
+    _post(url, key, "otp", {"email": email, "create_user": True})
+
+
+def verify_code(url, key, email, token):
+    result = _post(url, key, "verify", {"email": email, "token": token, "type": "email"},
+                   verify=True)
+    user = result.get("user") or {}
+    try:
+        subject = str(uuid.UUID(user["id"]))
+        if normalize_email(user["email"]) != email or not user.get("email_confirmed_at"):
+            raise ValueError()
+    except (ValueError, KeyError, TypeError, AttributeError):
+        raise InvalidCode() from None
+    return subject

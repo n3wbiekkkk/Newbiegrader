@@ -381,3 +381,13 @@ Combined final gates: critical 117 passed, no skips; full suite 257 passed, no s
 and frontend guards passed. These are local Docker checks, not a GitHub Actions
 run or a production smoke test. No deployment/push or production mutation was
 performed in this follow-up. S04, S05, network/IPC and host provisioning remain open.
+
+
+## Verified-email follow-up — local candidate, not production release
+
+The OTP/session-version candidate is prepared on `fix/verified-email-auth`.
+See [EMAIL_IDENTITY.md](EMAIL_IDENTITY.md) for current code references, actual
+synthetic/PostgreSQL/package tests, mandatory migration/configuration review and
+rollout/rollback gates. Gmail delivery has been confirmed by the operator;
+production S05 remains open until real identity verification is released and
+verified. No new production mutation or deployment occurred in this step.

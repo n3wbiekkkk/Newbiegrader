@@ -225,6 +225,14 @@ See [job isolation operations and evidence](JOB_ISOLATION.md).
 - Regression: `tests/test_auth_retention_audit.py:29` passes for provider checking.
   Full identity remediation and migration are not implemented in this patch.
 
+- Follow-up 2026-10-18: local branch `fix/verified-email-auth` implements email
+  proof before password identity, legacy credential replacement, versioned
+  session/remember validation and pinned provider subjects. New regression and
+  disposable PostgreSQL evidence: [EMAIL_IDENTITY.md](EMAIL_IDENTITY.md).
+  **Production S05 stays OPEN**: migration/configuration/deployment and real OTP
+  verification are pending. References and “not implemented” above describe the
+  earlier audit checkpoint, not this local candidate.
+
 ### S06 — Contest policy errors and registration fallback fail open
 
 **High · CONFIRMED synthetic · FIXED locally.**
