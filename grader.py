@@ -22,6 +22,7 @@ import os
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -924,10 +925,36 @@ def _run_cwd(cmd: list[str]) -> str | None:
         for arg in cmd[1:]:
             p = Path(arg)
             if p.suffix.lower() in (".py", ".pyw", ".js") and p.is_file():
-                return str(p.resolve().parent)
+                # The source may have been replaced after a previous test.
+                # Resolving it would let it select a privileged chmod target.
+                return str(p.absolute().parent)
     except Exception:
         pass
     return None
+
+def _chmod_job_path(path: str, mode: int, *, directory: bool = False) -> None:
+    """Never follow submission-controlled symlinks during privileged setup."""
+    if os.name != "posix":
+        os.chmod(path, mode)
+        return
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+    if directory:
+        flags |= os.O_DIRECTORY
+    fd = os.open(path, flags)
+    try:
+        info = os.fstat(fd)
+        if not directory and not stat.S_ISREG(info.st_mode):
+            raise OSError("not a regular executable")
+        if not directory and sys.platform.startswith("linux") and os.geteuid() == 0:
+            # A hard link must not turn a root-owned file into a public file.
+            # Toolchain outputs belong to the sandbox identity; trusted CLI
+            # executables belonging to somebody else keep their original mode.
+            if info.st_uid != sandbox_identity()[0]:
+                return
+        os.fchmod(fd, mode)
+    finally:
+        os.close(fd)
+
 
 def run_one(cmd: list[str], stdin_data: str, time_limit: float, memory_mb: int,
             lang: Optional[str] = None) -> dict:
@@ -955,11 +982,13 @@ def run_one(cmd: list[str], stdin_data: str, time_limit: float, memory_mb: int,
             owned = (sys.platform.startswith("linux") and os.geteuid() == 0
                      and os.stat(cwd).st_uid == sandbox_identity()[0])
             if not owned:
-                os.chmod(cwd, 0o755)
+                _chmod_job_path(cwd, 0o755, directory=True)
         if cmd and os.path.isfile(cmd[0]) and _is_job_tmp(str(Path(cmd[0]).parent)):
-            os.chmod(cmd[0], 0o755)
+            _chmod_job_path(cmd[0], 0o755)
     except OSError:
-        pass
+        return {"stdout": "", "stderr": "unsafe execution path", "wall": 0.0,
+                "cpu": 0.0, "peak_mb": 0.0, "returncode": PRIVILEGE_REFUSED_RC,
+                "killed": False, "reason": "sandbox-unavailable"}
     command = cmd
     if os.name == "posix":
         # A fresh interpreter applies the existing restrictions before exec.
