@@ -819,6 +819,10 @@ async def validate_runtime() -> None:
             await asyncio.to_thread(grader.job_sandbox.landlock_abi)
         except OSError as exc:
             raise RuntimeError("Linux judge requires Landlock ABI >= 3; refusing to boot workers") from exc
+        try:
+            await asyncio.to_thread(grader.job_sandbox.verify_network_filter)
+        except OSError as exc:
+            raise RuntimeError("Linux judge requires a network syscall filter; refusing to boot workers") from exc
     if posture == "dev":
         print("[web] dev judge runtime: network namespaces unavailable here; "
               "judging runs rlimits-only (set GRADER_REQUIRE_NETNS=1 on public hosts)",

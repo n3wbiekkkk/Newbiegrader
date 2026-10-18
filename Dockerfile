@@ -16,9 +16,10 @@ COPY tools/plagiarism.py ./tools/plagiarism.py
 # Problem data is NOT baked into the image. At runtime the backend reads from
 # Supabase (GRADER_PROBLEM_SOURCE=supabase: Postgres rows + private Storage
 # bucket); the problem source of truth is versioned outside this repo. Sandbox
-# hidden test bytes remain in the trusted application/runner memory; executed
-# submissions drop to `nobody` (see build_limits in grader.py). RLIMITs and an
-# optional network namespace do not provide filesystem or per-job isolation.
+# hidden test bytes remain in the trusted application/runner memory. Web jobs
+# use private numeric UID/GIDs, Landlock and an inherited network syscall filter.
+# These controls do not provide hard aggregate resource or workspace limits;
+# see docs/audits/RESOURCE_SETUP.md and docs/audits/JOB_ISOLATION.md.
 # Backend stays root to allow the setuid drop. Keep
 # .env OUT of the image: secrets come from host env vars, never from files.
 

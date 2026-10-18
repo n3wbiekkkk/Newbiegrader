@@ -42,7 +42,7 @@ OUTPUT_LIMIT_BYTES = 32 * 1024 * 1024  # stdout เกินนี้ -> OLE (�
 # score differently (checker rules, limits handling, verdict mapping). Stored on
 # every submission together with the per-problem tests hash so old rows can be
 # told apart from new ones (and optionally rejudged).
-GRADER_VERSION = "2.0.5"
+GRADER_VERSION = "2.0.6"
 
 # ---------- host capability (container aware) ----------
 def cgroup_root() -> str:
@@ -869,6 +869,7 @@ def build_limits(memory_mb: int, time_limit: float, sandbox: bool = True, *,
                 if os.geteuid() != uid or os.getegid() != gid or os.getgroups():
                     raise OSError("sandbox identity did not take effect")
                 job_sandbox.restrict_filesystem()
+                job_sandbox.restrict_network()
             except Exception:
                 # Never continue after a partial or failed privilege drop.
                 print(f"[grader] FATAL: {PRIVILEGE_REFUSED_MARKER}; refusing to run",
