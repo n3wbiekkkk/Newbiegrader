@@ -27,7 +27,7 @@ Status is scoped: a local regression pass is not a verified production rollout.
 | 1 | S01 anon view access bypasses protected RLS | High, production CONFIRMED | Fixed and verified in production after approval, 02:18 UTC |
 | 2 | S03 equal UID reads/writes other job source | High, synthetic CONFIRMED | Per-job UID + Landlock fixed locally; production provisioning/rollout unverified |
 | 3 | S04 parent-only memory and wrong runtime budget | High, mechanism CONFIRMED; OOM LIKELY | Runtime scheduling arithmetic fixed locally; aggregate containment open; 512 MB production host reported |
-| 4 | S05 unverified-email pre-hijacking | High, synthetic CONFIRMED | Correction deployed; real OTP verification gate open |
+| 4 | S05 unverified-email pre-hijacking | High, synthetic CONFIRMED | Fixed and deployed; owned live OTP signup verified; residual checks below |
 | 5 | S02 root chmod via substituted paths | High, synthetic CONFIRMED | Fixed locally, not deployed |
 | 6 | S06 contest authorization fails open on outages/schema gaps | High, synthetic CONFIRMED | Fixed locally, not deployed |
 | 7 | S07 parser vulnerabilities/unbounded request parsing | High, requirements and boundary CONFIRMED | Upgraded/bounded locally; production versions unknown |
@@ -391,7 +391,9 @@ the actual backend build matches the reviewed source. Linux/root critical tests
 passed 166/166 with zero skips; full discovery passed 233 with three explicitly
 skipped private-problem modules; JavaScript passed 40/40. Main CI succeeded.
 See [EMAIL_IDENTITY.md](EMAIL_IDENTITY.md) for exact code/live evidence, ACL checks,
-the encrypted affected-table backup and release-order limitation. Real OTP
-consumption by the operator remains pending; this is not a public-readiness signoff.
+the encrypted affected-table backup and release-order limitation. The operator
+completed real OTP signup; read-only DB booleans confirm a complete identity and
+matching confirmed provider binding. Live provider expiry/replay and legacy
+recovery/OAuth are not proved by this check. This is not a public-readiness signoff.
 S04 aggregate resource controls, B08 local queue reliability, complete recovery
 coverage and broader mail delivery/abuse controls remain outstanding.

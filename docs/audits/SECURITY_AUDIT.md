@@ -202,7 +202,7 @@ See [job isolation operations and evidence](JOB_ISOLATION.md).
 
 ### S05 — Password signup can pre-hijack a future Google identity
 
-**High · CONFIRMED synthetic flow · correction deployed; live OTP gate OPEN.**
+**High · CONFIRMED synthetic flow · FIXED and deployed; owned live signup verified.**
 
 - References: `server.py:1907` (signup), `server.py:1943` (password login),
   `server.py:1556` (Google profile), `server.py:3028` (email ownership check).
@@ -230,8 +230,10 @@ See [job isolation operations and evidence](JOB_ISOLATION.md).
   session/remember validation and pinned provider subjects. New regression and
   disposable PostgreSQL evidence: [EMAIL_IDENTITY.md](EMAIL_IDENTITY.md).
   The approved migration/configuration and source `8acd34f` are now deployed;
-  real operator-owned OTP consumption remains pending. Existing accounts were
-  not auto-verified. References and “not implemented” above describe the earlier
+  the operator completed real OTP signup, corroborated by read-only identity /
+  confirmed-provider binding booleans. Existing accounts were not auto-verified.
+  Actual provider expiry/replay rejection and live legacy recovery/OAuth are not
+  established by this happy-path check. References and “not implemented” above describe the earlier
   audit checkpoint; current references and live evidence are in EMAIL_IDENTITY.
 
 ### S06 — Contest policy errors and registration fallback fail open
