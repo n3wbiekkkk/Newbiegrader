@@ -1,5 +1,9 @@
 # Practice feedback / problem-data release — 2026-10-18
 
+Subsequent backend deployment and actual-host verification are recorded in
+[PRODUCTION_RELEASE_2026-10-18.md](PRODUCTION_RELEASE_2026-10-18.md).
+The undeployed statements below describe the earlier checkpoint.
+
 This records subsequent explicit maintainer approvals and supersedes the
 sample-only practice checkpoint in SUBMISSION_FEEDBACK.md. It does not authorize
 or claim a backend deployment. Latest working branch: `fix/practice-failure-feedback`.
