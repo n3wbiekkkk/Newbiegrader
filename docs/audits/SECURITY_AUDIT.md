@@ -1,5 +1,9 @@
 # Newbiegrader security audit — 2026-10-18
 
+2026-10-19 follow-up: [EC2 migration evidence](../EC2_MIGRATION.md) records real
+staging cgroup/tmpfs enforcement and crash-cleanup tests. This does not close
+S04 on the still-live JustRunMy host or authorize public AWS execution.
+
 Later production verification and the mandatory compiler/runtime network filter
 are recorded in [PRODUCTION_RELEASE_2026-10-18.md](PRODUCTION_RELEASE_2026-10-18.md)
 and [NETWORK_FILTER.md](NETWORK_FILTER.md). Earlier rollout/network uncertainty

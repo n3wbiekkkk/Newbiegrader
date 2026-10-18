@@ -1,5 +1,11 @@
 # Newbiegrader production readiness — 2026-10-18
 
+2026-10-19 EC2 staging update: see [EC2 migration evidence](../EC2_MIGRATION.md).
+Real delegated cgroup/tmpfs canaries passed on the new host; production S04 and
+database-queue rollout remain OPEN because traffic/consumer cutover is not
+approved. JustRunMy remains the live backend. Earlier checkpoint statements
+below retain their original deployment scope.
+
 For later actual-host checks, deployed 2.0.6 hardening and remaining rollout
 gates, read [PRODUCTION_RELEASE_2026-10-18.md](PRODUCTION_RELEASE_2026-10-18.md).
 Earlier local-only/unverified rollout statements below describe that checkpoint.
