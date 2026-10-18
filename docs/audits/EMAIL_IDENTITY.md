@@ -1,13 +1,12 @@
-# Email identity remediation — local candidate, not deployed
+# Email identity remediation — deployed, live OTP verification pending
 
 2026-10-18 · Branch `fix/verified-email-auth` · Base `9385811`.
 
-**S05: High, CONFIRMED in the prior synthetic reproduction. Fixed in this local
-candidate; production remains OPEN until the reviewed migration, configuration,
-release and real end-to-end OTP verification are complete.** No production SQL,
-account migration, SMTP/template change, push or deployment was performed in this
-implementation step. The earlier operator-owned SMTP test reached its recipient;
-that was delivery evidence, not verification of this new authentication flow.
+**S05: High, CONFIRMED in the prior synthetic reproduction. The correction is
+deployed; final real end-to-end OTP verification remains OPEN.** The operator
+approved the reviewed production migration, Auth configuration and release.
+The sections below retain local test evidence and the planned rollout gates;
+the production checkpoint at the end records which gates have actually passed.
 
 ## Changes and evidence
 
@@ -104,7 +103,8 @@ printed or sent through chat.
 3. Put the project's publishable key in backend `SUPABASE_AUTH_KEY`; retain the
    separate service-role client for DB operations. SMTP App Password stays only
    in Supabase. Never put either provider credentials or service-role keys in SPA.
-4. Change Magic Link template to `tools/templates/auth/email_otp.html`, set OTP
+4. Change both Magic Link and Confirm Sign Up templates to
+   `tools/templates/auth/email_otp.html`, set OTP
    expiration to 600 seconds, keep minimum resend >=60 seconds and provider limits.
    The delivery test alone did not establish that these settings were applied.
 5. After a reviewed release, all existing sessions must sign in again. The three
@@ -127,8 +127,8 @@ completed successfully without adding a duplicate server or changing project
 scope. The existing MCP tools then returned the correct project URL and actual
 read-only counts: **3 accounts, 0 noncanonical emails, 0 duplicate canonical-email
 groups**. No account values or hashes were returned. No production writes occurred.
-This resolves the MCP blocker; backup evidence, approval of the appended SQL and
-Auth configuration, and a reviewed release remain required.
+This resolved the MCP blocker. The subsequently approved rollout is recorded
+below; these counts describe the pre-migration checkpoint.
 
 Safe post-migration metadata checks (read-only, no account values):
 
@@ -196,3 +196,67 @@ OpenSSL CMS AES-256-GCM, held outside Git with a private recovery key (0600), an
 successfully decrypted in memory for a three-row completeness check. No plaintext
 backup file or account/hash values were printed. This is an affected-table backup,
 not a claim of complete database/Storage disaster recovery.
+
+## Approved production rollout — 2026-10-18
+
+- Applied migration `20261018125146_verified_email_identities_and_shared_otp_budgets`
+  from the reviewed appended schema block. Three existing accounts remained
+  unverified at version zero. The original four account fields matched the
+  encrypted backup after migration; no history ownership was rewritten.
+- Actual metadata checks: all three Auth RPCs are SECURITY INVOKER; `anon` and
+  `authenticated` cannot execute them, `service_role` can. Budget-table RLS is
+  enabled, and neither public role can select it. Public HTTP probes using the
+  publishable key returned 401 / SQLSTATE 42501 for users, budgets and a budget
+  RPC with invalid synthetic inputs. `/auth/v1/settings` returned 200 as a control.
+- Supabase Auth dashboard reloads confirmed 8-digit OTPs, 600-second expiry,
+  minimum resend interval 60 seconds and provider email limit 30/hour. Both email
+  templates persisted the versioned OTP body. Email confirmation is enabled;
+  anonymous access and manual linking remain disabled. Provider email is still
+  Gmail SMTP; no SMTP credential was added to the judge container.
+- Set only `SUPABASE_AUTH_KEY` on the backend, using the project's active
+  publishable key. Filtered readback confirmed exactly one matching variable;
+  existing environment variables were retained. No credential value is recorded.
+- Backend source `8acd34f9e7fb3a2289b6c4cff3966aa92b4fd239` built and deployed
+  successfully. Actual `/api/version` through Cloudflare reported build
+  `fdc5c71305a959372441e517bb10c148eb2de3a38113c19e4fd5b89d3f76683f`,
+  engine 2.0.6, local queue, Supabase problem source and 68 problems.
+  A trusted process probe found the new Auth module and publishable key, and the
+  persistent UID directory remained 0700 with a nonempty allocation ledger.
+- [PR #10](https://github.com/n3wbiekkkk/Newbiegrader/pull/10) was merged by the
+  operator at 12:55:47 UTC as `55372ab27dab98c99198e5dab1e4ebde73903180`.
+  This happened before backend deployment completion was verified, so the planned
+  backend-first ordering was not established. Both components are now observed
+  on the new release. Main CI run
+  [39129343995](https://github.com/n3wbiekkkk/Newbiegrader/actions/runs/39129343995)
+  succeeded; the PR's validation, critical, SQL and Pages checks also succeeded.
+- Production SPA loaded `/app.js?v=45`; the code field has maxlength 8 and
+  pattern `[0-9]{8}`, with the recovery control present. Health and anonymous
+  Auth-me returned 200 with Auth-me `no-store`; profile, admin, arbitrary job and
+  arbitrary history requests were denied (401/403). A synthetic verify request
+  without a challenge returned 400 and `no-store`, without sending email.
+- Browser HTTP vantage: the audit Mac's current network, through public
+  `https://newbiegrader.pages.dev`; public IP/network classification was not
+  established. These observations do not establish direct backend reachability.
+- Before deployment, persisted queue counts and the sandbox-process probe were
+  zero. Production uses a local in-memory queue: this was not an atomic admission
+  pause/drain and does not prove no request arrived between probes and restart.
+- Requested one real OTP for the operator-owned test mailbox in native Chrome.
+  The form reached the pending-code/new-password step. The operator must enter
+  and submit the code and new password themselves; no OTP/password is read or
+  transmitted through chat. Successful provider consumption, actual expiry and
+  actual replay rejection remain unverified at this checkpoint. A pending-form
+  response alone is not proof of delivery or successful identity verification.
+
+### Recovery evidence and remaining gates
+
+The affected-table backup is held outside Git under the operator's private local
+data directory with a 0600 recovery key, 0700 parent and ciphertext manifest.
+The encrypted object was decrypted in memory and its three-row shape checked;
+no plaintext file or account values were printed. This is not a full PostgreSQL
+restore drill. Supabase's project overview reported no platform backup.
+
+Do not mark the public service ready solely because this release is deployed.
+Real OTP verification, broader recipient delivery/provider abuse controls,
+complete DB/Storage recovery, S04 aggregate resource isolation and B08 durable
+queue operations remain outstanding. Keep legacy accounts unverified until
+their owners prove mailbox control; do not fall back to old password-only code.
