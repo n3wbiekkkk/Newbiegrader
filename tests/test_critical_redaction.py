@@ -6,6 +6,7 @@ import io
 import json
 import os
 import sys
+import threading
 import unittest
 import uuid
 from unittest.mock import patch
@@ -144,6 +145,48 @@ class CriticalRedaction(unittest.TestCase):
         result, row = self.execute_job(STDERR_SOURCE, jobs=2)
         self.assertEqual(result["counts"], {"RE": 2})
         self.assert_no_canary(row)
+
+    def feedback_source(self, stream):
+        public = next(tc.input for tc in self.problem.tests if tc.name in self.problem.samples)
+        self.problem.time_limit = 3
+        # The hidden input is not embedded in source/persisted code.
+        return ('from pathlib import Path\nimport sys,time\ndata=sys.stdin.read()\n'
+                f'if data=={public!r}:\n'
+                ' deadline=time.monotonic()+.7\n'
+                ' while not Path("hidden-input").exists() and time.monotonic()<deadline: time.sleep(.01)\n'
+                f' print(Path("hidden-input").read_text() if Path("hidden-input").exists() else "public-only",file=sys.{stream})\n'
+                'else:\n Path("hidden-input").write_text(data)\n'
+                + ('sys.exit(7)\n' if stream == "stderr" else 'print("wrong")\n'))
+
+    def test_critical_parallel_hidden_input_cannot_escape_through_sample_stdout(self):
+        result, row = self.execute_job(self.feedback_source("stdout"), jobs=2)
+        self.assert_no_canary(result)
+        self.assert_no_canary(row)
+        self.assertEqual([r["test"] for r in result["results"]], [t.name for t in self.problem.tests])
+
+    def test_critical_hidden_first_metadata_cannot_escape_through_later_sample_stderr(self):
+        self.problem.tests.reverse()
+        result, row = self.execute_job(self.feedback_source("stderr"), jobs=1, mode="database")
+        self.assert_no_canary(result)
+        self.assert_no_canary(row)
+        self.assertEqual([r["test"] for r in result["results"]], [t.name for t in self.problem.tests])
+
+    def test_critical_feedback_barrier_retains_parallel_hidden_execution(self):
+        self.problem.tests.append(grader.TestCase("1002", "synthetic-hidden", "hello\n"))
+        barrier = threading.Barrier(2)
+        events = []
+
+        def judge(_cmd, tc, *_args, **_kwargs):
+            events.append(tc.name)
+            if tc.name not in self.problem.samples:
+                barrier.wait(timeout=3)
+            return "AC", .01, .01, 1., "", "hello\n"
+
+        with patch.object(server, "JUDGE_JOBS", 2), \
+                patch.object(grader, "judge_test", side_effect=judge):
+            result = server.run_submission(self.problem, ".py", 'print("hello")')
+        self.assertTrue(result.get("accepted"), result)
+        self.assertEqual(events[0], "01")
 
     def test_critical_engine_never_returns_hidden_stderr_in_detail(self):
         tc = self.problem.tests[1]

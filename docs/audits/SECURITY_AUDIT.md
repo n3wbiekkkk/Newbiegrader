@@ -42,11 +42,11 @@ evidence; **NOT AN ISSUE** = a specific allegation contradicted within tested sc
 | --- | --- | --- |
 | Browser → Pages → API | `static/app.js`, `static/index.html`, `static/_headers`, `functions/api/[[proxy]].js` | HTML/Markdown rendering, cookies, forms, query values, forwarded headers, edge cache |
 | Identity → API policy | `server.py:1556`, `server.py:1633`, `server.py:1749`, `server.py:1907`, `server.py:2341` | Google code/state/profile, password/email, signed sessions, admin email, proxy chain |
-| API → service-role database | `server.py:542`, `server.py:2978`, `supabase/schema.sql` | Ownership and contest checks must precede privileged reads; RLS is not an API authorization layer for service_role |
+| API → service-role database | `server.py:542`, `server.py:2987`, `supabase/schema.sql` | Ownership and contest checks must precede privileged reads; RLS is not an API authorization layer for service_role |
 | Database/Storage → trusted runner | `problem_store.py:371`, `problem_store.py:425`, `judge_runner.py:301` | Metadata, private test bytes, serialized problem; whole-suite hash verified |
 | Queue → worker | `server.py:759`, `server.py:975`, `server.py:1049`, `supabase/schema.sql:280` | Source/payload, leases, attempt fencing, completion transaction |
 | Trusted root → compiler/runtime | `grader.py:474`, `grader.py:501`, `grader.py:784`, `grader.py:967` | Source, compiler diagnostics, executable/workspace paths, process tree |
-| Admin → operational tools | `server.py:3658`, `server.py:3760`, `tools/`, Dockerfile, CI | Rejudge, plagiarism, imports and statement tooling; privileged offline code is trusted, not sandboxed user input |
+| Admin → operational tools | `server.py:3667`, `server.py:3769`, `tools/`, Dockerfile, CI | Rejudge, plagiarism, imports and statement tooling; privileged offline code is trusted, not sandboxed user input |
 
 Also reviewed checkers, problem loaders, all API route declarations, reports,
 profiles, contest announcements/registration, frontend sinks/API calls, queue SQL,
@@ -125,7 +125,7 @@ production configuration and rollout UNVERIFIED.**
 
 - References: `job_sandbox.py:36`, `job_sandbox.py:73`,
   `job_sandbox.py:194`, `grader.py:454`,
-  `server.py:2410` and `server.py:2530`.
+  `server.py:2410` and `server.py:2539`.
 - Before correction, two simultaneous synthetic jobs used nobody and read/wrote
   each other's 0600 source. A signal-0 permission probe also succeeded. The new
   regression reproduced all three failures on the pre-fix code; no user source
@@ -154,7 +154,7 @@ production configuration and rollout UNVERIFIED.**
   an old ledger while old jobs/files survive. Trusted standalone CLI/reference
   runs retain the old policy and are not a public sandbox. Production was not
   deployed or probed. Same-job tests still share a workspace; the separately
-  confirmed parallel public-feedback channel requires a follow-up correction.
+  confirmed parallel public-feedback channel is corrected separately in S13.
 - Related: RLIMIT_NPROC now counts this web job's UID, not every job's shared
   nobody UID, subject to correct namespace/state provisioning. Aggregate memory,
   pids, CPU and workspace byte limits remain S04. No fork bomb was run.
@@ -190,7 +190,7 @@ See [job isolation operations and evidence](JOB_ISOLATION.md).
 **High · CONFIRMED synthetic flow · OPEN; Google verification partially fixed.**
 
 - References: `server.py:1907` (signup), `server.py:1943` (password login),
-  `server.py:1556` (Google profile), `server.py:3019` (email ownership check).
+  `server.py:1556` (Google profile), `server.py:3028` (email ownership check).
   Evidence: signup immediately sets `session.user.email` without proof;
   both login methods authorize the same plain email.
 - Reproduction starts with **no users row**: attacker registers a synthetic
@@ -214,7 +214,7 @@ See [job isolation operations and evidence](JOB_ISOLATION.md).
 
 **High · CONFIRMED synthetic · FIXED locally.**
 
-- References: `server.py:2319`, `server.py:1424`, `server.py:3300`;
+- References: `server.py:2319`, `server.py:1424`, `server.py:3309`;
   `tests/test_contest_policy_audit.py:32`, `:40`.
 - Before: cold/expired cache failure produced empty hidden sets; missing
   registration table returned false once then true on subsequent checks.
@@ -234,7 +234,7 @@ See [job isolation operations and evidence](JOB_ISOLATION.md).
 **High · CONFIRMED repository/test dependency exposure · FIXED locally;
 production installed versions UNVERIFIED.**
 
-- References: `requirements.txt:1`, `server.py:263`, `server.py:2807`,
+- References: `requirements.txt:1`, `server.py:263`, `server.py:2816`,
   `functions/api/[[proxy]].js:35`; `tests/test_request_boundaries.py:14`, `:33`.
   Before: FastAPI multipart parser ran before the 256 KB source check;
   JSON endpoints had no raw body cap; proxy streamed arbitrary body sizes.
@@ -257,7 +257,7 @@ production installed versions UNVERIFIED.**
 
 **Medium · CONFIRMED synthetic · FIXED locally.**
 
-- References: `server.py:2807`, `_problem_or_404` at `server.py:2229`;
+- References: `server.py:2816`, `_problem_or_404` at `server.py:2229`;
   `tests/test_request_boundaries.py:52`.
 - Baseline anonymous request returned 401 **after** invoking full problem lookup.
   In Supabase mode it can start private Storage downloads and occupy worker threads.
@@ -333,7 +333,7 @@ PARTIALLY FIXED locally.**
 
 **Medium · CONFIRMED synthetic · FIXED locally.**
 
-- References: `server.py:3205`, `server.py:3217`;
+- References: `server.py:3214`, `server.py:3226`;
   `tests/test_contest_policy_audit.py:79` stats-cache regression.
   Evidence: `/api/stats` returned all service-role aggregates with no publication
   or contest visibility filter, including a synthetic unpublished/deleted slug.
@@ -349,6 +349,37 @@ PARTIALLY FIXED locally.**
 - Remaining risk: documented metadata/policy/edge cache staleness. Existing edge
   responses can retain previously public data for their TTL; revocation requiring
   immediate erasure needs approved cache invalidation.
+
+### S13 — Hidden input can escape through public feedback between tests
+
+**High, conditional · CONFIRMED synthetic · FIXED locally, not deployed.**
+
+- References: `server.py:2410` (sample/hidden stage barrier),
+  `tests/test_critical_redaction.py:161`
+  and `tests/test_critical_redaction.py:167`.
+- Root cause: tests of one submission share a workspace. A hidden test can write
+  stdin there while a concurrent public sample waits and echoes the file into
+  public stdout/WA or stderr/RE diagnostics. Per-test field redaction treats that
+  sample output as public, so it cannot identify the hidden origin.
+- Evidence: two synthetic regressions failed before correction. One exposed the
+  canary in API/job/history/persistence; the reversed-order serial case exposed it
+  in the database finish payload. No hidden canary is embedded in submitted source.
+- Impact: direct hidden-input disclosure despite hidden-stderr suppression and
+  cross-job isolation. Applies when JUDGE_JOBS > 1 or metadata places a sample
+  after hidden tests. Last production observation was JUDGE_JOBS=1; exploitation
+  against production was not attempted, and production ordering was not changed.
+- Minimal fix: execute all public tests and reap their descendants before starting
+  any hidden test; retain parallelism within each phase and restore response order
+  to the original metadata order. Public diagnostics remain available. No rewrite,
+  silent serialization of all tests or blanket diagnostic suppression.
+- Verification: the redaction suite passes 13 tests after correction; its shared
+  helper checks API, history, persisted results and judge_jobs.result. A barrier
+  regression confirms two hidden tests still run concurrently. Engine semantics
+  version is now 2.0.1; the change intentionally removes order-dependent behavior.
+- Remaining risk: this barrier relies on reliable descendant cleanup; existing
+  Linux supervisor tests remain mandatory. It does not replace S03 filesystem
+  protection, strict network/IPC isolation, query budgets or S04 cgroups. Trusted
+  CLI/reference tools retain their previous behavior and are not a public sandbox.
 
 ## Additional boundary checks
 

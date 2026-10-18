@@ -26,6 +26,8 @@ Status is scoped: a local regression pass is not a verified production rollout.
 | 9 | S09 handoff token access logs/replay after restart | Medium, local logging path CONFIRMED | Uvicorn filtering/lock fixed; upstream logs/shared replay open |
 | 10 | B01/B03/S12 frozen scores, unpublished metadata and private stats through other routes | Medium, synthetic CONFIRMED | Fixed locally, not deployed |
 
+S13 now has a local fix for hidden data echoed through public test feedback;
+it still needs release before higher concurrency/noncanonical test ordering.
 Earlier stderr leakage is covered by existing regressions and is not ranked
 above a demonstrated cross-job filesystem read/write route. Current Supabase
 source does not place hidden tests on a local disk cache. A future readable
@@ -91,8 +93,8 @@ not demonstrated on production). No direct compiler-root execution is asserted.
 Tests ran on Docker Linux arm64 / Python 3.11 / root from an isolated source copy,
 with no `.env`, production credentials or network. The development flag
 `GRADER_ALLOW_UNISOLATED_JUDGE=1` was used **only inside network-none test containers**.
-It is not a public production recommendation. Node checks ran on the audit Mac. Final packaged runtime is Python 3.11.17;
-its backend source fingerprint matches the worktree:
+It is not a public production recommendation. Node checks ran on the audit Mac. The initial audit candidate (before S03/S13) used Python 3.11.17 and
+recorded this backend source fingerprint:
 `49fc14829584bd6595a2ee2b86deb392c38fd591b800dc99ada823355994c1d1`.
 Clean-image inspection found no `/app/.env` or `/app/problems`, and found the
 packaged plagiarism module. Production mounted paths remain unverified.
@@ -355,5 +357,18 @@ git revert d160662 f0028bc bcb0ca1 7864a27
 The report-only commit can remain for the evidence trail. `main` still points to
 `3014da34992cebcf7b5d00c303944accf12852da`. No commits were pushed.
 
-**Single next action: close the confirmed parallel sample/hidden feedback
-channel, then verify aggregate resource enforcement (S04).**
+**Single next action: fix aggregate resource accounting and the Python-aware
+capacity budget (S04), then verify hard limits on the intended worker runtime.**
+
+## Local isolation follow-up status
+
+Branch `fix/p0-job-identities`, base `cc2106a`: S03 per-job UID/GID + mandatory
+Landlock correction is commit `b982100`. S13 separately adds a sample/hidden
+execution barrier, retains hidden parallelism and increments engine semantics
+to 2.0.1. See [JOB_ISOLATION.md](JOB_ISOLATION.md) for UID ledger persistence,
+reserved-namespace/range, kernel requirements and recovery cautions.
+
+Combined final gates: critical 117 passed, no skips; full suite 257 passed, no skips (89.718 s); Node 25 passed; trusted reference packages 68/68 passed; byte compilation
+and frontend guards passed. These are local Docker checks, not a GitHub Actions
+run or a production smoke test. No deployment/push or production mutation was
+performed in this follow-up. S04, S05, network/IPC and host provisioning remain open.

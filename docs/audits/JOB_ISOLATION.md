@@ -107,13 +107,33 @@ Evidence directory:
 - Same-job tests retain a shared workspace/UID. A separate synthetic diagnostic
   confirmed a preexisting leak when hidden and public tests run concurrently:
   hidden data can be written into that workspace and echoed by a public sample.
-  This needs its own feedback-order correction before larger test concurrency.
+  The follow-up S13 correction now runs all samples to completion before hidden
+  tests, retaining parallel execution within each phase and original result order.
 - Standalone trusted CLI/reference tools keep their legacy identity policy. They
   are not a safe replacement for the web execution boundary for arbitrary code.
 - UID ledger/root state lifecycle and real host configuration must be verified
   before deployment; the SQL-only approval did not authorize a code release.
 
-Rollback the local S03 commit with `git revert <S03-commit>` and rerun gates.
+S03 implementation commit: `b982100`. Roll back with `git revert b982100` only
+after reverting dependent follow-ups and rerun all gates.
 Do not delete the allocated-UID ledger during rollback; restoring old permissions
 or UID behavior reopens the original vulnerability. Production rollback/deploy
 requires a separate review and approval.
+
+## S13 feedback-order follow-up
+
+The two failing-before canary regressions now pass across API/history/job result/
+persistence and the database completion payload. A third test verifies parallel
+hidden execution remains enabled. Grader version is 2.0.1; this changes the
+execution order for noncanonical metadata, while preserving response ordering.
+
+Final combined validation: critical **117 passed, zero skips** (23.483 s);
+redaction suite **13 passed** (7.208 s). Full suite **257 passed, zero skips**
+(89.718 s). No production code was deployed.
+
+Final packaged image reports engine 2.0.1 and ABI 4; normal synthetic Python and
+C++/STL are Accepted and the shared-file feedback canary does not leak. Its source
+fingerprint matches the worktree:
+`7fc8e0df63989cfb9cd637636ad5e09cc272a20e15fcfeb17d636aadd4083428`.
+Separate synthetic probes also denied outside-file reads through `/proc/self/root`
+and an O_PATH descriptor reopened through `/proc/self/fd`.

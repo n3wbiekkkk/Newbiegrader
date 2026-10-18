@@ -12,7 +12,7 @@ Strict limits · Undisclosed tests · Asynchronous judging · Contests · Teache
 ![Python](https://img.shields.io/badge/python-3.11-3776AB?logo=python&logoColor=white)
 ![Problems](https://img.shields.io/badge/problems-68-brightgreen)
 ![Test cases](https://img.shields.io/badge/test%20cases-908-brightgreen)
-![Grader](https://img.shields.io/badge/grader-v2.0.0-informational)
+![Grader](https://img.shields.io/badge/grader-v2.0.1-informational)
 ![Frontend](https://img.shields.io/badge/frontend-no%20build%20step-orange)
 
 [Live Demo](https://newbiegrader.pages.dev) · [Report a Bug](../../issues) · [Discord](https://discord.gg/7NQDHFBpf6) · [Documentation](docs)
@@ -41,7 +41,7 @@ The test data behind each problem is never disclosed. Only the public samples fr
 
 <div align="center">
 
-| 68 | 974 | v2.0.0 | 3 |
+| 68 | 974 | v2.0.1 | 3 |
 | :---: | :---: | :---: | :---: |
 | problems | test cases | grader engine | languages |
 

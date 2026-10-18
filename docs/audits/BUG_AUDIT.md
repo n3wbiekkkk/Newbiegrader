@@ -8,7 +8,7 @@ All corrections are local; none has been pushed or deployed by this audit.
 
 **Medium · CONFIRMED · FIXED locally.**
 
-- Files: `server.py:2978`, `server.py:3409`;
+- Files: `server.py:2987`, `server.py:3418`;
   `tests/test_contest_policy_audit.py:45`.
 - Evidence: synthetic running contest, public problem, freeze already active;
   scoreboard returned no rows, while anonymous history returned the new score 100.
@@ -26,7 +26,7 @@ All corrections are local; none has been pushed or deployed by this audit.
 
 **Medium · CONFIRMED · FIXED locally.**
 
-- Files: `server.py:3423`; `tests/test_contest_policy_audit.py:60`;
+- Files: `server.py:3432`; `tests/test_contest_policy_audit.py:60`;
   fake query pagination in `tests/fake_supabase.py:75`.
 - Evidence: 5,001 synthetic submissions; only the final row scored 100. Old board
   showed 0 points, corrected board shows 100.
@@ -44,7 +44,7 @@ All corrections are local; none has been pushed or deployed by this audit.
 
 **Medium · CONFIRMED · FIXED locally.**
 
-- Files: `server.py:3272` (`_contest_public`), `server.py:3478` (`contest_detail`);
+- Files: `server.py:3281` (`_contest_public`), `server.py:3487` (`contest_detail`);
   `tests/test_contest_policy_audit.py:66`.
 - Evidence: a started synthetic contest included an unpublished problem;
   `_visible_to` denied its page, but contest public metadata returned its slug.
@@ -154,7 +154,7 @@ All corrections are local; none has been pushed or deployed by this audit.
 
 **Medium · CONFIRMED packaging · FIXED locally.**
 
-- Files: `Dockerfile:12`, `Dockerfile:14`, `server.py:3745`;
+- Files: `Dockerfile:12`, `Dockerfile:14`, `server.py:3754`;
   CI packaged-image self-test in `.github/workflows/ci.yml`.
 - Cause/evidence: server loads `tools/plagiarism.py` dynamically; original image
   copied backend modules/static only, so that path was absent and endpoint would

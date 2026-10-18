@@ -2453,11 +2453,15 @@ def run_submission(prob: grader.Problem, ext: str, source: str,
 
         results: List[dict] = []
         lang = grader.detect_language(Path("solution" + ext))
+        # Public feedback must finish before any hidden input reaches user code:
+        # tests in one job share a workspace, even with per-job isolation.
+        stages = ([tc for tc in prob.tests if tc.name in samples],
+                  [tc for tc in prob.tests if tc.name not in samples])
         if JUDGE_JOBS <= 1:
             # Serial path: JUDGE_JOBS is 1 on all small hosts. Avoid
             # ThreadPoolExecutor overhead (thread spawn + future per test).
             judged = []
-            for tc in prob.tests:
+            for tc in (*stages[0], *stages[1]):
                 try:
                     judged.append((tc, grader.judge_test(
                         cmd, tc, capped, False, False, lang,
@@ -2483,29 +2487,34 @@ def run_submission(prob: grader.Problem, ext: str, source: str,
                 results.append(item)
         else:
             with concurrent.futures.ThreadPoolExecutor(max_workers=JUDGE_JOBS) as ex:
-                futs = [ex.submit(copy_context().run, grader.judge_test, cmd, tc, capped, False, False, lang,
-                                  diagnostics=tc.name in samples and reveal != REVEAL_NONE)
-                        for tc in prob.tests]
-                for tc, f in zip(prob.tests, futs):
-                    try:
-                        v, wall, cpu, mem, detail, actual = f.result()
-                    except grader.SandboxUnavailable:
-                        return {"error": "execution environment unavailable"}
-                    item = {
-                        "test": tc.name, "verdict": v,
-                        "wall_s": round(wall, 4), "cpu_s": round(cpu, 4),
-                        "peak_mb": round(mem, 2),
-                        "public": tc.name in samples,
-                    }
-                    if v == "WA":
-                        item["diff"] = grader.show_diff(tc.expected, actual)[:DETAIL_HEAD]
-                        item["input"] = tc.input[:2000]
-                        item["expected"] = tc.expected[:2000]
-                        item["actual"] = actual[:2000]
-                    elif detail:
-                        item["detail"] = detail[:DETAIL_HEAD]
-                    results.append(item)
+                for stage in stages:
+                    futs = [ex.submit(copy_context().run, grader.judge_test, cmd, tc, capped, False, False, lang,
+                                      diagnostics=tc.name in samples and reveal != REVEAL_NONE)
+                            for tc in stage]
+                    # result() returns only after the supervisor reaps all
+                    # descendants; sample readers cannot survive this barrier.
+                    for tc, f in zip(stage, futs):
+                        try:
+                            v, wall, cpu, mem, detail, actual = f.result()
+                        except grader.SandboxUnavailable:
+                            return {"error": "execution environment unavailable"}
+                        item = {
+                            "test": tc.name, "verdict": v,
+                            "wall_s": round(wall, 4), "cpu_s": round(cpu, 4),
+                            "peak_mb": round(mem, 2),
+                            "public": tc.name in samples,
+                        }
+                        if v == "WA":
+                            item["diff"] = grader.show_diff(tc.expected, actual)[:DETAIL_HEAD]
+                            item["input"] = tc.input[:2000]
+                            item["expected"] = tc.expected[:2000]
+                            item["actual"] = actual[:2000]
+                        elif detail:
+                            item["detail"] = detail[:DETAIL_HEAD]
+                        results.append(item)
 
+        order = {tc.name: index for index, tc in enumerate(prob.tests)}
+        results.sort(key=lambda item: order[item["test"]])
         passed = sum(1 for r in results if r["verdict"] == "AC")
         total = len(prob.tests)
         counts: Dict[str, int] = {}
