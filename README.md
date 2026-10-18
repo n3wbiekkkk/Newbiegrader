@@ -12,7 +12,7 @@ Strict limits · Undisclosed tests · Asynchronous judging · Contests · Teache
 ![Python](https://img.shields.io/badge/python-3.11-3776AB?logo=python&logoColor=white)
 ![Problems](https://img.shields.io/badge/problems-68-brightgreen)
 ![Test cases](https://img.shields.io/badge/test%20cases-1178-brightgreen)
-![Grader](https://img.shields.io/badge/grader-v2.0.6-informational)
+![Grader](https://img.shields.io/badge/grader-v2.0.7-informational)
 ![Frontend](https://img.shields.io/badge/frontend-no%20build%20step-orange)
 
 [Live Demo](https://newbiegrader.pages.dev) · [Report a Bug](../../issues) · [Discord](https://discord.gg/7NQDHFBpf6) · [Documentation](docs)
@@ -41,7 +41,7 @@ Practice submissions show input, expected output and actual output for failed ca
 
 <div align="center">
 
-| 68 | 1,178 | v2.0.6 | 3 |
+| 68 | 1,178 | v2.0.7 | 3 |
 | :---: | :---: | :---: | :---: |
 | problems | test cases | grader engine | languages |
 

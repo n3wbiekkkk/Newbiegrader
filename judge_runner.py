@@ -182,7 +182,8 @@ class BoundedResult:
 
 def run_bounded(command: list[str], stdin_data: str, timeout: float, *,
                 output_limit: int, env: dict, cwd: str | None = None,
-                cancel: threading.Event | None = None, sample=None) -> BoundedResult:
+                cancel: threading.Event | None = None, sample=None,
+                containment=None) -> BoundedResult:
     """Collect each stream up to its byte limit, killing the full tree on overflow.
 
     The deadline includes process startup. Return only after process/pipe cleanup.
@@ -202,6 +203,8 @@ def run_bounded(command: list[str], stdin_data: str, timeout: float, *,
                                    stderr=subprocess.PIPE, env=env, cwd=cwd,
                                    start_new_session=(os.name == "posix"))
         try:
+            if containment is not None:
+                containment.attach(process.pid)
             if os.name == "nt":
                 job = _WindowsJob(process)
         except BaseException:
@@ -304,10 +307,20 @@ async def run_isolated(kind: str, payload: dict, timeout: float) -> dict:
     if timeout <= 0:
         raise TimeoutError("judge job deadline exceeded")
     cancel = threading.Event()
-    task = asyncio.create_task(asyncio.to_thread(
-        run_bounded, [sys.executable, str(Path(__file__).resolve()), "--job"],
-        json.dumps({"kind": kind, "payload": payload}), timeout,
-        output_limit=8 * 1024 * 1024, env=_runner_env(), cwd=str(ROOT), cancel=cancel))
+
+    def execute():
+        import job_resources
+        with job_resources.job_scope() as boundary:
+            env = _runner_env()
+            if boundary is not None:
+                env["TMPDIR"] = str(boundary.workspace)
+            return run_bounded(
+                [sys.executable, str(Path(__file__).resolve()), "--job"],
+                json.dumps({"kind": kind, "payload": payload}), timeout,
+                output_limit=8 * 1024 * 1024, env=env, cwd=str(ROOT),
+                cancel=cancel, containment=boundary)
+
+    task = asyncio.create_task(asyncio.to_thread(execute))
     try:
         result = await asyncio.shield(task)
     except asyncio.CancelledError:
