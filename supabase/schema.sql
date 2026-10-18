@@ -470,3 +470,24 @@ create index if not exists submissions_contest_created
   on submissions (contest_id, created_at desc);
 create index if not exists judge_jobs_claim_cover
   on judge_jobs (status, kind, created_at, id);
+
+-- ============================================================================
+-- 2026-10-18: server-only Data API permissions. Review before production apply.
+-- The SPA uses the FastAPI proxy, never direct Supabase reads. Views previously
+-- inherited their creator's privileges and bypassed submissions RLS for anon.
+-- Contest visibility also depends on API policy, not just problems.hidden.
+-- ============================================================================
+alter table public.reports enable row level security;
+alter view public.leaderboard_scores set (security_invoker = true);
+alter view public.problem_stats set (security_invoker = true);
+
+revoke all on public.submissions, public.profiles, public.reports, public.users,
+  public.judge_jobs, public.contests, public.contest_registrations,
+  public.contest_announcements, public.judge_quota_events, public.problems,
+  public.leaderboard_scores, public.problem_stats from public, anon, authenticated;
+grant all on public.submissions, public.profiles, public.reports, public.users,
+  public.judge_jobs, public.contests, public.contest_registrations,
+  public.contest_announcements, public.judge_quota_events, public.problems
+  to service_role;
+grant select on public.leaderboard_scores, public.problem_stats to service_role;
+drop policy if exists problems_public_read on public.problems;
