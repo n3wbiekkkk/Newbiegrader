@@ -1,7 +1,9 @@
 # S04 runtime budget correction — 2026-10-18
 
 Base: `9cffd13`; branch `fix/p0-runtime-memory-budget`.
-**High · CONFIRMED accounting flaw · partially corrected locally.**
+**Historical implementation checkpoint; scheduling correction is now deployed.**
+Current host blocker and follow-up: [S04_HOST_HANDOFF.md](S04_HOST_HANDOFF.md).
+**High · CONFIRMED accounting flaw · partially corrected.**
 Production OOM is LIKELY, not reproduced. Aggregate containment remains OPEN.
 
 ## Evidence and smallest correction
@@ -51,7 +53,8 @@ This is scheduling arithmetic, **not hard process-tree enforcement**. RLIMIT_AS
 is per-process address space, not aggregate RSS. Compiler and runtime descendants,
 stream buffers, cached problem bytes and supervisor memory can exceed estimates;
 64 MB is an existing allowance, not a measured worst-case bound. Parent-only RSS
-sampling and swallowed rlimit failures remain. Per-job cgroup memory/pids/CPU and
+sampling remains; the swallowed rlimit failures described at this historical
+checkpoint were subsequently fixed and deployed (`b1531ba`). Per-job cgroup memory/pids/CPU and
 workspace bounds require a reviewed host configuration; no added capabilities,
 privileged mode, network relaxation or namespace bypass was introduced.
 
