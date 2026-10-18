@@ -20,7 +20,14 @@ The Docker entrypoint selects the command from `GRADER_ROLE` and uses `PORT` for
 
 ## Host capacity
 
-Defaults derive from cgroup CPU/RAM limits. The scheduler reserves interpreter/API memory and budgets each active job for its supervisor plus the larger compiler/test allocation. It caps requested worker count to both CPU and memory capacity. `GRADER_JUDGE_JOBS` no longer enables concurrent tests: effective test parallelism is one. Large worker/memory overrides cannot override the host safety calculation. Inspect `/api/version` for effective values.
+Defaults derive from cgroup CPU/RAM limits. The scheduler reserves interpreter/API memory and budgets each active job for its supervisor plus the larger compiler/test address-space ceiling, including the enabled languages’ memory multipliers and virtual headroom. It caps requested worker count to both CPU and memory capacity. `GRADER_JUDGE_JOBS` no longer enables concurrent tests: effective test parallelism is one. Large worker/memory overrides cannot override the host safety calculation. Inspect `/api/version` for effective values.
+
+For a 512 MB host, the corrected default declared cap is **85 MB**, not 256 MB:
+170 MB API reserve + 340 MB per job fits within 512 MB. Python's threshold is
+212.5 MB and its RLIMIT_AS is 276 MB; compiler RLIMIT_AS remains 256 MB. These are
+per-process limits and a scheduler estimate, **not a hard aggregate process-tree
+limit**. Output buffers, cached problem data and descendants can exceed estimates.
+Per-job cgroup memory/pids/CPU and workspace bounds remain public-launch gates.
 
 OS file locks coordinate processes that share `GRADER_CAPACITY_DIR` (default: `newbiegrader-capacity` under the system temporary directory). Processes sharing one machine allocation must use the same directory and matching capacity settings. Containers sharing one CPU/RAM allocation need a shared writable mount at that directory. Independent hosts have independent slot budgets and coordinate job ownership through PostgreSQL. Container CPU/RAM limits must reflect the resources actually reserved for each container.
 

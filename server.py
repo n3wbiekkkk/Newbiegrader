@@ -172,13 +172,28 @@ def _sanitize_compile_error(text: str) -> str:
 
 
 def _derive_capacity(cpu: float, ram: int) -> dict:
-    # Reserve API/interpreter memory, then budget each supervisor and the larger
-    # of a compiler or a test. Compilation and tests never overlap within a job.
+    # Reserve API/interpreter memory, then budget the larger of compiler and
+    # runtime *ceilings*. Python's allowance and virtual headroom also consume
+    # the host budget; the declared compact-language limit alone is insufficient.
     reserve = min(192, max(64, ram // 3))
     available = max(1, ram - reserve)
-    cap = min(_env_int("GRADER_MEMORY_CAP_MB", max(64, ram // 2)),
-              max(1, available - 64))
-    per_job = max(cap, 256) + 64
+    requested = _env_int("GRADER_MEMORY_CAP_MB", max(64, ram // 2))
+
+    def job_mb(cap: int) -> int:
+        runtime = max(grader.enforced_memory_mb(cap, lang) for lang in LANGS)
+        return max(runtime, max(cap, 256)) + 64
+
+    # Find the highest declared cap that fits one slot without dropping the
+    # language allowance or lying about the enforced address-space limit.
+    lo, hi = 1, requested
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if job_mb(mid) <= available:
+            lo = mid
+        else:
+            hi = mid - 1
+    cap = lo
+    per_job = job_mb(cap)
     safe = min(max(1, int(cpu)), available // per_job)
     return {"workers": min(_env_int("GRADER_JUDGE_WORKERS", safe), safe),
             "judge_jobs": 1, "memory_cap_mb": cap, "reserve_mb": reserve,

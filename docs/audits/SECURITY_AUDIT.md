@@ -163,7 +163,7 @@ See [job isolation operations and evidence](JOB_ISOLATION.md).
 
 ### S04 — Resource budget excludes descendants and Python allowance
 
-**High · CONFIRMED accounting flaws; production OOM LIKELY · OPEN.**
+**High · CONFIRMED accounting flaws; production OOM LIKELY · PARTIALLY FIXED locally; aggregate enforcement OPEN.**
 
 - References: `grader.py:660`, `grader.py:749`, `grader.py:784`,
   `server.py:174` (`_derive_capacity`), `server.py:2398` (`_effective`).
@@ -184,6 +184,12 @@ See [job isolation operations and evidence](JOB_ISOLATION.md).
   kernel boundary. A tree sampler alone is not a hard aggregate limit.
 - Regression status: diagnostic demonstrates missing accounting; containment
   remains open. Existing threshold tests pass but exercise principally one process.
+
+- Follow-up from `9cffd13`: the capacity formula now accounts for enabled-language
+  address-space ceilings (allowance + headroom), compiler ceiling and the existing
+  supervisor reserve. This corrects the single-process scheduling mismatch, not
+  aggregate containment. See [RUNTIME_MEMORY_BUDGET.md](RUNTIME_MEMORY_BUDGET.md)
+  for exact current references, failing-before tests and release limits.
 
 ### S05 — Password signup can pre-hijack a future Google identity
 
