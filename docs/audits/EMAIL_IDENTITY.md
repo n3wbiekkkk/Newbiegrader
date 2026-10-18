@@ -119,15 +119,16 @@ printed or sent through chat.
    no-store responses and the public proxy path. Real Google OAuth is not rerun
    by the synthetic tests above.
 
-### Current remote verification blocker
+### Remote verification follow-up
 
-The final read-only preflight through Supabase MCP returned **MCP authentication
-required. Reconnect to continue using this server.** No live account counts or
-canonical-email collision results were obtained in this implementation step.
-The three-account count above is historical evidence, not a new live result.
-Reconnect that integration before refreshing preflight/backup evidence and asking
-for the production migration/configuration/release approval. No alternate
-credential path was used after the authentication refusal.
+The first final preflight was refused with “MCP authentication required”. On
+2026-10-18 the operator requested `codex mcp login supabase`; OAuth reconnection
+completed successfully without adding a duplicate server or changing project
+scope. The existing MCP tools then returned the correct project URL and actual
+read-only counts: **3 accounts, 0 noncanonical emails, 0 duplicate canonical-email
+groups**. No account values or hashes were returned. No production writes occurred.
+This resolves the MCP blocker; backup evidence, approval of the appended SQL and
+Auth configuration, and a reviewed release remain required.
 
 Safe post-migration metadata checks (read-only, no account values):
 
