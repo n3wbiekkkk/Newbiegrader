@@ -1,9 +1,9 @@
-# Email identity remediation — deployed, live OTP verification pending
+# Email identity remediation — deployed, live signup verified
 
 2026-10-18 · Branch `fix/verified-email-auth` · Base `9385811`.
 
 **S05: High, CONFIRMED in the prior synthetic reproduction. The correction is
-deployed; final real end-to-end OTP verification remains OPEN.** The operator
+deployed; real operator-owned OTP signup is verified.** The operator
 approved the reviewed production migration, Auth configuration and release.
 The sections below retain local test evidence and the planned rollout gates;
 the production checkpoint at the end records which gates have actually passed.
@@ -78,9 +78,9 @@ that harness mismatch was corrected by setting local HTTP cookie configuration
 before import, without relaxing assertions or changing application code. The critical
 identity tests do not depend on those skips or on private problems.
 
-The provider's real single-use/expiry behavior is not proved by a mock. A real
-operator-owned OTP verification test remains a rollout gate, with no OTP/link
-printed or sent through chat.
+The provider's real single-use/expiry behavior is not proved by a mock. The
+operator-owned live signup proof is recorded below; live reused/expired-code
+rejection remains unverified. No OTP/link is printed or sent through chat.
 
 ## Rollout gates and reviewable SQL
 
@@ -241,11 +241,18 @@ not a claim of complete database/Storage disaster recovery.
   zero. Production uses a local in-memory queue: this was not an atomic admission
   pause/drain and does not prove no request arrived between probes and restart.
 - Requested one real OTP for the operator-owned test mailbox in native Chrome.
-  The form reached the pending-code/new-password step. The operator must enter
-  and submit the code and new password themselves; no OTP/password is read or
-  transmitted through chat. Successful provider consumption, actual expiry and
-  actual replay rejection remain unverified at this checkpoint. A pending-form
-  response alone is not proof of delivery or successful identity verification.
+  The form reached the pending-code/new-password step. The operator subsequently
+  reported entering the OTP and successfully completing signup themselves.
+  Read-only SQL returned one test identity with `app_identity_complete=true`
+  (verified timestamp, provider subject, positive credential version and nonempty
+  password hash) and `confirmed_provider_binding=true` (matching confirmed Auth
+  user and normalized email). Only aggregate counts/booleans were returned;
+  no password, hash value, OTP or provider subject was read into the report.
+  At this follow-up there were five application accounts, one verified password
+  identity and three still-unverified accounts. The other accounts were not
+  inspected individually. This confirms the owned live signup path, not every
+  legacy recovery or OAuth path. Actual expired/reused-code rejection remains
+  unverified; synthetic expiry/replay/concurrency tests passed as recorded above.
 
 ### Recovery evidence and remaining gates
 
@@ -256,7 +263,7 @@ no plaintext file or account values were printed. This is not a full PostgreSQL
 restore drill. Supabase's project overview reported no platform backup.
 
 Do not mark the public service ready solely because this release is deployed.
-Real OTP verification, broader recipient delivery/provider abuse controls,
-complete DB/Storage recovery, S04 aggregate resource isolation and B08 durable
+Broader recipient delivery/provider abuse controls, live provider expiry/replay
+checks, complete DB/Storage recovery, S04 aggregate resource isolation and B08 durable
 queue operations remain outstanding. Keep legacy accounts unverified until
 their owners prove mailbox control; do not fall back to old password-only code.
