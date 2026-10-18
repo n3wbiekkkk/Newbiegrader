@@ -172,7 +172,7 @@ See [job isolation operations and evidence](JOB_ISOLATION.md).
 
 ### S04 — Resource budget excludes descendants and Python allowance
 
-**High · CONFIRMED accounting flaws; production OOM LIKELY · PARTIALLY FIXED locally; aggregate enforcement OPEN.**
+**High · CONFIRMED accounting flaws; production OOM LIKELY · scheduling/setup corrections DEPLOYED; aggregate enforcement HOST-BLOCKED.**
 
 - References: `grader.py:660`, `grader.py:749`, `grader.py:784`,
   `server.py:174` (`_derive_capacity`), `server.py:2398` (`_effective`).
@@ -181,13 +181,15 @@ See [job isolation operations and evidence](JOB_ISOLATION.md).
 - Bounded test with two children: declared 64 MB, Python threshold 160 MB,
   reported parent 21.9 MB, aggregate 181.6 MB, return code 0, over-limit false.
   No OOM/fork bomb was induced. RLIMIT_AS is an **address-space ceiling, not RSS**.
-- Production reports a 256 MB cap on a 512 MB container: Python threshold is
+- At the initial production checkpoint, a 256 MB cap on a 512 MB container gave a
+  Python threshold of
   640 MB and virtual ceiling 704 MB, while scheduler budget is 320 MB/job plus
   170 MB reserve. A single program can outgrow the container before user-space
   RSS enforcement fires. Actual production OOM/restart is not proven.
 - FSIZE=64 MB limits one file, not total workspace size. No job filesystem quota
-  or job cgroup controller is configured in the repository. Failed setrlimit
-  calls are also swallowed, so effective limits need host verification.
+  or job cgroup controller is configured in the repository. The previously
+  swallowed setrlimit failures now refuse Linux/root sandbox launch
+  (`grader.py:787`, deployed `b1531ba`).
 - Minimum fix: budget actual language/runtime ceilings, compile memory and API
   reserve; enforce descendant memory/pids/CPU and workspace bytes in a per-job
   kernel boundary. A tree sampler alone is not a hard aggregate limit.
@@ -199,6 +201,11 @@ See [job isolation operations and evidence](JOB_ISOLATION.md).
   supervisor reserve. This corrects the single-process scheduling mismatch, not
   aggregate containment. See [RUNTIME_MEMORY_BUDGET.md](RUNTIME_MEMORY_BUDGET.md)
   for exact current references, failing-before tests and release limits.
+- Current host follow-up: the read-only preflight again returned `HOST_BLOCKED`
+  on production: cgroup mount read-only, no enabled child controllers. Scheduling
+  correction and fail-closed setup are already deployed; they are not pending
+  reimplementation. See [S04_HOST_HANDOFF.md](S04_HOST_HANDOFF.md) for the actual
+  probe, prepared provider request and remaining enforcement acceptance criteria.
 
 ### S05 — Password signup can pre-hijack a future Google identity
 

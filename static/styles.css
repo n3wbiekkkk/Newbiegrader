@@ -40,7 +40,7 @@
 
   /* Google button keeps Google's own colours, per theme */
   --google-bg: #fff; --google-fg: #1f1f1f; --google-line: #dadce0;
-  --google-hover: #f8faff; --google-hover-line: #c6d7f5; --google-accent: #1a73e8;
+  --google-hover: #f8faff; --google-hover-line: #c6d7f5;
 
   /* code highlighting */
   --tk-k: #7c3aed; --tk-s: #15803d; --tk-c: #6c736b;
@@ -193,7 +193,7 @@ body {
   padding: 10px 16px; font-size: var(--fs-md); font-weight: 500; cursor: pointer;
 }
 .google-btn:hover { background: var(--google-hover); border-color: var(--google-hover-line); box-shadow: var(--shadow); }
-.google-btn .ic { color: var(--google-accent); }
+.google-logo { width: 20px; height: 20px; flex: 0 0 20px; object-fit: contain; }
 .or-divider { display: flex; align-items: center; gap: 12px; color: var(--dim); font-size: var(--fs-xs); margin: 4px 0 12px; }
 .or-divider::before, .or-divider::after { content: ""; flex: 1; border-top: 1px solid var(--border); }
 #user-chip { font-size: var(--fs-sm); font-weight: 600; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

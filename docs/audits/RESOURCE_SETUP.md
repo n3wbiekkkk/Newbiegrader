@@ -2,6 +2,10 @@
 
 **High, CONFIRMED setup failure path; partially fixed. Aggregate containment OPEN.**
 
+The setup correction below is now deployed. See
+[S04_HOST_HANDOFF.md](S04_HOST_HANDOFF.md) for the repeated actual-host preflight,
+prepared provider inquiry and remaining aggregate enforcement gates.
+
 `grader.build_limits()` previously ignored failed setrlimit calls, including
 Linux/root web launchers. A synthetic injected failure for each of AS, DATA,
 CPU, NPROC, FSIZE, CORE and NOFILE allowed the launcher to continue; the regression
