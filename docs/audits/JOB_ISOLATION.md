@@ -1,5 +1,9 @@
 # Web-job isolation follow-up — 2026-10-18
 
+Subsequent production deployment and actual-host evidence are recorded in
+[PRODUCTION_RELEASE_2026-10-18.md](PRODUCTION_RELEASE_2026-10-18.md).
+The undeployed statements below describe the earlier checkpoint.
+
 Base: `cc2106a`; working branch: `fix/p0-job-identities`.
 This is a local correction for S03, not a production rollout or a claim that the
 whole sandbox is secure. No application data, production configuration or secrets

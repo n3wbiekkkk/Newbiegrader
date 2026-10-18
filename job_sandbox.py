@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import platform
 import stat
+import subprocess
 import sys
 import threading
 
@@ -189,6 +190,84 @@ def landlock_abi() -> int:
     if version < 3:
         raise OSError(ctypes.get_errno(), "Landlock ABI >= 3 required")
     return version
+
+
+def _network_filter_program(machine: str) -> list[tuple[int, int, int, int]]:
+    """Classic BPF over seccomp_data; reject foreign ABIs before syscall checks.
+
+    Numbers follow Linux's x86 syscall_64.tbl and asm-generic/unistd.h.
+    Anonymous AF_UNIX stream pairs support Python asyncio and local IPC; named
+    sockets, datagram pairs, new endpoints and io_uring are unavailable.
+    """
+    if machine == "x86_64":
+        arch, pair = 0xc000003e, 53  # AUDIT_ARCH_X86_64
+        denied = (41, 42, 43, 49, 50, 101, 288, 425, 426, 427)
+    elif machine == "aarch64":
+        arch, pair = 0xc00000b7, 199  # AUDIT_ARCH_AARCH64, little endian
+        denied = (117, 198, 200, 201, 202, 203, 242, 425, 426, 427)
+    else:
+        raise OSError("network syscall filter needs Linux arm64 or x86_64")
+    allow, kill, refused = 0x7fff0000, 0x80000000, 0x50001  # ERRNO(EPERM)
+    instructions = [
+        (0x20, 0, 0, 4),             # load architecture
+        (0x15, 1, 0, arch), (0x06, 0, 0, kill),
+        (0x20, 0, 0, 0),             # load syscall number
+        (0x35, 0, 1, 0x40000000), (0x06, 0, 0, kill),  # no x32 ABI
+        (0x15, 0, 7, pair),
+        (0x20, 0, 0, 16),            # socketpair domain, args[0]
+        (0x15, 0, 4, 1),             # AF_UNIX only
+        (0x20, 0, 0, 24), (0x54, 0, 0, 0xf),  # type without creation flags
+        (0x15, 0, 1, 1),             # SOCK_STREAM only
+        (0x06, 0, 0, allow), (0x06, 0, 0, refused),
+    ]
+    for number in denied:
+        instructions.extend(((0x15, 0, 1, number), (0x06, 0, 0, refused)))
+    instructions.append((0x06, 0, 0, allow))
+    return instructions
+
+
+def _install_network_filter() -> None:
+    libc = _libc()
+
+    class Instruction(ctypes.Structure):
+        _fields_ = [("code", ctypes.c_ushort), ("jt", ctypes.c_ubyte),
+                    ("jf", ctypes.c_ubyte), ("k", ctypes.c_uint32)]
+
+    class Program(ctypes.Structure):
+        _fields_ = [("length", ctypes.c_ushort),
+                    ("instructions", ctypes.POINTER(Instruction))]
+
+    values = _network_filter_program(platform.machine())
+    instructions = (Instruction * len(values))(*(Instruction(*v) for v in values))
+    program = Program(len(values), instructions)
+    # no_new_privs has already been set by the launcher; no new capability.
+    if libc.prctl(22, 2, ctypes.byref(program), 0, 0) != 0:  # PR_SET_SECCOMP FILTER
+        raise OSError(ctypes.get_errno(), "cannot install network syscall filter")
+
+
+def restrict_network() -> None:
+    if _current.get() is not None:
+        _install_network_filter()
+
+
+def verify_network_filter() -> None:
+    """Trusted boot probe in a separate process, never restrict the API itself."""
+    code = (
+        "import ctypes,errno,socket,job_sandbox\n"
+        "c=ctypes.CDLL(None,use_errno=True)\n"
+        "assert c.prctl(38,1,0,0,0)==0\n"  # PR_SET_NO_NEW_PRIVS
+        "job_sandbox._install_network_filter()\n"
+        "for family in (socket.AF_INET,socket.AF_INET6):\n"
+        " try: socket.socket(family);raise AssertionError('socket allowed')\n"
+        " except OSError as e: assert e.errno==errno.EPERM\n")
+    try:
+        result = subprocess.run([sys.executable, "-c", code], cwd=Path(__file__).parent,
+                                env={"PATH": "/usr/bin:/bin:/usr/local/bin"},
+                                capture_output=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise OSError("network syscall filter probe unavailable") from exc
+    if result.returncode != 0:
+        raise OSError("network syscall filter probe failed")
 
 
 def restrict_filesystem() -> None:
