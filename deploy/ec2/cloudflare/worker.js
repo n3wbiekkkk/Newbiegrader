@@ -1,4 +1,4 @@
-// Optional stable workers.dev origin through a private VPC Service. Not deployed.
+// Private Pages service-binding bridge to a fixed VPC Service. No public route.
 // Default is health-only. Full API access requires the separate cutover gate
 // AND a server-side shared key from the Pages Function; never a browser key.
 export default {

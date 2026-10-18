@@ -61,7 +61,20 @@ function isAnonymousGet(request, pathname) {
 export async function onRequest(context) {
   const url = new URL(context.request.url);
   let backend;
-  try { backend = backendOrigin(context.env); }
+  let service = null;
+  try {
+    const transport = context.env?.BACKEND_TRANSPORT || "https";
+    if (transport === "service") {
+      service = context.env?.BACKEND_SERVICE;
+      if (typeof service?.fetch !== "function") throw new Error("missing service binding");
+      // A service binding fixes the destination; this hostname is not resolved.
+      backend = "https://newbiegrader-aws.internal";
+    } else if (transport === "https") {
+      backend = backendOrigin(context.env);
+    } else {
+      throw new Error("invalid transport");
+    }
+  }
   catch (e) { return new Response("backend configuration unavailable", { status: 503 }); }
   const target = backend + url.pathname + url.search;
   // Never forward hop-by-hop headers: content-length/connection from the
@@ -111,7 +124,9 @@ export async function onRequest(context) {
     }
   }
 
-  const res = await fetch(target, init);
+  let res;
+  try { res = service ? await service.fetch(target, init) : await fetch(target, init); }
+  catch (e) { return new Response("backend unavailable", { status: 502 }); }
   // Rebuild headers explicitly so multiple Set-Cookie headers survive.
   const headers = new Headers();
   res.headers.forEach((v, k) => {
