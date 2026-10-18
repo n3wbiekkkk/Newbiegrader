@@ -269,7 +269,7 @@ class ApiE2E(unittest.TestCase):
             if item.get("hidden"):
                 self.assertNotIn("input", item)
                 self.assertNotIn("expected", item)
-    def test_wrong_answer_keeps_feedback_but_not_hidden_tests(self):
+    def test_wrong_practice_answer_keeps_failed_case_feedback(self):
         self.login(STUDENT_A)
         job = self.judged("thai_time", WRONG)
         result = job["result"]
@@ -279,8 +279,13 @@ class ApiE2E(unittest.TestCase):
         self.assertEqual(sample["verdict"], "WA")
         self.assertIn("diff", sample)          # public sample: full feedback
         for item in result["results"]:
-            if item.get("hidden"):
-                self.assertNotIn("diff", item)
+            if item["verdict"] != "AC":
+                self.assertTrue(item.get("practice_feedback"), item)
+                self.assertIn("input", item)
+                self.assertIn("expected", item)
+                self.assertIn("actual", item)
+                self.assertFalse(item.get("hidden"), item)
+            elif item.get("hidden"):
                 self.assertNotIn("input", item)
                 self.assertNotIn("expected", item)
 

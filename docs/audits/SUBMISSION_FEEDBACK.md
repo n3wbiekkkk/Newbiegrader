@@ -1,7 +1,11 @@
 # Submission feedback and test-suite follow-up — 2026-10-18
 
 Branch: `fix/submission-feedback-and-testcases`, based on `eddbc6d`.
-Changes are local pending release; pushing this branch does not deploy the
+Later status: the owner approved practice disclosure and test publication.
+See [PRACTICE_RELEASE.md](PRACTICE_RELEASE.md) for the completed Supabase
+publication and updated policy; the checkpoint below predates those approvals.
+
+Changes at this checkpoint are local pending release; pushing this branch does not deploy the
 backend or publish ignored problem packages. No real user submissions were run.
 
 ## Submission feedback

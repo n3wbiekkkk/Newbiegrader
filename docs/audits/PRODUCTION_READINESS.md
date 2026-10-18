@@ -8,6 +8,11 @@ isolation and identity ownership remain launch gates. Initial audit work made no
 production changes. After explicit approval, S01 permission SQL was applied and
 verified in production; no application data, push or deployment was performed.
 
+Later approved test-data publication: **68 problems / 1,178 cases**, with no
+backend deployment. The new owner-authorized practice feedback is documented in
+[PRACTICE_RELEASE.md](PRACTICE_RELEASE.md); kernel/identity/queue release gates
+still apply.
+
 See [security findings](SECURITY_AUDIT.md) and [correctness/operations findings](BUG_AUDIT.md).
 Status is scoped: a local regression pass is not a verified production rollout.
 
@@ -17,7 +22,7 @@ Status is scoped: a local regression pass is not a verified production rollout.
 | --- | --- | --- | --- |
 | 1 | S01 anon view access bypasses protected RLS | High, production CONFIRMED | Fixed and verified in production after approval, 02:18 UTC |
 | 2 | S03 equal UID reads/writes other job source | High, synthetic CONFIRMED | Per-job UID + Landlock fixed locally; production provisioning/rollout unverified |
-| 3 | S04 parent-only memory and wrong runtime budget | High, mechanism CONFIRMED; OOM LIKELY | Open; 512 MB production host reported |
+| 3 | S04 parent-only memory and wrong runtime budget | High, mechanism CONFIRMED; OOM LIKELY | Runtime scheduling arithmetic fixed locally; aggregate containment open; 512 MB production host reported |
 | 4 | S05 unverified-email pre-hijacking | High, synthetic CONFIRMED | Open; provider verification fix is only partial |
 | 5 | S02 root chmod via substituted paths | High, synthetic CONFIRMED | Fixed locally, not deployed |
 | 6 | S06 contest authorization fails open on outages/schema gaps | High, synthetic CONFIRMED | Fixed locally, not deployed |

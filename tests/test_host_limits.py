@@ -13,6 +13,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -83,9 +84,14 @@ class CgroupDetection(unittest.TestCase):
         self.write("cpu.max", "50000 100000")
         self.write("memory.max", str(512 * 1024 * 1024))
         self.assertEqual(grader.cpu_quota(), 0.5)      # precondition for the math below
-        # mirrors server.py: >=2 vCPU -> parallel, else serial; cap = ram/2
-        self.assertEqual(1 if grader.cpu_quota() < 2 else 4, 1)
-        self.assertEqual(max(64, int(grader.ram_limit_mb() * 0.5)), 256)
+        from critical_helpers import test_server
+        server = test_server()
+        with patch.dict(os.environ, {"GRADER_MEMORY_CAP_MB": "0", "GRADER_JUDGE_WORKERS": "0"}):
+            capacity = server._derive_capacity(grader.cpu_quota(), grader.ram_limit_mb())
+        self.assertEqual(capacity["workers"], 1)
+        self.assertEqual(capacity["judge_jobs"], 1)
+        self.assertEqual(capacity["memory_cap_mb"], 85)
+        self.assertLessEqual(capacity["reserve_mb"] + capacity["per_job_mb"], 512)
 
     def test_missing_cgroup_files_do_not_crash(self):
         self.assertEqual(grader.ram_limit_mb() > 0, True)
