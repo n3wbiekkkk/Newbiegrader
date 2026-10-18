@@ -3,7 +3,44 @@
 // Why proxy: keeps login cookies first-party, so auth works even when
 // browsers block third-party cookies. Query strings are forwarded as-is.
 // Redirects pass through untouched (Google login + finish flow need them).
-const BACKEND = "https://grader.n.onjrnm.vip";
+const DEFAULT_BACKEND = "https://grader.n.onjrnm.vip";
+const BODY_MAX = 1024 * 1024;
+
+function backendOrigin(env) {
+  const url = new URL(env?.BACKEND_ORIGIN || DEFAULT_BACKEND);
+  if (url.protocol !== "https:" || url.username || url.password ||
+      url.pathname !== "/" || url.search || url.hash) throw new Error("invalid origin");
+  return url.origin;
+}
+
+async function boundedBody(request) {
+  const declared = request.headers.get("content-length");
+  if (declared !== null && (!/^\d+$/.test(declared) || Number(declared) > BODY_MAX)) {
+    return { error: new Response("request body too large or invalid", { status: 413 }) };
+  }
+  if (!request.body) return { body: null };
+  const reader = request.body.getReader();
+  const chunks = [];
+  let length = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      length += value.byteLength;
+      if (length > BODY_MAX) {
+        await reader.cancel();
+        return { error: new Response("request body too large", { status: 413 }) };
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const body = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.byteLength; }
+  return { body };
+}
 
 // Zero-account GETs whose body is identical for every visitor. The backend
 // origin sits ~200ms away, so every proxied request pays a full round trip;
@@ -23,21 +60,34 @@ function isAnonymousGet(request, pathname) {
 
 export async function onRequest(context) {
   const url = new URL(context.request.url);
-  const target = BACKEND + url.pathname + url.search;
+  let backend;
+  try { backend = backendOrigin(context.env); }
+  catch (e) { return new Response("backend configuration unavailable", { status: 503 }); }
+  const target = backend + url.pathname + url.search;
   // Never forward hop-by-hop headers: content-length/connection from the
   // eyeball connection do not describe the backend connection (stale
   // content-length breaks POST submit on Workers).
   const HOP_BY_HOP = new Set(["connection", "keep-alive", "proxy-authenticate",
     "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade",
-    "content-length", "host"]);
+    "content-length", "host", "x-newbiegrader-proxy-key", "x-forwarded-for",
+    "x-forwarded-proto", "x-real-ip", "cf-connecting-ip"]);
   const fwdHeaders = new Headers();
   context.request.headers.forEach((v, k) => {
     if (!HOP_BY_HOP.has(k.toLowerCase())) fwdHeaders.append(k, v);
   });
+  // Cloudflare supplies this single client address; never forward a client XFF
+  // chain. The backend still validates it against its immediate-peer policy.
+  const clientIp = context.request.headers.get("cf-connecting-ip") || "";
+  if (/^[0-9a-fA-F:.]+$/.test(clientIp)) fwdHeaders.set("x-forwarded-for", clientIp);
+  fwdHeaders.set("x-forwarded-proto", "https");
+  if (context.env?.BACKEND_PROXY_KEY) {
+    fwdHeaders.set("x-newbiegrader-proxy-key", context.env.BACKEND_PROXY_KEY);
+  }
   const init = { method: context.request.method, headers: fwdHeaders, redirect: "manual" };
   if (context.request.method !== "GET" && context.request.method !== "HEAD") {
-    init.body = context.request.body;
-    init.duplex = "half";   // required by Workers when forwarding a stream body
+    const bounded = await boundedBody(context.request);
+    if (bounded.error) return bounded.error;
+    init.body = bounded.body;
   }
 
   // Edge cache lookup. Best effort: if the runtime exposes no Cache API we
@@ -47,7 +97,9 @@ export async function onRequest(context) {
   if (isAnonymousGet(context.request, url.pathname)) {
     try {
       edgeCache = caches.default;
-      cacheKey = new Request(url.toString(), { method: "GET" });
+      const cacheUrl = new URL(url);
+      cacheUrl.searchParams.set("__ng_origin", backend);
+      cacheKey = new Request(cacheUrl.toString(), { method: "GET" });
       const hit = await edgeCache.match(cacheKey);
       if (hit) {
         const headers = new Headers(hit.headers);
