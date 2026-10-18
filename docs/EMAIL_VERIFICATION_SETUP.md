@@ -1,11 +1,16 @@
 # เตรียมอีเมลยืนยันสำหรับ Newbiegrader
 
-สถานะ 2026-10-18: **เตรียมการเท่านั้น — S05 ยัง OPEN**
+สถานะ 2026-10-18: **Gmail SMTP ส่งถึงจริงแล้ว; โค้ด OTP แก้ใน branch ท้องถิ่นและ
+ผ่าน synthetic tests แต่ยังไม่ deploy — S05 ฝั่ง production ยัง OPEN**
+
+ดู [ผลแก้และขั้น rollout](audits/EMAIL_IDENTITY.md) สำหรับ SQL, env, การย้ายบัญชี,
+ผลทดสอบ และข้อจำกัดล่าสุด การทดสอบอีเมลสำเร็จไม่ใช่หลักฐานว่า flow OTP ใหม่
+ทำงานบน production แล้ว
 
 ตรวจพบบัญชีรหัสผ่านเดิม 3 บัญชี โดยตรวจเฉพาะจำนวน/โครงสร้างตาราง ไม่อ่าน
-อีเมลหรือ hash ออกมา ผู้ดูแลยืนยันว่ายังไม่มีบริการส่งอีเมล การตั้ง SMTP
-อย่างเดียวไม่ปิดช่องโหว่: `/api/auth/register` และ `/api/auth/password` ปัจจุบัน
-ตรวจรหัสผ่านเอง ยังไม่ได้เรียก Supabase Auth เพื่อยืนยันอีเมล
+อีเมลหรือ hash ออกมา ตอนเริ่มเตรียมยังไม่มีบริการส่งอีเมล ภายหลังผู้ดูแลตั้ง Gmail SMTP ใน Supabase
+และยืนยันว่าได้รับอีเมลทดสอบแล้ว การตั้ง SMTP อย่างเดียวไม่ปิดช่องโหว่: `/api/auth/register` และ `/api/auth/password` บน release เดิม
+ตรวจรหัสผ่านเอง โค้ดใหม่ใน branch ยังต้อง rollout ก่อนใช้ Supabase Auth ยืนยันอีเมล
 
 ## วิธีที่แนะนำ
 
@@ -89,5 +94,22 @@ SMTP เริ่มต้นของ Supabase ใช้ทดสอบกั�
 - signup/login/restore/history/job ทั้ง API และ proxy ใช้นโยบายเดียวกัน
 - ไม่มี credential ใน response/log; outage และการย้ายหลาย replica ผ่าน canary
 
-ยังไม่ได้ตั้ง DNS, ออก API key, ส่งอีเมลจริง, แก้ Supabase Auth settings,
-เปลี่ยนตาราง production หรือย้ายบัญชีในรอบนี้
+## Gmail สำหรับทดสอบเมื่อยังไม่มีโดเมน
+
+ผู้ดูแลสร้างบัญชี Gmail แยก เปิด 2-Step Verification สร้าง App Password และ
+บันทึกใน Supabase โดยตรงแล้ว ไม่ส่งรหัสผ่านแชต ไม่เก็บใน Git หรือ container:
+
+| ช่อง | ค่า |
+| --- | --- |
+| Sender / Username | Gmail เต็มเดียวกับบัญชีที่สร้าง App Password |
+| Host / Port | `smtp.gmail.com` / `465` (TLS) |
+| Sender name | Newbiegrader |
+| Password | App Password ของบัญชีนั้น ไม่ใช่ Google password ปกติ |
+
+คำขอทดสอบครั้งแรกถูก Gmail ปฏิเสธ 535 เพราะ App Password คนละบัญชี หลังผู้ดูแล
+แก้แล้ว Supabase ตอบ 200 และผู้ดูแลยืนยัน receipt แล้ว ไม่ได้อ่าน OTP/link
+SMTP ที่ส่งถึงจริงยังไม่รับรองปริมาณการส่ง การเข้า inbox ของผู้รับอื่น หรือ flow
+ยืนยันตัวตนใหม่ ใช้เป็นทางเริ่มทดสอบและเตรียม provider ที่มีโดเมนสำหรับ public
+
+ยังไม่ได้เปลี่ยน OTP template/expiration, ตั้ง env ใหม่, เปลี่ยนตาราง production,
+ย้ายบัญชี หรือ deploy โค้ดยืนยันอีเมลใหม่นี้ ต้องผ่าน rollout gates ในรายงานก่อน
