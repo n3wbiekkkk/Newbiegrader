@@ -16,7 +16,7 @@ Status is scoped: a local regression pass is not a verified production rollout.
 | Rank | Finding | Severity / evidence | Current disposition |
 | --- | --- | --- | --- |
 | 1 | S01 anon view access bypasses protected RLS | High, production CONFIRMED | Fixed and verified in production after approval, 02:18 UTC |
-| 2 | S03 equal UID reads/writes other job source | High, synthetic CONFIRMED | Open; contest integrity and plagiarism evidence affected |
+| 2 | S03 equal UID reads/writes other job source | High, synthetic CONFIRMED | Per-job UID + Landlock fixed locally; production provisioning/rollout unverified |
 | 3 | S04 parent-only memory and wrong runtime budget | High, mechanism CONFIRMED; OOM LIKELY | Open; 512 MB production host reported |
 | 4 | S05 unverified-email pre-hijacking | High, synthetic CONFIRMED | Open; provider verification fix is only partial |
 | 5 | S02 root chmod via substituted paths | High, synthetic CONFIRMED | Fixed locally, not deployed |
@@ -42,7 +42,8 @@ not demonstrated on production). No direct compiler-root execution is asserted.
 2. Review and release local S02/S06/S07 fixes with the recorded gates. Dependency
    updates are substantial parser changes and need a staging smoke test before
    production approval, despite the offline suite passing.
-3. Separate jobs' filesystem/identity access (S03), enforce aggregate memory/pids
+3. S03 has a tested local UID/filesystem correction; provision and verify it as
+   documented in [JOB_ISOLATION.md](JOB_ISOLATION.md). Enforce aggregate memory/pids
    and bounded workspace bytes, and budget actual language/compile ceilings (S04).
    Keep concurrency one until safe overlap is verified; one worker alone is not
    a security proof. Do not grant privileged/CAP_SYS_ADMIN to make a probe pass.
@@ -354,5 +355,5 @@ git revert d160662 f0028bc bcb0ca1 7864a27
 The report-only commit can remain for the evidence trail. `main` still points to
 `3014da34992cebcf7b5d00c303944accf12852da`. No commits were pushed.
 
-**Single next action: close S03's shared-UID/filesystem isolation failure using
-overlapping synthetic-job tests before unrestricted public judging.**
+**Single next action: close the confirmed parallel sample/hidden feedback
+channel, then verify aggregate resource enforcement (S04).**

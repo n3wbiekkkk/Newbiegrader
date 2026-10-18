@@ -8,7 +8,7 @@ All corrections are local; none has been pushed or deployed by this audit.
 
 **Medium · CONFIRMED · FIXED locally.**
 
-- Files: `server.py:2972`, `server.py:3403`;
+- Files: `server.py:2978`, `server.py:3409`;
   `tests/test_contest_policy_audit.py:45`.
 - Evidence: synthetic running contest, public problem, freeze already active;
   scoreboard returned no rows, while anonymous history returned the new score 100.
@@ -26,7 +26,7 @@ All corrections are local; none has been pushed or deployed by this audit.
 
 **Medium · CONFIRMED · FIXED locally.**
 
-- Files: `server.py:3417`; `tests/test_contest_policy_audit.py:60`;
+- Files: `server.py:3423`; `tests/test_contest_policy_audit.py:60`;
   fake query pagination in `tests/fake_supabase.py:75`.
 - Evidence: 5,001 synthetic submissions; only the final row scored 100. Old board
   showed 0 points, corrected board shows 100.
@@ -44,7 +44,7 @@ All corrections are local; none has been pushed or deployed by this audit.
 
 **Medium · CONFIRMED · FIXED locally.**
 
-- Files: `server.py:3266` (`_contest_public`), `server.py:3472` (`contest_detail`);
+- Files: `server.py:3272` (`_contest_public`), `server.py:3478` (`contest_detail`);
   `tests/test_contest_policy_audit.py:66`.
 - Evidence: a started synthetic contest included an unpublished problem;
   `_visible_to` denied its page, but contest public metadata returned its slug.
@@ -61,7 +61,7 @@ All corrections are local; none has been pushed or deployed by this audit.
 
 **Medium · CONFIRMED · FIXED locally.**
 
-- Files: `server.py:1267`; `tests/test_audit_integrity.py:15`.
+- Files: `server.py:1273`; `tests/test_audit_integrity.py:15`.
 - Evidence: source of 210,017 bytes accepted by the 256 KiB guard became 200,000
   characters in persisted `submissions.code`; trailing executable code was lost.
 - Cause: unrelated persistence slice `[:200000]`.
@@ -77,7 +77,7 @@ All corrections are local; none has been pushed or deployed by this audit.
 
 **Medium · CONFIRMED · FIXED locally.**
 
-- Files: `server.py:2404`, `server.py:1267`;
+- Files: `server.py:2410`, `server.py:1273`;
   `tests/test_audit_integrity.py:21`, `:29`.
 - Evidence: a real isolated synthetic runner returned Accepted with empty
   `tests_hash`; persistence could use the latest metadata cache instead of the
@@ -97,7 +97,7 @@ All corrections are local; none has been pushed or deployed by this audit.
 
 **Medium · CONFIRMED · FIXED locally.**
 
-- Files: `server.py:1627`; `tests/test_auth_retention_audit.py:43`, `:65`.
+- Files: `server.py:1633`; `tests/test_auth_retention_audit.py:43`, `:65`.
 - Evidence: 10,001 recent synthetic JTIs plus a valid new token failed login.
   `next` query parameter shadows the builtin used in `next(iter(cache))`.
 - Fix: expire old tokens under a lock; no builtin-name call, no valid-entry
@@ -110,7 +110,7 @@ All corrections are local; none has been pushed or deployed by this audit.
 
 **Medium · CONFIRMED retention; eventual memory pressure LIKELY · PARTIALLY FIXED.**
 
-- Files: `server.py:903`, `server.py:911`, `server.py:1043`;
+- Files: `server.py:909`, `server.py:917`, `server.py:1049`;
   `tests/test_auth_retention_audit.py:55`, `:79`.
 - Evidence: completed local jobs retained source and playground input; expired
   entries were only pruned after map length exceeded 5,000. At the accepted
@@ -130,8 +130,8 @@ All corrections are local; none has been pushed or deployed by this audit.
 
 **High reliability · CONFIRMED mode/config and fallback; actual data loss UNVERIFIED · OPEN.**
 
-- Files: `server.py:969` (`_create_job`), `server.py:541` (`_store_submission`),
-  `server.py:1008` (`_recover_jobs`); README asynchronous-judging guarantee.
+- Files: `server.py:975` (`_create_job`), `server.py:542` (`_store_submission`),
+  `server.py:1014` (`_recover_jobs`); README asynchronous-judging guarantee.
 - Evidence: live version reports `queue_mode=local`. Job insert exceptions fall
   back to memory; history insert errors return no ID; completion can still mark
   an in-memory job done. Recovery only sees persisted records and a bounded
@@ -154,7 +154,7 @@ All corrections are local; none has been pushed or deployed by this audit.
 
 **Medium · CONFIRMED packaging · FIXED locally.**
 
-- Files: `Dockerfile:12`, `Dockerfile:14`, `server.py:3739`;
+- Files: `Dockerfile:12`, `Dockerfile:14`, `server.py:3745`;
   CI packaged-image self-test in `.github/workflows/ci.yml`.
 - Cause/evidence: server loads `tools/plagiarism.py` dynamically; original image
   copied backend modules/static only, so that path was absent and endpoint would
@@ -201,7 +201,7 @@ All corrections are local; none has been pushed or deployed by this audit.
   [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md).
 - Regression status: current audit gates improved, operational rehearsal not run.
 - Remaining risk: upstream outages, stale authorizations during metadata refresh
-  failure (`server.py:2136` keeps stale cache), bounded-count rather than bounded-byte
+  failure (`server.py:2142` keeps stale cache), bounded-count rather than bounded-byte
   problem/PDF caches (`problem_store.py:65`), and unbounded Storage response reads
   (`problem_store.py:403`). These are review targets with trusted-data prerequisites;
   no corrupt-storage DoS was executed.

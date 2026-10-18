@@ -31,6 +31,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import job_sandbox
+
 ROOT = Path(__file__).parent
 PROBLEMS_DIR = ROOT / "problems"
 
@@ -450,7 +452,10 @@ class SandboxUnavailable(Exception):
 
 
 def sandbox_identity() -> tuple[int, int]:
-    """The shared unprivileged identity used by compilers and submissions."""
+    """A web job's private identity, or the trusted CLI's legacy identity."""
+    assigned = job_sandbox.identity()
+    if assigned is not None:
+        return assigned
     import grp
     import pwd
     try:
@@ -865,6 +870,7 @@ def build_limits(memory_mb: int, time_limit: float, sandbox: bool = True, *,
                 os.setuid(uid)
                 if os.geteuid() != uid or os.getegid() != gid or os.getgroups():
                     raise OSError("sandbox identity did not take effect")
+                job_sandbox.restrict_filesystem()
             except Exception:
                 # Never continue after a partial or failed privilege drop.
                 print(f"[grader] FATAL: {PRIVILEGE_REFUSED_MARKER}; refusing to run",
@@ -877,7 +883,7 @@ def build_limits(memory_mb: int, time_limit: float, sandbox: bool = True, *,
     return _fn
 
 
-def judge_env(tmpdir: str | None = None) -> dict:
+def judge_env(tmpdir: str | None = None, *, include_identity: bool = True) -> dict:
     """Minimal env for untrusted code: compilers/runtimes work, secrets never leak."""
     path = os.environ.get("PATH", "/usr/bin:/bin:/usr/local/bin")
     tmp = tmpdir or "/tmp"
@@ -887,6 +893,8 @@ def judge_env(tmpdir: str | None = None) -> dict:
            "GOCACHE": tmp, "GOPATH": tmp, "GOMODCACHE": tmp,
            "CARGO_HOME": tmp, "RUSTUP_HOME": tmp,
            "GRADLE_USER_HOME": tmp, "MAVEN_OPTS": f"-Djava.io.tmpdir={tmp}"}
+    if include_identity:
+        env.update(job_sandbox.launch_environment(tmpdir))
     if _env_flag("GRADER_REQUIRE_NETNS"):
         # Passthrough so the --sandbox wrapper (spawned with this env) sees
         # the operator's strict-isolation demand; run_one scrubs everything
@@ -1314,7 +1322,14 @@ def main(argv=None) -> int:
 if __name__ == "__main__":
     if sys.argv[1:2] in (["--sandbox"], ["--compile-sandbox"]):
         # Compilation shares the UID/GID drop, not runtime's netns contract.
-        build_limits(int(sys.argv[2]), float(sys.argv[3]),
-                     network=sys.argv[1] == "--sandbox")()
-        os.execvpe(sys.argv[5], sys.argv[5:], judge_env())
+        try:
+            with job_sandbox.launch_scope():
+                build_limits(int(sys.argv[2]), float(sys.argv[3]),
+                             network=sys.argv[1] == "--sandbox")()
+                # Toolchain/runtime temp files stay in the job, not global /tmp.
+                os.execvpe(sys.argv[5], sys.argv[5:],
+                           judge_env(os.getcwd(), include_identity=False))
+        except (OSError, TypeError, ValueError):
+            print(f"[grader] FATAL: {PRIVILEGE_REFUSED_MARKER}; refusing to run", file=sys.stderr)
+            os._exit(PRIVILEGE_REFUSED_RC)
     raise SystemExit(main())

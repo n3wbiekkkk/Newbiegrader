@@ -3,7 +3,8 @@
 ## Decision and evidence boundary
 
 **Not ready for unrestricted public execution.** The confirmed S01 database
-exposure was closed after explicit approval; cross-job isolation failures remain.
+exposure was closed after explicit approval; S03 now has a local correction,
+while production isolation and resource enforcement remain unverified.
 Other local fixes in this branch are not
 production fixes until reviewed and released. Passing tests do not establish
 sandbox security. No rewrite is recommended.
@@ -40,12 +41,12 @@ evidence; **NOT AN ISSUE** = a specific allegation contradicted within tested sc
 | Boundary | Reviewed implementation | Untrusted input / protection |
 | --- | --- | --- |
 | Browser → Pages → API | `static/app.js`, `static/index.html`, `static/_headers`, `functions/api/[[proxy]].js` | HTML/Markdown rendering, cookies, forms, query values, forwarded headers, edge cache |
-| Identity → API policy | `server.py:1550`, `server.py:1627`, `server.py:1743`, `server.py:1901`, `server.py:2335` | Google code/state/profile, password/email, signed sessions, admin email, proxy chain |
-| API → service-role database | `server.py:541`, `server.py:2972`, `supabase/schema.sql` | Ownership and contest checks must precede privileged reads; RLS is not an API authorization layer for service_role |
-| Database/Storage → trusted runner | `problem_store.py:371`, `problem_store.py:425`, `judge_runner.py:299` | Metadata, private test bytes, serialized problem; whole-suite hash verified |
-| Queue → worker | `server.py:758`, `server.py:969`, `server.py:1043`, `supabase/schema.sql:280` | Source/payload, leases, attempt fencing, completion transaction |
-| Trusted root → compiler/runtime | `grader.py:469`, `grader.py:496`, `grader.py:779`, `grader.py:959` | Source, compiler diagnostics, executable/workspace paths, process tree |
-| Admin → operational tools | `server.py:3652`, `server.py:3754`, `tools/`, Dockerfile, CI | Rejudge, plagiarism, imports and statement tooling; privileged offline code is trusted, not sandboxed user input |
+| Identity → API policy | `server.py:1556`, `server.py:1633`, `server.py:1749`, `server.py:1907`, `server.py:2341` | Google code/state/profile, password/email, signed sessions, admin email, proxy chain |
+| API → service-role database | `server.py:542`, `server.py:2978`, `supabase/schema.sql` | Ownership and contest checks must precede privileged reads; RLS is not an API authorization layer for service_role |
+| Database/Storage → trusted runner | `problem_store.py:371`, `problem_store.py:425`, `judge_runner.py:301` | Metadata, private test bytes, serialized problem; whole-suite hash verified |
+| Queue → worker | `server.py:759`, `server.py:975`, `server.py:1049`, `supabase/schema.sql:280` | Source/payload, leases, attempt fencing, completion transaction |
+| Trusted root → compiler/runtime | `grader.py:474`, `grader.py:501`, `grader.py:784`, `grader.py:967` | Source, compiler diagnostics, executable/workspace paths, process tree |
+| Admin → operational tools | `server.py:3658`, `server.py:3760`, `tools/`, Dockerfile, CI | Rejudge, plagiarism, imports and statement tooling; privileged offline code is trusted, not sandboxed user input |
 
 Also reviewed checkers, problem loaders, all API route declarations, reports,
 profiles, contest announcements/registration, frontend sinks/API calls, queue SQL,
@@ -99,7 +100,7 @@ problem counts; deployed facts above take precedence.
 
 **High · CONFIRMED synthetic exploitation · FIXED locally.**
 
-- References: `grader.py:935`, `grader.py:959`, `_run_cwd` in `grader.py`;
+- References: `grader.py:943`, `grader.py:967`, `_run_cwd` in `grader.py`;
   `tests/test_critical_paths.py:17`, `:33`, `:48`.
   Baseline did `os.chmod(cwd, 0o755)` / chmod executable by path.
 - Synthetic first test replaced its executable with a symlink to a root-owned
@@ -117,36 +118,55 @@ problem counts; deployed facts above take precedence.
 - Remaining risk: shared UID/filesystem (S03), ancestor paths and host mounts are
   not isolated by fd-safe chmod. No claim of complete filesystem isolation.
 
-### S03 — All jobs share a writable sandbox identity and filesystem
+### S03 — Web jobs shared a writable identity and filesystem
 
-**High · CONFIRMED in disposable Linux · OPEN; production overlap UNVERIFIED.**
+**High · CONFIRMED before correction · FIXED locally for web-job file/process access;
+production configuration and rollout UNVERIFIED.**
 
-- References: `grader.py:452`, `grader.py:469`, `grader.py:779`.
-  Evidence: one `nobody`/`nogroup` identity; workspace mode 0700, source 0600,
-  owned by that same identity for every job. No job mount or PID namespace.
-- Safe verification: a synthetic playground program read **and overwrote** a
-  second synthetic job's source in a different workspace. Both booleans true;
-  no victim/user source was used. Directory mode 0700 cannot separate equal UIDs.
-- Impact: source theft/tampering, false verdicts, contest cheating and corruption
-  of plagiarism evidence while workspaces coexist. Shared UID also permits
-  signals/ptrace subject to kernel restrictions. One worker reduces concurrency,
-  but does not establish a filesystem security boundary.
-- Minimum remediation: allocated per-job identities with safe lifecycle/reuse,
-  or an actual per-job filesystem boundary exposing only needed toolchain and
-  workspace. Keep the current engine/API. Test simultaneous synthetic jobs for
-  read/write/signal denial before allowing concurrency.
-- Regression status: successful bounded diagnostic, no isolation fix claimed.
-  Existing compiler-private canary tests cannot detect same-UID victim access.
-- Related: RLIMIT_NPROC=64 counts the shared UID, not one submission. Cross-job
-  fork/setuid failures and innocent RE/job errors are **LIKELY** under contention;
-  no fork bomb was run. Per-job pids/cgroup accounting and identities are required.
+- References: `job_sandbox.py:36`, `job_sandbox.py:73`,
+  `job_sandbox.py:194`, `grader.py:454`,
+  `server.py:2410` and `server.py:2530`.
+- Before correction, two simultaneous synthetic jobs used nobody and read/wrote
+  each other's 0600 source. A signal-0 permission probe also succeeded. The new
+  regression reproduced all three failures on the pre-fix code; no user source
+  or destructive signal was used.
+- Impact: source theft/tampering, incorrect verdicts, contest cheating and damaged
+  plagiarism evidence. UID separation alone would still allow an intentional
+  world-readable /tmp channel, so the correction also restricts filesystem access.
+- Fix: one root-allocated numeric UID/GID per web job, shared by its compiler,
+  descendants and tests. An append-only, fsynced root-only ledger with a directory
+  flock prevents concurrent allocation collisions and does not recycle IDs.
+  Landlock permits job workspace reads/writes, read/execute toolchain paths and
+  selected system files; it denies other job files and global temporary writes.
+  Failed mandatory setup refuses execution. Linux/root worker boot requires
+  Landlock ABI >= 3. Parallel test threads explicitly inherit the trusted context.
+- Verification: `tests/test_critical_job_identity.py` covers overlapping jobs,
+  world-readable external files, symlinks, compiler/descendant inheritance,
+  private TMPDIR, concurrent allocator processes, corrupt/symlinked state, fsync
+  failure, and missing-Landlock refusal. Twelve new tests pass in Docker Linux
+  arm64/root with ABI 4. The expanded critical gate passes 114 tests, zero skips;
+  full suite passes 254; trusted reference packages pass 68/68.
+- Remaining risk: this is not a mount/PID/IPC/network namespace or cgroup. stat/
+  chmod metadata operations are not all mediated by this Landlock ABI; distinct
+  UIDs still supply DAC/signal separation. System trees are readable, so secrets
+  must not be mounted there. A reserved UID namespace/range and persistent shared
+  allocation state are required across cooperating workers; never reset/restore
+  an old ledger while old jobs/files survive. Trusted standalone CLI/reference
+  runs retain the old policy and are not a public sandbox. Production was not
+  deployed or probed. Same-job tests still share a workspace; the separately
+  confirmed parallel public-feedback channel requires a follow-up correction.
+- Related: RLIMIT_NPROC now counts this web job's UID, not every job's shared
+  nobody UID, subject to correct namespace/state provisioning. Aggregate memory,
+  pids, CPU and workspace byte limits remain S04. No fork bomb was run.
+
+See [job isolation operations and evidence](JOB_ISOLATION.md).
 
 ### S04 — Resource budget excludes descendants and Python allowance
 
 **High · CONFIRMED accounting flaws; production OOM LIKELY · OPEN.**
 
-- References: `grader.py:655`, `grader.py:744`, `grader.py:779`,
-  `server.py:173` (`_derive_capacity`), `server.py:2392` (`_effective`).
+- References: `grader.py:660`, `grader.py:749`, `grader.py:784`,
+  `server.py:174` (`_derive_capacity`), `server.py:2398` (`_effective`).
   Short evidence: sampler reads `/proc/<main>/status`; memory rlimits apply
   per-process; Python RSS allowance is 2.5× plus 64 MB virtual headroom.
 - Bounded test with two children: declared 64 MB, Python threshold 160 MB,
@@ -169,8 +189,8 @@ problem counts; deployed facts above take precedence.
 
 **High · CONFIRMED synthetic flow · OPEN; Google verification partially fixed.**
 
-- References: `server.py:1901` (signup), `server.py:1937` (password login),
-  `server.py:1550` (Google profile), `server.py:3013` (email ownership check).
+- References: `server.py:1907` (signup), `server.py:1943` (password login),
+  `server.py:1556` (Google profile), `server.py:3019` (email ownership check).
   Evidence: signup immediately sets `session.user.email` without proof;
   both login methods authorize the same plain email.
 - Reproduction starts with **no users row**: attacker registers a synthetic
@@ -194,7 +214,7 @@ problem counts; deployed facts above take precedence.
 
 **High · CONFIRMED synthetic · FIXED locally.**
 
-- References: `server.py:2313`, `server.py:1418`, `server.py:3294`;
+- References: `server.py:2319`, `server.py:1424`, `server.py:3300`;
   `tests/test_contest_policy_audit.py:32`, `:40`.
 - Before: cold/expired cache failure produced empty hidden sets; missing
   registration table returned false once then true on subsequent checks.
@@ -214,7 +234,7 @@ problem counts; deployed facts above take precedence.
 **High · CONFIRMED repository/test dependency exposure · FIXED locally;
 production installed versions UNVERIFIED.**
 
-- References: `requirements.txt:1`, `server.py:262`, `server.py:2801`,
+- References: `requirements.txt:1`, `server.py:263`, `server.py:2807`,
   `functions/api/[[proxy]].js:35`; `tests/test_request_boundaries.py:14`, `:33`.
   Before: FastAPI multipart parser ran before the 256 KB source check;
   JSON endpoints had no raw body cap; proxy streamed arbitrary body sizes.
@@ -237,7 +257,7 @@ production installed versions UNVERIFIED.**
 
 **Medium · CONFIRMED synthetic · FIXED locally.**
 
-- References: `server.py:2801`, `_problem_or_404` at `server.py:2223`;
+- References: `server.py:2807`, `_problem_or_404` at `server.py:2229`;
   `tests/test_request_boundaries.py:52`.
 - Baseline anonymous request returned 401 **after** invoking full problem lookup.
   In Supabase mode it can start private Storage downloads and occupy worker threads.
@@ -252,7 +272,7 @@ production installed versions UNVERIFIED.**
 **Medium · CONFIRMED logging path/config; production log retention UNVERIFIED ·
 PARTIALLY FIXED locally.**
 
-- References: `server.py:65`, `server.py:1601`, `server.py:1627`,
+- References: `server.py:66`, `server.py:1607`, `server.py:1633`,
   `container_entrypoint.py:27`; `tests/test_auth_retention_audit.py:18`, `:65`.
 - Handoff bearer lasts 300 s and travels in `/api/auth/finish?token=...`;
   Uvicorn defaults to access logging full request targets. A synthetic LogRecord
@@ -273,8 +293,8 @@ PARTIALLY FIXED locally.**
 
 **Low–Medium · CONFIRMED stateless design · OPEN.**
 
-- References: `server.py:1541` (SessionMiddleware), `server.py:1698` (logout),
-  remember-token helpers in `server.py:1502`.
+- References: `server.py:1547` (SessionMiddleware), `server.py:1704` (logout),
+  remember-token helpers in `server.py:1508`.
   Short evidence: logout clears session/browser cookies; no server revocation row.
 - Signed session contains readable JSON, not encryption or an opaque hashed
   session token. Session age 30 days, opt-in remember age 365 days. Cookies have
@@ -292,8 +312,8 @@ PARTIALLY FIXED locally.**
 
 **Medium · CONFIRMED feedback surface; extent of extraction UNVERIFIED · OPEN.**
 
-- References: `server.py:608`, `server.py:1336`, `server.py:2404`;
-  `grader.py:1058`. Engine and storage suppress hidden stderr/WA contents, while
+- References: `server.py:609`, `server.py:1342`, `server.py:2410`;
+  `grader.py:1066`. Engine and storage suppress hidden stderr/WA contents, while
   verdict and resource figures remain visible per test. Reveal modes are
   `none`, `samples` (default), `all` (admin response); stored results never gain
   admin-only hidden diagnostics.
@@ -313,7 +333,7 @@ PARTIALLY FIXED locally.**
 
 **Medium · CONFIRMED synthetic · FIXED locally.**
 
-- References: `server.py:3199`, `server.py:3211`;
+- References: `server.py:3205`, `server.py:3217`;
   `tests/test_contest_policy_audit.py:79` stats-cache regression.
   Evidence: `/api/stats` returned all service-role aggregates with no publication
   or contest visibility filter, including a synthetic unpublished/deleted slug.
@@ -335,8 +355,9 @@ PARTIALLY FIXED locally.**
 - **NOT AN ISSUE in tested Linux/root scope:** current compiler/assembler/linker
   run after setgroups → setgid → setuid with no_new_privs; failures refuse exec.
   Root-private 0600 include/incbin canaries are denied. Current F1 is not direct
-  compiler RCE. Public/world-readable mounted files can still be read (S03).
-- **UNVERIFIED production network isolation:** `server.py:723`/`:758` demands
+  compiler RCE. Web jobs now reject outside-file opens with Landlock (S03); readable system
+  trees and deployment mount placement still need review.
+- **UNVERIFIED production network isolation:** `server.py:724`/`:758` demands
   strict namespace mode or explicit unisolated acknowledgement on Linux/root.
   Both flags default false. Strict failure refuses worker boot and execution;
   acknowledged mode permits execution without netns. Compiler intentionally
@@ -351,7 +372,7 @@ PARTIALLY FIXED locally.**
   packaged Linux image, UID 65534 received PermissionError opening both parent
   `mem` and `environ`, with ptrace_scope=1 (no contents read). This is not production
   kernel evidence. Actual host ptrace/mount rules remain unverified.
-- **Local hidden path:** `grader.py:276` reads `problems/<id>/tests/*`. Such files
+- **Local hidden path:** `grader.py:278` reads `problems/<id>/tests/*`. Such files
   leak directly if mounted readable by the shared UID. Production currently
   reports Supabase, and Dockerfile:12 does not copy problems, examples or `.env`.
   Host macOS file modes are not production evidence. Actual production mounts,
@@ -359,7 +380,7 @@ PARTIALLY FIXED locally.**
 - Service-role credentials reside in the trusted backend/worker process. The
   isolated judge subprocess receives `_runner_env` (`judge_runner.py:281`), an
   allowlist with RUNNER_CHILD set; it does not inherit service-role/OAuth/session
-  credentials or load `.env`. Compiler/runtime use `judge_env` (`grader.py:880`)
+  credentials or load `.env`. Compiler/runtime use `judge_env` (`grader.py:886`)
   too. Trusted configuration names include SUPABASE_KEY, SESSION_SECRET and
   GOOGLE_CLIENT_SECRET.
   Neither env-value dumping nor production secret-file reads were performed.
@@ -375,7 +396,7 @@ PARTIALLY FIXED locally.**
   Private `judge-assets` bucket metadata was verified; object ACL drift still
   needs ongoing checks.
 - Password review: PBKDF2-HMAC-SHA256, 210,000 iterations, random 16-byte salt,
-  constant-time hash comparison (`server.py:1861`). Password login uses a dummy
+  constant-time hash comparison (`server.py:1867`). Password login uses a dummy
   derivation for unknown accounts; signup still returns an explicit 409 for an
   existing address, so timing mitigation does not prevent registration
   enumeration. Limits are in-memory per IP/account; replica-wide enforcement is

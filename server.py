@@ -29,6 +29,7 @@ import time
 import traceback
 import uuid
 from contextlib import asynccontextmanager
+from contextvars import copy_context
 from dataclasses import replace
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -78,7 +79,7 @@ logging.getLogger("uvicorn.access").addFilter(AuthQueryLogFilter())
 STATIC_DIR = ROOT / "static"
 
 BUILD_SOURCE_FILES = ("grader.py", "server.py", "judge_runner.py", "problem_store.py",
-                      "container_entrypoint.py", "worker.py")
+                      "container_entrypoint.py", "worker.py", "job_sandbox.py")
 
 
 def _source_fingerprint(root: Path = ROOT) -> str:
@@ -794,6 +795,11 @@ async def validate_runtime() -> None:
     posture = _judge_isolation_posture(
         role=GRADER_ROLE, strict=strict, acknowledged=acknowledged,
         can_sandbox=can_sandbox, netns_ok=netns_ok)
+    if can_sandbox and GRADER_ROLE in ("combined", "worker"):
+        try:
+            await asyncio.to_thread(grader.job_sandbox.landlock_abi)
+        except OSError as exc:
+            raise RuntimeError("Linux judge requires Landlock ABI >= 3; refusing to boot workers") from exc
     if posture == "dev":
         print("[web] dev judge runtime: network namespaces unavailable here; "
               "judging runs rlimits-only (set GRADER_REQUIRE_NETNS=1 on public hosts)",
@@ -2422,7 +2428,7 @@ def run_submission(prob: grader.Problem, ext: str, source: str,
         capped = replace(prob, memory_limit=limits["memory_mb"])
     else:
         capped = prob
-    with tempfile.TemporaryDirectory(prefix="websub_") as tmp:
+    with grader.job_sandbox.scope(), tempfile.TemporaryDirectory(prefix="websub_") as tmp:
         workdir = Path(tmp)
         src = workdir / ("solution" + ext)
         src.write_text(source, encoding="utf-8")
@@ -2477,7 +2483,7 @@ def run_submission(prob: grader.Problem, ext: str, source: str,
                 results.append(item)
         else:
             with concurrent.futures.ThreadPoolExecutor(max_workers=JUDGE_JOBS) as ex:
-                futs = [ex.submit(grader.judge_test, cmd, tc, capped, False, False, lang,
+                futs = [ex.submit(copy_context().run, grader.judge_test, cmd, tc, capped, False, False, lang,
                                   diagnostics=tc.name in samples and reveal != REVEAL_NONE)
                         for tc in prob.tests]
                 for tc, f in zip(prob.tests, futs):
@@ -2524,7 +2530,7 @@ def run_submission(prob: grader.Problem, ext: str, source: str,
 def _run_playground(prob: Optional[grader.Problem], ext: str, source: str,
                     stdin_data: str, time_limit: float, memory_mb: int) -> dict:
     """One-shot run with user-supplied stdin. Never touches history."""
-    with tempfile.TemporaryDirectory(prefix="webrun_") as tmp:
+    with grader.job_sandbox.scope(), tempfile.TemporaryDirectory(prefix="webrun_") as tmp:
         workdir = Path(tmp)
         src = workdir / ("solution" + ext)
         src.write_text(source, encoding="utf-8")
