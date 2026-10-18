@@ -27,7 +27,7 @@ Status is scoped: a local regression pass is not a verified production rollout.
 | 1 | S01 anon view access bypasses protected RLS | High, production CONFIRMED | Fixed and verified in production after approval, 02:18 UTC |
 | 2 | S03 equal UID reads/writes other job source | High, synthetic CONFIRMED | Per-job UID + Landlock fixed locally; production provisioning/rollout unverified |
 | 3 | S04 parent-only memory and wrong runtime budget | High, mechanism CONFIRMED; OOM LIKELY | Runtime scheduling arithmetic fixed locally; aggregate containment open; 512 MB production host reported |
-| 4 | S05 unverified-email pre-hijacking | High, synthetic CONFIRMED | Open; provider verification fix is only partial |
+| 4 | S05 unverified-email pre-hijacking | High, synthetic CONFIRMED | Correction deployed; real OTP verification gate open |
 | 5 | S02 root chmod via substituted paths | High, synthetic CONFIRMED | Fixed locally, not deployed |
 | 6 | S06 contest authorization fails open on outages/schema gaps | High, synthetic CONFIRMED | Fixed locally, not deployed |
 | 7 | S07 parser vulnerabilities/unbounded request parsing | High, requirements and boundary CONFIRMED | Upgraded/bounded locally; production versions unknown |
@@ -383,11 +383,15 @@ run or a production smoke test. No deployment/push or production mutation was
 performed in this follow-up. S04, S05, network/IPC and host provisioning remain open.
 
 
-## Verified-email follow-up — local candidate, not production release
+## Verified-email follow-up — approved release deployed
 
-The OTP/session-version candidate is prepared on `fix/verified-email-auth`.
-See [EMAIL_IDENTITY.md](EMAIL_IDENTITY.md) for current code references, actual
-synthetic/PostgreSQL/package tests, mandatory migration/configuration review and
-rollout/rollback gates. Gmail delivery has been confirmed by the operator;
-production S05 remains open until real identity verification is released and
-verified. No new production mutation or deployment occurred in this step.
+The approved OTP/session-version release (`8acd34f`, PR #10 / merge `55372ab`)
+and migration `20261018125146` are deployed. Current frontend is app.js v45 and
+the actual backend build matches the reviewed source. Linux/root critical tests
+passed 166/166 with zero skips; full discovery passed 233 with three explicitly
+skipped private-problem modules; JavaScript passed 40/40. Main CI succeeded.
+See [EMAIL_IDENTITY.md](EMAIL_IDENTITY.md) for exact code/live evidence, ACL checks,
+the encrypted affected-table backup and release-order limitation. Real OTP
+consumption by the operator remains pending; this is not a public-readiness signoff.
+S04 aggregate resource controls, B08 local queue reliability, complete recovery
+coverage and broader mail delivery/abuse controls remain outstanding.
