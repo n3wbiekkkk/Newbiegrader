@@ -42,7 +42,7 @@ OUTPUT_LIMIT_BYTES = 32 * 1024 * 1024  # stdout เกินนี้ -> OLE (�
 # score differently (checker rules, limits handling, verdict mapping). Stored on
 # every submission together with the per-problem tests hash so old rows can be
 # told apart from new ones (and optionally rejudged).
-GRADER_VERSION = "2.0.4"
+GRADER_VERSION = "2.0.5"
 
 # ---------- host capability (container aware) ----------
 def cgroup_root() -> str:
@@ -784,37 +784,35 @@ def _set_no_new_privileges() -> None:
 def build_limits(memory_mb: int, time_limit: float, sandbox: bool = True, *,
                  network: bool = True):
     def _fn():
+        strict_limits = sandbox and sys.platform.startswith("linux") and os.geteuid() == 0
         try:
             import resource
+
+            def set_limit(name, value):
+                try:
+                    resource.setrlimit(getattr(resource, name), (value, value))
+                except (AttributeError, ValueError, OSError):
+                    if strict_limits:
+                        raise
+
             if memory_mb and memory_mb > 0:
                 mem_bytes = memory_mb * 1024 * 1024
-                try:
-                    resource.setrlimit(resource.RLIMIT_AS, (mem_bytes, mem_bytes))
-                except (ValueError, OSError):
-                    pass
-                try:
-                    resource.setrlimit(resource.RLIMIT_DATA, (mem_bytes, mem_bytes))
-                except (ValueError, OSError):
-                    pass
-            try:
-                cpu = int(math.ceil(float(time_limit) + 1))
-                if cpu < 1:
-                    cpu = 1
-                resource.setrlimit(resource.RLIMIT_CPU, (cpu, cpu))
-            except (ValueError, OSError, TypeError):
-                pass
+                set_limit("RLIMIT_AS", mem_bytes)
+                set_limit("RLIMIT_DATA", mem_bytes)
+            cpu = max(1, int(math.ceil(float(time_limit) + 1)))
+            set_limit("RLIMIT_CPU", cpu)
             for lim, val in (
                 ("RLIMIT_NPROC", 64),      # กัน fork bomb
                 ("RLIMIT_FSIZE", 64 * 1024 * 1024),  # กันเขียนไฟล์ถล่ม disk
                 ("RLIMIT_CORE", 0),        # ไม่เอา core dump
                 ("RLIMIT_NOFILE", 64),     # กันเปิด fd ถล่ม (pinned by test_judge_runner)
             ):
-                try:
-                    resource.setrlimit(getattr(resource, lim), (val, val))
-                except (AttributeError, ValueError, OSError):
-                    pass
-        except ImportError:
-            pass
+                set_limit(lim, val)
+        except (ImportError, AttributeError, ValueError, OSError, TypeError):
+            if strict_limits:
+                print(f"[grader] FATAL: {PRIVILEGE_REFUSED_MARKER}; resource limits unavailable",
+                      file=sys.stderr)
+                os._exit(PRIVILEGE_REFUSED_RC)
         # Sandbox: ตัด network + ลดสิทธิ์เป็น nobody (เฉพาะ Linux ที่รันเป็น
         # root คือ prod Docker). ไม่เงียบ: ถ้าขอ sandbox แต่ไม่ได้ root จะเตือน
         # ผ่าน stderr เพื่อให้ operator รู้ว่าเหลือแค่ rlimits.
