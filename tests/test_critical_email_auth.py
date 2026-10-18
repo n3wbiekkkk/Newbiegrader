@@ -52,7 +52,7 @@ class EmailAuth(unittest.TestCase):
         self.codes = {}
         self.lock = threading.Lock()
         def request_code(url, key, email):
-            self.codes[email] = "123456"
+            self.codes[email] = "12345678"
         def verify_code(url, key, email, code):
             with self.lock:
                 if self.codes.get(email) != code:
@@ -84,7 +84,7 @@ class EmailAuth(unittest.TestCase):
 
     def finish(self, **extra):
         return self.client.post("/api/auth/email/verify", json={
-            "email": EMAIL, "code": "123456", "password": PASSWORD, "name": "Owner", **extra})
+            "email": EMAIL, "code": "12345678", "password": PASSWORD, "name": "Owner", **extra})
 
     def test_signup_does_not_reserve_identity_or_issue_session_with_chosen_password(self):
         response = self.client.post("/api/auth/register", json={
@@ -114,6 +114,12 @@ class EmailAuth(unittest.TestCase):
         self.assertNotIn("password_hash", response.text)
         self.assertNotIn("access_token", response.text)
         self.assertEqual(self.client.get("/api/profile").status_code, 200)
+
+    def test_eight_digit_provider_code_matches_live_settings(self):
+        self.start()
+        self.codes[EMAIL] = "87654321"
+        response = self.finish(code="87654321")
+        self.assertEqual(response.status_code, 200, response.text)
 
     def test_legacy_password_never_authenticates_until_inbox_proof_and_new_password(self):
         self.db.rows("users").append({"email": EMAIL, "name": "Old",
@@ -157,7 +163,7 @@ class EmailAuth(unittest.TestCase):
 
     def test_bad_expired_replayed_and_wrong_email_codes_cannot_grant_identity(self):
         self.start()
-        self.assertEqual(self.finish(code="000000").status_code, 400)
+        self.assertEqual(self.finish(code="00000000").status_code, 400)
         self.assertEqual(self.finish(email="another@example.invalid").status_code, 400)
         self.assertEqual(self.db.rows("users"), [])
         self.assertEqual(self.finish().status_code, 200)
@@ -174,7 +180,7 @@ class EmailAuth(unittest.TestCase):
             with TestClient(self.app, base_url="https://testserver", headers={
                     "Origin": server.FRONTEND_URL, "Cookie": "ng_session=" + cookie}) as client:
                 return client.post("/api/auth/email/verify", json={
-                    "email": EMAIL, "code": "123456", "password": PASSWORD}).status_code
+                    "email": EMAIL, "code": "12345678", "password": PASSWORD}).status_code
         with ThreadPoolExecutor(max_workers=4) as pool:
             codes = list(pool.map(finish, range(4)))
         self.assertEqual(codes.count(200), 1, codes)
@@ -196,7 +202,7 @@ class EmailAuth(unittest.TestCase):
         self.client.cookies.set("ng_session", signed_cookie({"email_challenge": {
             "email": EMAIL, "issued_at": int(time.time())}}))
         for _ in range(8):
-            self.assertEqual(self.finish(code="000000").status_code, 400)
+            self.assertEqual(self.finish(code="00000000").status_code, 400)
         denied = self.finish()
         self.assertEqual(denied.status_code, 429)
         self.assertIn("retry-after", denied.headers)
@@ -211,7 +217,7 @@ class EmailAuth(unittest.TestCase):
         self.sender.side_effect = lambda *args: None
         self.client.cookies.set("ng_session", signed_cookie({"email_challenge": {
             "email": EMAIL, "issued_at": int(time.time())}}))
-        self.codes[EMAIL] = "123456"
+        self.codes[EMAIL] = "12345678"
         original = self.db.rpc
         def broken(name, params):
             if name == "auth_email_complete":
@@ -325,11 +331,11 @@ class ProviderTransport(unittest.TestCase):
                    "access_token": "synthetic-bearer", "refresh_token": "synthetic-refresh"}
         context, opener = self.post_response(payload)
         with context:
-            subject = email_auth.verify_code("https://synthetic.supabase.co", "synthetic-public", EMAIL, "123456")
+            subject = email_auth.verify_code("https://synthetic.supabase.co", "synthetic-public", EMAIL, "12345678")
         self.assertEqual(subject, SUBJECT)
         request = opener.open.call_args.args[0]
         self.assertEqual(request.full_url, "https://synthetic.supabase.co/auth/v1/verify")
-        self.assertEqual(json.loads(request.data), {"email": EMAIL, "token": "123456", "type": "email"})
+        self.assertEqual(json.loads(request.data), {"email": EMAIL, "token": "12345678", "type": "email"})
         self.assertEqual(opener.open.call_args.kwargs["timeout"], 15)
 
     def test_wrong_unverified_missing_or_malformed_provider_identity_fails_closed(self):
@@ -339,7 +345,7 @@ class ProviderTransport(unittest.TestCase):
             with self.subTest(user=user):
                 context, _ = self.post_response({"user": user})
                 with context, self.assertRaises(email_auth.InvalidCode):
-                    email_auth.verify_code("https://synthetic.supabase.co", "synthetic-public", EMAIL, "123456")
+                    email_auth.verify_code("https://synthetic.supabase.co", "synthetic-public", EMAIL, "12345678")
 
     def test_provider_error_bodies_are_never_read_or_propagated(self):
         for status, expected in ((400, email_auth.InvalidCode), (429, email_auth.Unavailable),
@@ -350,7 +356,7 @@ class ProviderTransport(unittest.TestCase):
                 "synthetic error", {}, body)
             with patch.object(email_auth, "build_opener", return_value=opener):
                 with self.assertRaises(expected):
-                    email_auth.verify_code("https://synthetic.supabase.co", "synthetic-public", EMAIL, "123456")
+                    email_auth.verify_code("https://synthetic.supabase.co", "synthetic-public", EMAIL, "12345678")
             body.read.assert_not_called()
             body.close.assert_called_once()
 

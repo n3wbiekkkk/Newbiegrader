@@ -2079,7 +2079,7 @@ async def auth_email_verify(request: Request):
         raise HTTPException(status_code=400, detail="password must be 8-128 characters")
     await asyncio.to_thread(_email_budget, request, email, "verify")
     code = body.get("code")
-    if not isinstance(code, str) or not re.fullmatch(r"[0-9]{6}", code):
+    if not isinstance(code, str) or not re.fullmatch(r"[0-9]{8}", code):
         raise HTTPException(status_code=400, detail="invalid or expired verification code")
     try:
         subject = await asyncio.to_thread(email_auth.verify_code, *config, email, code)

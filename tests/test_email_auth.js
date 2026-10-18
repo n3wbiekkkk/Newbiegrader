@@ -54,12 +54,12 @@ test('verification posts code and newly chosen password; clears both after succe
   const h = harness([{ status: 202, body: { verification_required: true } }, { status: 200 }]);
   h.context.setAuthMode('register');
   await h.context.doPasswordAuth();
-  h.node('auth-code').value = '123456';
+  h.node('auth-code').value = '12345678';
   h.node('auth-pass').value = 'synthetic-new-password';
   h.node('auth-remember').checked = true;
   await h.context.doPasswordAuth();
   assert.equal(h.calls[1].url, '/api/auth/email/verify');
-  assert.equal(h.calls[1].payload.code, '123456');
+  assert.equal(h.calls[1].payload.code, '12345678');
   assert.equal(h.calls[1].payload.password, 'synthetic-new-password');
   assert.equal(h.calls[1].payload.remember, true);
   assert.equal(h.calls[1].init.credentials, 'include');
@@ -117,5 +117,5 @@ test('provider outage and malformed code do not navigate or authenticate', async
   h.node('auth-code').value = '<script>';
   await h.context.doPasswordAuth();
   assert.equal(h.calls.length, 2);
-  assert.match(h.node('auth-err').textContent, /6/);
+  assert.match(h.node('auth-err').textContent, /8/);
 });

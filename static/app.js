@@ -1692,9 +1692,9 @@ async function doPasswordAuth(resend = false) {
     err.textContent = "กรอกอีเมลและรหัสผ่านให้ครบ";
     return;
   }
-  if (verifying && !/^[0-9]{6}$/.test($("auth-code").value.trim())) {
+  if (verifying && !/^[0-9]{8}$/.test($("auth-code").value.trim())) {
     err.classList.add("bad");
-    err.textContent = "กรอกรหัสยืนยัน 6 หลักจากอีเมล";
+    err.textContent = "กรอกรหัสยืนยัน 8 หลักจากอีเมล";
     return;
   }
   const payload = { email };

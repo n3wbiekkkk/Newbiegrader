@@ -21,7 +21,7 @@ that was delivery evidence, not verification of this new authentication flow.
 | `server.py:1692`, `supabase/schema.sql:612` | Trusted Google claim pins a subject and clears any unverified legacy password. A verified password account is not automatically linked by matching email. |
 | `email_auth.py:68` | Stateless server-to-server adapter checks email, confirmation and UUID subject; provider tokens/error bodies never reach application cookies/responses/logs. Redirects and insecure transport are refused. |
 | `server.py:2024`, `supabase/schema.sql:523` | Shared transaction-based send/guess budgets across API replicas, separate from existing in-memory password flood limits. No plaintext email/code in the budget table. |
-| `static/app.js:1649`, `static/index.html:337` | Existing form gains request/verify/recovery steps; no preselected signup password is sent. Explicit remember opt-in remains. Asset is `app.js?v=44`. |
+| `static/app.js:1649`, `static/index.html:337` | Existing form gains request/verify/recovery steps; no preselected signup password is sent. Explicit remember opt-in remains. Asset is `app.js?v=45`. |
 | `supabase/schema.sql:496` | Add four identity columns, two unique subject indexes, a private RLS budget table, three invoker RPCs restricted to `service_role`. Existing history owners and user rows are not rewritten. |
 
 ### Current budgets
@@ -175,3 +175,24 @@ Expected: existing accounts remain unverified immediately after migration;
   rollback. Preserve added identity columns, hashes and versions: reverting to old
   auth code reopens S05 and must not be used as an unattended recovery procedure.
   No production rollback or deletion of identity data is proposed automatically.
+
+
+## Approved rollout preflight: provider OTP length
+
+The production dashboard showed **8-digit OTPs**, not the 6 digits assumed by the
+candidate. A new synthetic regression failed against the six-digit API (HTTP
+400), then the API, form validation, HTML limit and synthetic fixtures were
+aligned to eight digits. Provider length was preserved; it was not reduced.
+The dashboard was reloaded after saving and showed expiry **600 seconds** and
+length **8**. Both Magic Link and Confirm Sign Up templates must use the reviewed
+OTP body: upstream `auth/internal/api/magic_link.go` signs up new/unconfirmed
+users through the confirmation path (lines 77–119); changing only Magic Link
+would leave first-time users receiving a link instead of the code form expects.
+
+After this compatibility correction, Linux/root synthetic critical tests passed
+**166/166**, full discovery ran **236 (233 passed, 3 private-problem module skips)**,
+and JavaScript passed **40/40**. The production account backup was encrypted with
+OpenSSL CMS AES-256-GCM, held outside Git with a private recovery key (0600), and
+successfully decrypted in memory for a three-row completeness check. No plaintext
+backup file or account/hash values were printed. This is an affected-table backup,
+not a claim of complete database/Storage disaster recovery.
