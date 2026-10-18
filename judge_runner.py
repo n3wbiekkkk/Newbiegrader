@@ -291,6 +291,8 @@ def _runner_env() -> dict:
                     if p and os.path.isdir(p)]
     env = grader.judge_env() | {"GRADER_RUNNER_CHILD": "1", "GRADER_ROLE": "combined",
                                 "GRADER_QUEUE_MODE": "local", "PYTHONUTF8": "1"}
+    if os.environ.get("GRADER_SANDBOX_IDENTITY_DIR"):
+        env["GRADER_SANDBOX_IDENTITY_DIR"] = os.environ["GRADER_SANDBOX_IDENTITY_DIR"]
     if package_dirs:
         env["PYTHONPATH"] = os.pathsep.join(package_dirs)
     return env

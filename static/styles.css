@@ -514,6 +514,7 @@ table.tests tbody tr:last-child td { border-bottom: none; }
 .sep { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
 tr.test-row { cursor: pointer; }
 tr.test-row:hover td { background: var(--panel2); }
+table.tests td.detail-cell:last-child { text-align: left; }
 .detail-cell pre {
   background: var(--panel2); border: 1px solid var(--border); color: var(--text);
   border-radius: var(--r-sm); padding: 10px var(--sp-3); overflow-x: auto;

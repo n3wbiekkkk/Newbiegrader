@@ -6,6 +6,7 @@ import io
 import json
 import os
 import sys
+import threading
 import unittest
 import uuid
 from unittest.mock import patch
@@ -114,6 +115,35 @@ class CriticalRedaction(unittest.TestCase):
         self.assertIn("public-input", public["detail"])
         self.assertIn("public-input", json.dumps(row["results"]))
 
+    def test_critical_public_runtime_failure_keeps_io_across_job_history_and_storage(self):
+        source = "import sys\nprint('partial public output', flush=True)\nsys.stderr.write(sys.stdin.read())\nsys.exit(7)\n"
+        for jobs, mode in ((1, "local"), (2, "database")):
+            with self.subTest(jobs=jobs, mode=mode):
+                result, persisted = self.execute_job(source, jobs=jobs, mode=mode)
+                for rows in (result["results"], persisted["results"]):
+                    public = next(r for r in rows if r["test"] == "01")
+                    self.assertEqual(public["verdict"], "RE")
+                    self.assertEqual(public["input"], self.problem.tests[0].input)
+                    self.assertEqual(public["expected"], self.problem.tests[0].expected)
+                    self.assertEqual(public["actual"], "partial public output\n")
+                    self.assertIn("public-input", public["detail"])
+                    hidden = next(r for r in rows if r["test"] == "1001")
+                    self.assertFalse({"input", "expected", "actual", "diff"} & hidden.keys())
+
+    def test_critical_limit_feedback_keeps_partial_stdout_only_for_public_cases(self):
+        base = {"stdout": "partial", "stderr": "", "wall": 1.2, "cpu": .1,
+                "peak_mb": 1, "returncode": 1}
+        for reason, verdict in (("timeout", "TLE"), ("ole", "OLE"), ("oom", "MLE"),
+                                ("signal:SIGSEGV", "RE"), ("", "RE")):
+            for diagnostics in (True, False):
+                with self.subTest(reason=reason, diagnostics=diagnostics), \
+                        patch.object(grader, "run_one", return_value=base | {"reason": reason}):
+                    for tc in self.problem.tests:
+                        judged = grader.judge_test(["synthetic"], tc, self.problem, False,
+                                                   False, diagnostics=diagnostics)
+                        self.assertEqual(judged[0], verdict)
+                        self.assertEqual(judged[-1], "partial" if diagnostics and tc.name == "01" else "")
+
     def test_critical_reveal_none_hides_public_stderr_too(self):
         result, row = self.execute_job(STDERR_SOURCE, reveal="none")
         self.assertNotIn("public-input", json.dumps(result))
@@ -144,6 +174,48 @@ class CriticalRedaction(unittest.TestCase):
         result, row = self.execute_job(STDERR_SOURCE, jobs=2)
         self.assertEqual(result["counts"], {"RE": 2})
         self.assert_no_canary(row)
+
+    def feedback_source(self, stream):
+        public = next(tc.input for tc in self.problem.tests if tc.name in self.problem.samples)
+        self.problem.time_limit = 3
+        # The hidden input is not embedded in source/persisted code.
+        return ('from pathlib import Path\nimport sys,time\ndata=sys.stdin.read()\n'
+                f'if data=={public!r}:\n'
+                ' deadline=time.monotonic()+.7\n'
+                ' while not Path("hidden-input").exists() and time.monotonic()<deadline: time.sleep(.01)\n'
+                f' print(Path("hidden-input").read_text() if Path("hidden-input").exists() else "public-only",file=sys.{stream})\n'
+                'else:\n Path("hidden-input").write_text(data)\n'
+                + ('sys.exit(7)\n' if stream == "stderr" else 'print("wrong")\n'))
+
+    def test_critical_parallel_hidden_input_cannot_escape_through_sample_stdout(self):
+        result, row = self.execute_job(self.feedback_source("stdout"), jobs=2)
+        self.assert_no_canary(result)
+        self.assert_no_canary(row)
+        self.assertEqual([r["test"] for r in result["results"]], [t.name for t in self.problem.tests])
+
+    def test_critical_hidden_first_metadata_cannot_escape_through_later_sample_stderr(self):
+        self.problem.tests.reverse()
+        result, row = self.execute_job(self.feedback_source("stderr"), jobs=1, mode="database")
+        self.assert_no_canary(result)
+        self.assert_no_canary(row)
+        self.assertEqual([r["test"] for r in result["results"]], [t.name for t in self.problem.tests])
+
+    def test_critical_feedback_barrier_retains_parallel_hidden_execution(self):
+        self.problem.tests.append(grader.TestCase("1002", "synthetic-hidden", "hello\n"))
+        barrier = threading.Barrier(2)
+        events = []
+
+        def judge(_cmd, tc, *_args, **_kwargs):
+            events.append(tc.name)
+            if tc.name not in self.problem.samples:
+                barrier.wait(timeout=3)
+            return "AC", .01, .01, 1., "", "hello\n"
+
+        with patch.object(server, "JUDGE_JOBS", 2), \
+                patch.object(grader, "judge_test", side_effect=judge):
+            result = server.run_submission(self.problem, ".py", 'print("hello")')
+        self.assertTrue(result.get("accepted"), result)
+        self.assertEqual(events[0], "01")
 
     def test_critical_engine_never_returns_hidden_stderr_in_detail(self):
         tc = self.problem.tests[1]

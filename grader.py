@@ -22,6 +22,7 @@ import os
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -29,6 +30,8 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+
+import job_sandbox
 
 ROOT = Path(__file__).parent
 PROBLEMS_DIR = ROOT / "problems"
@@ -39,7 +42,7 @@ OUTPUT_LIMIT_BYTES = 32 * 1024 * 1024  # stdout เกินนี้ -> OLE (�
 # score differently (checker rules, limits handling, verdict mapping). Stored on
 # every submission together with the per-problem tests hash so old rows can be
 # told apart from new ones (and optionally rejudged).
-GRADER_VERSION = "2.0.0"
+GRADER_VERSION = "2.0.2"
 
 # ---------- host capability (container aware) ----------
 def cgroup_root() -> str:
@@ -449,7 +452,10 @@ class SandboxUnavailable(Exception):
 
 
 def sandbox_identity() -> tuple[int, int]:
-    """The shared unprivileged identity used by compilers and submissions."""
+    """A web job's private identity, or the trusted CLI's legacy identity."""
+    assigned = job_sandbox.identity()
+    if assigned is not None:
+        return assigned
     import grp
     import pwd
     try:
@@ -864,6 +870,7 @@ def build_limits(memory_mb: int, time_limit: float, sandbox: bool = True, *,
                 os.setuid(uid)
                 if os.geteuid() != uid or os.getegid() != gid or os.getgroups():
                     raise OSError("sandbox identity did not take effect")
+                job_sandbox.restrict_filesystem()
             except Exception:
                 # Never continue after a partial or failed privilege drop.
                 print(f"[grader] FATAL: {PRIVILEGE_REFUSED_MARKER}; refusing to run",
@@ -876,7 +883,7 @@ def build_limits(memory_mb: int, time_limit: float, sandbox: bool = True, *,
     return _fn
 
 
-def judge_env(tmpdir: str | None = None) -> dict:
+def judge_env(tmpdir: str | None = None, *, include_identity: bool = True) -> dict:
     """Minimal env for untrusted code: compilers/runtimes work, secrets never leak."""
     path = os.environ.get("PATH", "/usr/bin:/bin:/usr/local/bin")
     tmp = tmpdir or "/tmp"
@@ -886,6 +893,8 @@ def judge_env(tmpdir: str | None = None) -> dict:
            "GOCACHE": tmp, "GOPATH": tmp, "GOMODCACHE": tmp,
            "CARGO_HOME": tmp, "RUSTUP_HOME": tmp,
            "GRADLE_USER_HOME": tmp, "MAVEN_OPTS": f"-Djava.io.tmpdir={tmp}"}
+    if include_identity:
+        env.update(job_sandbox.launch_environment(tmpdir))
     if _env_flag("GRADER_REQUIRE_NETNS"):
         # Passthrough so the --sandbox wrapper (spawned with this env) sees
         # the operator's strict-isolation demand; run_one scrubs everything
@@ -924,10 +933,36 @@ def _run_cwd(cmd: list[str]) -> str | None:
         for arg in cmd[1:]:
             p = Path(arg)
             if p.suffix.lower() in (".py", ".pyw", ".js") and p.is_file():
-                return str(p.resolve().parent)
+                # The source may have been replaced after a previous test.
+                # Resolving it would let it select a privileged chmod target.
+                return str(p.absolute().parent)
     except Exception:
         pass
     return None
+
+def _chmod_job_path(path: str, mode: int, *, directory: bool = False) -> None:
+    """Never follow submission-controlled symlinks during privileged setup."""
+    if os.name != "posix":
+        os.chmod(path, mode)
+        return
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+    if directory:
+        flags |= os.O_DIRECTORY
+    fd = os.open(path, flags)
+    try:
+        info = os.fstat(fd)
+        if not directory and not stat.S_ISREG(info.st_mode):
+            raise OSError("not a regular executable")
+        if not directory and sys.platform.startswith("linux") and os.geteuid() == 0:
+            # A hard link must not turn a root-owned file into a public file.
+            # Toolchain outputs belong to the sandbox identity; trusted CLI
+            # executables belonging to somebody else keep their original mode.
+            if info.st_uid != sandbox_identity()[0]:
+                return
+        os.fchmod(fd, mode)
+    finally:
+        os.close(fd)
+
 
 def run_one(cmd: list[str], stdin_data: str, time_limit: float, memory_mb: int,
             lang: Optional[str] = None) -> dict:
@@ -955,11 +990,13 @@ def run_one(cmd: list[str], stdin_data: str, time_limit: float, memory_mb: int,
             owned = (sys.platform.startswith("linux") and os.geteuid() == 0
                      and os.stat(cwd).st_uid == sandbox_identity()[0])
             if not owned:
-                os.chmod(cwd, 0o755)
+                _chmod_job_path(cwd, 0o755, directory=True)
         if cmd and os.path.isfile(cmd[0]) and _is_job_tmp(str(Path(cmd[0]).parent)):
-            os.chmod(cmd[0], 0o755)
+            _chmod_job_path(cmd[0], 0o755)
     except OSError:
-        pass
+        return {"stdout": "", "stderr": "unsafe execution path", "wall": 0.0,
+                "cpu": 0.0, "peak_mb": 0.0, "returncode": PRIVILEGE_REFUSED_RC,
+                "killed": False, "reason": "sandbox-unavailable"}
     command = cmd
     if os.name == "posix":
         # A fresh interpreter applies the existing restrictions before exec.
@@ -1038,6 +1075,8 @@ def judge_test(cmd, tc: TestCase, prob: Problem, strict: bool,
     diagnostics = diagnostics and tc.name in sample_names(prob)
     res = run_one(cmd, tc.input, prob.time_limit, prob.memory_limit, lang)
     wall, cpu, mem = res["wall"], res["cpu"], res["peak_mb"]
+    # Only public diagnostics may carry output printed before a crash/limit.
+    actual = res["stdout"][:2000] if diagnostics else ""
     checker = "exact" if strict else prob.checker
     reason = res.get("reason", "")
 
@@ -1046,47 +1085,48 @@ def judge_test(cmd, tc: TestCase, prob: Problem, strict: bool,
             "network isolation unavailable; refusing to run (not a verdict)")
 
     if reason == "timeout":
-        return "TLE", wall, cpu, mem, "", ""
+        return "TLE", wall, cpu, mem, "", actual
     if reason == "ole":
-        return "OLE", wall, cpu, mem, f"stdout > {OUTPUT_LIMIT_BYTES // (1024 * 1024)}MB", ""
+        return "OLE", wall, cpu, mem, f"stdout > {OUTPUT_LIMIT_BYTES // (1024 * 1024)}MB", actual
     if reason == "oom":
         tail = (res["stderr"] or "")[-500:] if verbose and diagnostics else ""
-        return "MLE", wall, cpu, mem, tail or "killed (likely OOM)", ""
+        return "MLE", wall, cpu, mem, tail or "killed (likely OOM)", actual
     if reason == "sigkill":
         # SIGKILL เกิดได้ 2 ทาง: OOM killer (MLE) กับ timeout killer (TLE)
         # ถ้า wall ชน time limit ให้เป็น TLE อย่าเหมาเป็น MLE
         if wall >= prob.time_limit * 0.9:
-            return "TLE", wall, cpu, mem, "", ""
+            return "TLE", wall, cpu, mem, "", actual
         tail = (res["stderr"] or "")[-500:] if verbose and diagnostics else ""
-        return "MLE", wall, cpu, mem, tail or "killed (likely OOM)", ""
+        return "MLE", wall, cpu, mem, tail or "killed (likely OOM)", actual
     if over_memory_limit(prob.memory_limit, mem, lang):
         # The kernel ceiling grants the runtime its virtual headroom, so a
         # program can finish inside it while still exceeding the limit it is
         # judged against: the measured peak RSS decides (and is what we report).
         return ("MLE", wall, cpu, mem,
                 f"peak {mem:.1f}MB > limit {mem_limit_mb(prob.memory_limit, lang):.0f}MB"
-                + memory_note(prob.memory_limit, lang), "")
+                + memory_note(prob.memory_limit, lang), actual)
     if reason.startswith("signal:"):
         sig = reason.split(":", 1)[1]
         hint = SIGNAL_HINTS.get(sig, sig)
         tail = (res["stderr"] or "")[-2000:] if diagnostics else ""
         detail = hint + (f"\n{tail}" if tail.strip() else "")
-        return "RE", wall, cpu, mem, detail, ""
+        return "RE", wall, cpu, mem, detail, actual
     if reason == "spawn-fail":
         detail = (res["stderr"] or "spawn failed") if diagnostics else "execution failed"
-        return "RE", wall, cpu, mem, detail, ""
+        return "RE", wall, cpu, mem, detail, actual
     rc = res["returncode"]
     if rc is not None and rc != 0:
         err = res["stderr"] or ""
         if "MemoryError" in err or "bad_alloc" in err:
-            return "MLE", wall, cpu, mem, err[-2000:] if diagnostics else "memory limit exceeded", ""
+            return "MLE", wall, cpu, mem, err[-2000:] if diagnostics else "memory limit exceeded", actual
         detail = err[-2000:] if diagnostics and err else f"exit code {rc}"
-        return "RE", wall, cpu, mem, detail, ""
+        return "RE", wall, cpu, mem, detail, actual
     ok = run_checker(checker, tc.expected, res["stdout"], prob.tolerance)
     extra = (res["stderr"] or "")[-1000:] if (verbose and diagnostics and res["stderr"]) else ""
     if ok:
         return "AC", wall, cpu, mem, extra, ""
     return "WA", wall, cpu, mem, extra, res["stdout"]
+
 
 # ---------- run ----------
 def cmd_run(args) -> int:
@@ -1285,7 +1325,14 @@ def main(argv=None) -> int:
 if __name__ == "__main__":
     if sys.argv[1:2] in (["--sandbox"], ["--compile-sandbox"]):
         # Compilation shares the UID/GID drop, not runtime's netns contract.
-        build_limits(int(sys.argv[2]), float(sys.argv[3]),
-                     network=sys.argv[1] == "--sandbox")()
-        os.execvpe(sys.argv[5], sys.argv[5:], judge_env())
+        try:
+            with job_sandbox.launch_scope():
+                build_limits(int(sys.argv[2]), float(sys.argv[3]),
+                             network=sys.argv[1] == "--sandbox")()
+                # Toolchain/runtime temp files stay in the job, not global /tmp.
+                os.execvpe(sys.argv[5], sys.argv[5:],
+                           judge_env(os.getcwd(), include_identity=False))
+        except (OSError, TypeError, ValueError):
+            print(f"[grader] FATAL: {PRIVILEGE_REFUSED_MARKER}; refusing to run", file=sys.stderr)
+            os._exit(PRIVILEGE_REFUSED_RC)
     raise SystemExit(main())

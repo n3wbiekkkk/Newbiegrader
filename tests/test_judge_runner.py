@@ -209,8 +209,11 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
     async def wait_file(self, path):
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
-            if path.exists() and path.stat().st_size:
-                return
+            # The submission may write only its workspace, not our external
+            # coordination directory. The trusted test observer reads its marker.
+            for marker in Path(tempfile.gettempdir()).glob("webrun_*/" + path.name):
+                if marker.exists() and marker.stat().st_size:
+                    return marker
             await asyncio.sleep(.02)
         self.fail("child did not start")
 
@@ -220,18 +223,18 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
         return ("import os, subprocess, sys, time\n"
                 f"p = subprocess.Popen([sys.executable, '-c', {child!r}], "
                 "start_new_session=(os.name == 'posix'))\n"
-                f"open({str(path)!r}, 'w').write(str(p.pid))\n"
+                f"open({path.name!r}, 'w').write(str(p.pid))\n"
+                "print(p.pid,flush=True)\n"
                 + ("" if exit_parent else "time.sleep(60)\n"))
 
     @unittest.skipUnless(sys.platform.startswith("linux"), "needs Linux subreaper + /proc descendant reaping")
     async def test_hard_deadline_kills_descendant_that_changes_session(self):
         run = self.runner()
         with tempfile.TemporaryDirectory() as tmp:
-            os.chmod(tmp, 0o777)
-            marker = Path(tmp) / "pid"
+            marker = Path(tmp) / (Path(tmp).name + "-pid")
             task = asyncio.create_task(run("playground", self.payload(
                 self.descendant_source(marker)), 10))
-            await self.wait_file(marker)
+            marker = await self.wait_file(marker)
             pid = int(marker.read_text())
             with self.assertRaises(TimeoutError):
                 await task
@@ -241,11 +244,10 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
     async def test_cancellation_waits_for_descendant_cleanup(self):
         run = self.runner()
         with tempfile.TemporaryDirectory() as tmp:
-            os.chmod(tmp, 0o777)
-            marker = Path(tmp) / "pid"
+            marker = Path(tmp) / (Path(tmp).name + "-pid")
             task = asyncio.create_task(run("playground", self.payload(
                 self.descendant_source(marker)), 30))
-            await self.wait_file(marker)
+            marker = await self.wait_file(marker)
             pid = int(marker.read_text())
             task.cancel()
             with self.assertRaises(asyncio.CancelledError):
@@ -256,12 +258,11 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
     async def test_success_also_cleans_orphan_descendants(self):
         run = self.runner()
         with tempfile.TemporaryDirectory() as tmp:
-            os.chmod(tmp, 0o777)
-            marker = Path(tmp) / "pid"
+            marker = Path(tmp) / (Path(tmp).name + "-pid")
             result = await run("playground", self.payload(
                 self.descendant_source(marker, exit_parent=True)), 15)
             self.assertEqual(result["verdict"], "OK")
-            self.assertFalse(process_alive(int(marker.read_text())))
+            self.assertFalse(process_alive(int(result["stdout"].strip())))
 
     async def test_playground_reuses_limits_and_stdin_contract(self):
         result = await self.runner()("playground", self.payload(

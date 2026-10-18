@@ -21,8 +21,13 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Audit pinned production dependencies
+        run: |
+          pip install pip-audit
+          pip-audit -r requirements.txt
+
       - name: Byte-compile Python sources
-        run: python3 -m compileall -q grader.py server.py judge_runner.py worker.py container_entrypoint.py tools
+        run: python3 -m compileall -q grader.py server.py judge_runner.py worker.py container_entrypoint.py job_sandbox.py tools
 
       - name: Syntax check frontend
         run: node --check static/app.js
@@ -47,6 +52,13 @@ jobs:
 
       - name: API end-to-end tests
         run: python3 -m unittest discover -s tests -v
+
+      - name: Verify packaged plagiarism checker (no production data)
+        run: |
+          docker build -t newbiegrader-ci .
+          docker run --rm --network none newbiegrader-ci python tools/plagiarism.py
+          docker run --rm --network none newbiegrader-ci python -m pip list --format freeze > "$RUNNER_TEMP/image-packages.txt"
+          pip-audit --disable-pip --no-deps -r "$RUNNER_TEMP/image-packages.txt"
 
   critical-security:
     runs-on: ubuntu-latest
@@ -96,10 +108,15 @@ jobs:
       - name: Install PostgreSQL client
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
       - name: Create Supabase roles in disposable database
-        run: psql -X -v ON_ERROR_STOP=1 -c 'CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS;'
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -c 'CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS;'
+          psql -X -v ON_ERROR_STOP=1 -c 'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;'
       - name: Apply schema twice to verify idempotence
         run: |
           psql -X -v ON_ERROR_STOP=1 -f supabase/schema.sql
           psql -X -v ON_ERROR_STOP=1 -f supabase/schema.sql
       - name: Verify queue RPCs against PostgreSQL
         run: psql -X -v ON_ERROR_STOP=1 -f tests/queue_sql.sql
+
+      - name: Verify server-only database privileges and RLS
+        run: psql -X -v ON_ERROR_STOP=1 -f tests/security_sql.sql
