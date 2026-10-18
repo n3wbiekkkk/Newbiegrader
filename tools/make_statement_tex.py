@@ -311,7 +311,7 @@ PREAMBLE = """\\documentclass[a4paper,12pt]{article}
 \\usepackage{array}
 \\usepackage{needspace}
 \\usepackage{fancyhdr}
-\\geometry{top=2.2cm,bottom=2.2cm,left=2.2cm,right=2.2cm}
+\\geometry{top=1.2cm,bottom=2.2cm,left=2.2cm,right=2.2cm}
 \\definecolor{accent}{HTML}{ACCENT}
 \\definecolor{brandink}{HTML}{232522}
 \\definecolor{brandmuted}{HTML}{656961}
@@ -378,7 +378,7 @@ def brand_header() -> str:
         "\\hspace{7pt}"
         "{\\wordmarkfont\\fontsize{22}{28}\\selectfont\\color{brandink}\\bfseries "
         "newbie{\\mdseries\\color{brandmuted}grader}}\\par}\n"
-        "\\vspace{10pt}\\hrule height 0.4pt\\vspace{16pt}\n"
+        "\\vspace{6pt}\\hrule height 0.4pt\\vspace{10pt}\n"
     )
 
 

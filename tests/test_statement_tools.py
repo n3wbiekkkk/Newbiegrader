@@ -28,6 +28,12 @@ class StatementLayout(unittest.TestCase):
         self.assertIn("\\hrule height 0.4pt", header)
         self.assertLess(tex.index(header), tex.index("\\fontsize{26}{31}"))
 
+    def test_top_margin_and_brand_spacing_are_compact(self):
+        self.assertIn("\\geometry{top=1.2cm,bottom=2.2cm,left=2.2cm,right=2.2cm}",
+                      renderer.PREAMBLE)
+        self.assertIn("\\vspace{6pt}\\hrule height 0.4pt\\vspace{10pt}",
+                      renderer.brand_header())
+
     def test_compact_bilingual_header_and_right_page_number(self):
         # GitHub checks out this repo under a directory named Newbiegrader.
         # Its font path is legitimate source text, not a rendered footer label.
