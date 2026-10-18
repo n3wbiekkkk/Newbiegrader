@@ -18,6 +18,8 @@ def main():
     parser.add_argument('--ssh-key', type=Path, default=Path.home()/'.ssh/newbiegrader-judge.pem')
     parser.add_argument('--directory', type=Path,
                         default=Path.home()/'.local/share/newbiegrader-private/ec2-backups')
+    parser.add_argument('--include-tunnel', action='store_true',
+                        help='Also encrypt the installed named-tunnel token and systemd unit')
     args = parser.parse_args()
     os.umask(0o077)
     args.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -40,6 +42,9 @@ def main():
               'var/lib/newbiegrader/sandbox-identities/allocated-uids '
               'etc/systemd/system/newbiegrader-api.service '
               'etc/systemd/system/newbiegrader-worker.service')
+    if args.include_tunnel:
+        remote += (' etc/newbiegrader/tunnel-token '
+                   'etc/systemd/system/newbiegrader-tunnel.service')
     source = subprocess.Popen(ssh+[remote], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     try:
         fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
