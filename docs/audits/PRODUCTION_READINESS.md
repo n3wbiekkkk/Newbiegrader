@@ -1,5 +1,9 @@
 # Newbiegrader production readiness — 2026-10-18
 
+For later actual-host checks, deployed 2.0.6 hardening and remaining rollout
+gates, read [PRODUCTION_RELEASE_2026-10-18.md](PRODUCTION_RELEASE_2026-10-18.md).
+Earlier local-only/unverified rollout statements below describe that checkpoint.
+
 ## Release decision
 
 **Do not open unrestricted public judging yet.** The existing architecture can
