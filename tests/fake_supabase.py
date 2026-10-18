@@ -25,8 +25,9 @@ class _Query:
         self._op = "select"
         self._payload = None
         self._filters = []
-        self._order = None
+        self._order = []
         self._limit = None
+        self._offset = 0
         self._count = None
 
     # --- builder ---
@@ -65,11 +66,16 @@ class _Query:
         return self
 
     def order(self, col, desc=False):
-        self._order = (col, desc)
+        self._order.append((col, desc))
         return self
 
     def limit(self, n):
         self._limit = n
+        return self
+
+    def range(self, start, end):
+        self._offset = start
+        self._limit = end - start + 1
         return self
 
     # --- execution ---
@@ -99,10 +105,10 @@ class _Query:
             if self.table in ("leaderboard_scores", "problem_stats"):
                 self.db.check_view_columns(self.table, getattr(self, "_cols", "*"))
             out = [copy.deepcopy(r) for r in rows if self._match(r)]
-            if self._order:
-                col, desc = self._order
+            for col, desc in reversed(self._order):
                 out.sort(key=lambda r: (r.get(col) is None, r.get(col)), reverse=bool(desc))
             total = len(out)
+            out = out[self._offset:]
             if self._limit:
                 out = out[: self._limit]
             return _Resp(out, count=(total if self._count else None))

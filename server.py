@@ -18,6 +18,7 @@ import hashlib
 import hmac
 import ipaddress
 import json
+import logging
 import os
 import re
 import secrets
@@ -32,9 +33,10 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Dict, List, Optional
 from urllib.parse import urlencode
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, unquote
 from urllib.request import Request as URLRequest
 from urllib.request import urlopen
+
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import JSONResponse
@@ -59,6 +61,19 @@ sys.path.insert(0, str(ROOT))
 
 import grader  # noqa: E402  (CLI grader module, import-safe: guarded by __main__)
 import problem_store  # noqa: E402  (local|supabase problem repository, storage only)
+
+class AuthQueryLogFilter(logging.Filter):
+    """Uvicorn logs a raw request target, including OAuth bearer query values."""
+    def filter(self, record):
+        args = record.args
+        if isinstance(args, tuple) and len(args) == 5 and isinstance(args[2], str):
+            target = args[2]
+            if unquote(target.split("?", 1)[0]).startswith("/api/auth/"):
+                record.args = (*args[:2], target.split("?", 1)[0], *args[3:])
+        return True
+
+
+logging.getLogger("uvicorn.access").addFilter(AuthQueryLogFilter())
 
 STATIC_DIR = ROOT / "static"
 
@@ -244,8 +259,61 @@ async def _lifespan(_app: "FastAPI"):
         await asyncio.gather(*workers, return_exceptions=True)
 
 
+class RequestBodyLimit:
+    """Bound raw API bytes before FastAPI parses forms, files or JSON."""
+    def __init__(self, app, max_bytes: int = 1024 * 1024):
+        self.app = app
+        self.max_bytes = max_bytes
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope.get("method") not in ("POST", "PUT", "PATCH", "DELETE") \
+                or not scope.get("path", "").startswith("/api/"):
+            return await self.app(scope, receive, send)
+        headers = dict(scope.get("headers", []))
+        try:
+            declared = int(headers.get(b"content-length", b"0"))
+            if declared < 0:
+                raise ValueError
+        except ValueError:
+            return await JSONResponse({"detail": "invalid content length"}, 400)(scope, receive, send)
+        if declared > self.max_bytes:
+            return await JSONResponse({"detail": "request body too large"}, 413)(scope, receive, send)
+        body = bytearray()
+        while True:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                return
+            chunk = message.get("body", b"")
+            if len(body) + len(chunk) > self.max_bytes:
+                return await JSONResponse({"detail": "request body too large"}, 413)(scope, receive, send)
+            body.extend(chunk)
+            if not message.get("more_body", False):
+                break
+        delivered = False
+
+        async def replay():
+            nonlocal delivered
+            if not delivered:
+                delivered = True
+                return {"type": "http.request", "body": bytes(body), "more_body": False}
+            return await receive()
+
+        await self.app(scope, replay, send)
+
+
+async def _json_object(request: Request) -> dict:
+    try:
+        body = await request.json()
+    except (ValueError, UnicodeError):
+        raise HTTPException(status_code=400, detail="invalid JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="JSON body must be an object")
+    return body
+
+
 app = FastAPI(title="Newbiegrader API", version="2.0.0", lifespan=_lifespan)
 app.add_middleware(GZipMiddleware, minimum_size=500)
+app.add_middleware(RequestBodyLimit)
 @app.exception_handler(Exception)
 async def _unexpected_exception_handler(request: Request, exc: Exception):
     """Convert unexpected exceptions to a generic JSON 500 instead of FastAPI's
@@ -841,12 +909,11 @@ def _prune_jobs() -> None:
 
 
 def _remember_job(row: dict) -> dict:
+    _prune_jobs()
     job = _jobs.get(row["id"]) or {}
     job.update(row)
     job.setdefault("created_monotonic", time.monotonic())
     _jobs[row["id"]] = job
-    if len(_jobs) > 5000:
-        _prune_jobs()
     return job
 
 
@@ -995,6 +1062,11 @@ async def _finish_job(jid: str, *, result: Optional[dict] = None, stored: Option
     if result is not None:
         job["result"] = result
     job["finished_at"] = _iso_now()
+    job.setdefault("created_monotonic", time.monotonic())
+    # The submission row already owns the validated source. Polling terminal
+    # jobs needs only the result, not another retained source/input copy.
+    job.pop("source", None)
+    job.pop("payload", None)
     _jobs[jid] = job
     email = job.get("user_email") or ""
     if email in _active_jobs:
@@ -1004,6 +1076,7 @@ async def _finish_job(jid: str, *, result: Optional[dict] = None, stored: Option
     await _update_job_db(jid, {"status": job["status"], "error": error,
                                "finished_at": job["finished_at"],
                                "result": stored if stored is not None else result})
+    _prune_jobs()
 
 
 async def _judge_worker(idx: int) -> None:
@@ -1204,9 +1277,10 @@ def _submission_row(job: dict, result: dict, stored: Optional[dict] = None) -> d
         "passed": result.get("passed", 0), "total": result.get("total", 0),
         "score": result.get("score", 0), "counts": result.get("counts", {}),
         "results": results,
-        "code": (job.get("source") or "")[:200000],
+        "code": job.get("source") or "",
         "detail": (result.get("compile_error", "") or "")[:4000],
-        "tests_hash": _tests_hash(prob.pid) if prob else "",
+        "tests_hash": (result.get("tests_hash") or job.get("tests_hash")
+                       or (_tests_hash(prob.pid) if prob else "")),
         "grader_version": grader.GRADER_VERSION,
         "kind": job.get("kind", "submit"),
         "contest_id": job.get("contest_id"),
@@ -1277,7 +1351,7 @@ def _live_hidden_pids(exclude_cid: str = "") -> set:
     if _sb is None:
         return hidden
     try:
-        for row in _cached_contest_rows():
+        for row in _contest_policy_rows():
             if exclude_cid and row.get("id") == exclude_cid:
                 continue
             if _contest_window(row) != "running":
@@ -1288,8 +1362,8 @@ def _live_hidden_pids(exclude_cid: str = "") -> set:
                         hidden.add(_resolve_pid(str(x)))
                     except Exception:
                         pass
-    except Exception:
-        pass
+    except HTTPException:
+        raise
     return hidden
 
 
@@ -1313,9 +1387,7 @@ def _effective_reveal(contest: Optional[dict], email: str, pid: str) -> str:
 
 
 # ---- contest registration (Codeforces style) ----
-# `contest_registrations` may be missing on an un-migrated database: in that case
-# contests stay open (everyone can submit, exactly like before) and we log a hint
-# instead of refusing every submission.
+# Missing registration storage must never turn a registration gate off.
 _reg_table_ok: Dict[str, bool] = {"value": True}
 
 
@@ -1326,8 +1398,8 @@ def _registrations_supported() -> bool:
 def _register_note_missing_table(e: Exception) -> None:
     if "contest_registrations" in str(e) and _reg_table_ok["value"]:
         _reg_table_ok["value"] = False
-        print("[web] contest_registrations table missing — contests run without "
-              "registration; run supabase/schema.sql", file=sys.stderr)
+        print("[web] contest_registrations unavailable — submissions require "
+              "schema repair; run supabase/schema.sql", file=sys.stderr)
 
 
 def _registered_emails(cid: str) -> set:
@@ -1347,7 +1419,7 @@ def _is_registered(cid: str, email: str) -> bool:
     if not email:
         return False
     if not _registrations_supported():
-        return True          # legacy behaviour: no registration table, no gate
+        return False
     if _sb is None:
         return False
     try:
@@ -1488,13 +1560,13 @@ def _google_userinfo(code: str) -> dict:
         tok = json.load(r)
     access = tok.get("access_token")
     if not access:
-        raise RuntimeError(f"token exchange failed: {str(tok)[:200]}")
+        raise RuntimeError("google token exchange failed")
     req2 = URLRequest("https://www.googleapis.com/oauth2/v3/userinfo",
                       headers={"Authorization": f"Bearer {access}"})
     with urlopen(req2, timeout=15) as r2:
         info = json.load(r2)
-    if not info.get("email"):
-        raise RuntimeError("google did not return an email")
+    if not info.get("email") or info.get("email_verified") is not True:
+        raise RuntimeError("google did not return a verified email")
     return info
 
 
@@ -1548,6 +1620,7 @@ async def auth_callback(request: Request, code: str = "", state: str = "", error
 
 
 _used_login_jti: Dict[str, float] = {}
+_login_jti_lock = threading.Lock()
 
 
 @app.get("/api/auth/finish")
@@ -1560,15 +1633,16 @@ def auth_finish(request: Request, token: str = "", next: str = "#/"):
             raise ValueError("no email")
         now = time.monotonic()
         # One-time use: replaying a logged/proxied token must fail.
-        if jti in _used_login_jti:
-            raise ValueError("reused token")
-        # Prune old entries (bound memory).
-        for k in list(_used_login_jti.keys())[:1000]:
-            if now - _used_login_jti.get(k, 0) > 600:
-                _used_login_jti.pop(k, None)
-        if len(_used_login_jti) > 10000:
-            _used_login_jti.pop(next(iter(_used_login_jti)), None)
-        _used_login_jti[jti] = now
+        with _login_jti_lock:
+            if jti in _used_login_jti:
+                raise ValueError("reused token")
+            # Never evict a still-valid token: fail closed at capacity instead.
+            for k in list(_used_login_jti):
+                if now - _used_login_jti.get(k, 0) > 600:
+                    _used_login_jti.pop(k, None)
+            if len(_used_login_jti) >= 20000:
+                raise ValueError("login replay cache full")
+            _used_login_jti[jti] = now
     except Exception:
         return RedirectResponse(FRONTEND_URL + "/#/?login=failed", status_code=307)
     if not next.startswith("#/"):
@@ -1826,10 +1900,7 @@ def _require_users_table() -> None:
 @app.post("/api/auth/register")
 async def auth_register(request: Request) -> dict:
     _require_users_table()
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="invalid JSON")
+    body = await _json_object(request)
     email = str(body.get("email", "")).strip().lower()
     password = str(body.get("password", ""))
     name = str(body.get("name", "")).strip()[:50] or email.split("@")[0]
@@ -1865,10 +1936,7 @@ async def auth_register(request: Request) -> dict:
 @app.post("/api/auth/password")
 async def auth_password(request: Request) -> dict:
     _require_users_table()
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="invalid JSON")
+    body = await _json_object(request)
     email = str(body.get("email", "")).strip().lower()
     password = str(body.get("password", ""))
     _check_rate_limit(request, email)
@@ -1939,10 +2007,7 @@ async def update_profile(request: Request) -> dict:
         raise HTTPException(status_code=401, detail="login required")
     if _sb is None:
         raise HTTPException(status_code=404, detail="profile not configured")
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="invalid JSON")
+    body = await _json_object(request)
     display_name = str(body.get("display_name", "")).strip()[:50]
     default_language = str(body.get("default_language", "")).strip()
     if default_language and default_language not in LANGS:
@@ -2240,13 +2305,23 @@ def _cached_contest_rows() -> List[dict]:
 
 def _contest_problem_sets() -> tuple:
     """(pids listed in any contest, pids a contest hides from Tasks)."""
-    try:
-        _cached_contest_rows()
-    except Exception as e:
-        print(f"[web] contest problem lookup failed: {e}", file=sys.stderr)
-        _contest_pid_cache["at"] = time.monotonic()  # negative cache; keep old sets
+    _contest_policy_rows()
     return (_contest_pid_cache.get("all") or set(),
             _contest_pid_cache.get("hide") or set())
+
+
+def _contest_policy_rows() -> List[dict]:
+    """Transient policy failures cannot make private problems public."""
+    try:
+        return _cached_contest_rows()
+    except Exception as exc:
+        # A genuinely absent legacy table contains no contest policy. Other
+        # failures (including partial pagination) must refuse access.
+        if getattr(exc, "code", "") in ("42P01", "PGRST205") or \
+                str(exc) == 'relation "public.contests" does not exist':
+            return []
+        print("[web] contest policy unavailable", file=sys.stderr)
+        raise HTTPException(status_code=503, detail="contest policy unavailable")
 
 
 def _hidden_pids() -> set:
@@ -2337,6 +2412,9 @@ def run_submission(prob: grader.Problem, ext: str, source: str,
         # Fail closed: an empty suite must never become Accepted.
         return {"error": "problem store unavailable (no tests)"}
     samples = grader.sample_names(prob)
+    # The isolated runner receives trusted embedded tests but has no populated
+    # metadata cache. Record these exact bytes, not a potentially stale API hash.
+    executed_tests_hash = grader.tests_hash(prob)
     limits = _effective(prob, prob.time_limit, prob.memory_limit)[2]
     if limits["capped"]:
         # Judge against the host-appropriate ceiling, keep the declared value
@@ -2361,7 +2439,7 @@ def run_submission(prob: grader.Problem, ext: str, source: str,
                 "compile_error": _sanitize_compile_error(str(e))[:4000],
                 "limits": limits, "memory_capped": limits["capped"],
                 "checker": prob.checker, "results": [], "samples": len(samples),
-                "tests_hash": _tests_hash(prob.pid),
+                "tests_hash": executed_tests_hash,
                 "grader_version": grader.GRADER_VERSION,
             }
         except SystemExit as e:
@@ -2438,7 +2516,7 @@ def run_submission(prob: grader.Problem, ext: str, source: str,
             "checker": prob.checker,
             "results": _redact_results(results, reveal),
             "samples": len(samples),
-            "tests_hash": _tests_hash(prob.pid),
+            "tests_hash": executed_tests_hash,
             "grader_version": grader.GRADER_VERSION,
         }
 
@@ -2729,12 +2807,16 @@ async def submit(
     name: str = Form(""),
     contest: str = Form(""),
 ):
-    await asyncio.to_thread(_ensure_problems_fresh)
-    prob = await asyncio.to_thread(_problem_or_404, problem)
     user = request.session.get("user") or {}
     if not user.get("email"):
         raise HTTPException(status_code=401, detail="login first")
     email = user["email"]
+    await asyncio.to_thread(_ensure_problems_fresh)
+    # Authorization uses metadata; hidden tests are loaded only after it succeeds.
+    meta = await asyncio.to_thread(_meta_or_404, problem)
+    if not await asyncio.to_thread(lambda: _visible_to(meta.pid, email)):
+        raise HTTPException(status_code=404, detail=f"unknown problem: {problem}")
+    prob = await asyncio.to_thread(_problem_or_404, meta.pid)
     if not await asyncio.to_thread(lambda: _visible_to(problem, email)):
         raise HTTPException(status_code=404, detail=f"unknown problem: {problem}")
 
@@ -2921,7 +3003,9 @@ async def history(request: Request, problem: Optional[str] = None, limit: int = 
     if not mine and not _is_admin(email):
         # The public feed must not advertise contest-only problems.
         hidden = _hidden_pids()
-        rows = [r for r in rows if (r.get("problem") or "") not in hidden]
+        contests = {r.get("id"): r for r in _contest_policy_rows()}
+        rows = [r for r in rows if (r.get("problem") or "") not in hidden
+                and not _contest_result_frozen(contests.get(r.get("contest_id")), r)]
     return {"configured": True, "submissions": rows}
 
 
@@ -2959,10 +3043,7 @@ async def create_report(request: Request) -> dict:
         raise HTTPException(status_code=401, detail="login required")
     if _sb is None:
         raise HTTPException(status_code=404, detail="report not configured")
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="invalid JSON")
+    body = await _json_object(request)
     problem = _resolve_pid(str(body.get("problem", "")).strip())
     if problem not in PROBLEMS:
         raise HTTPException(status_code=400, detail="unknown problem")
@@ -3022,10 +3103,7 @@ async def set_report_status(request: Request, rid: str) -> dict:
         raise HTTPException(status_code=403, detail="admin only")
     if _sb is None:
         raise HTTPException(status_code=404, detail="report not configured")
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="invalid JSON")
+    body = await _json_object(request)
     status = str(body.get("status", "")).strip()
     if status not in REPORT_STATUS:
         raise HTTPException(status_code=400, detail="bad status")
@@ -3121,7 +3199,13 @@ async def admin_overview(request: Request) -> dict:
 async def stats() -> dict:
     if _sb is None:
         return {"configured": False, "stats": {}}
-    return await _acached("stats", CACHE_TTL["stats"], _build_stats)
+    await asyncio.to_thread(_ensure_problems_fresh)
+    hidden = await asyncio.to_thread(_hidden_pids)
+    visible = set(PROBLEMS) - hidden
+    result = await _acached("stats", CACHE_TTL["stats"], _build_stats)
+    # Cached aggregates are internal; reapply current visibility on every read.
+    return {**result, "stats": {pid: row for pid, row in result["stats"].items()
+                                if pid in visible}}
 
 
 def _build_stats() -> dict:
@@ -3194,7 +3278,10 @@ def _contest_public(row: dict, email: str = "", counts: Dict[str, int] | None = 
         "show_samples": row.get("show_samples", True),
         "hide_from_tasks": row.get("hide_from_tasks", True),
         "status": _contest_window(row),
-        "problems": ([_resolve_pid(str(x)) for x in (row.get("problems") or [])]
+        "problems": ([_resolve_pid(str(x)) for x in (row.get("problems") or [])
+                      if _is_admin(email) or (
+                          _resolve_pid(str(x)) in PROBLEMS and
+                          getattr(PROBLEMS[_resolve_pid(str(x))], "is_published", True))]
                      if show_problems else []),
     }
 
@@ -3220,16 +3307,16 @@ def _all_contest_rows() -> List[dict]:
             elif hasattr(q, "offset"):
                 res = q.offset(offset).limit(page).execute()
             else:
-                return _contest_rows()
+                raise RuntimeError("contest policy pagination unavailable")
             batch = res.data or []
             rows.extend(batch)
             if len(batch) < page:
                 break
             offset += page
         except Exception:
-            if not rows:
-                raise
-            break
+            raise
+    else:
+        raise RuntimeError("contest policy exceeds pagination budget")
     return rows
 
 
@@ -3258,10 +3345,7 @@ async def upsert_contest(request: Request) -> dict:
     if _sb is None:
         raise HTTPException(status_code=404, detail="contests not configured")
     await asyncio.to_thread(_ensure_problems_fresh)
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="invalid JSON")
+    body = await _json_object(request)
     cid = str(body.get("id", "")).strip().lower()
     if not CONTEST_ID_RE.match(cid):
         raise HTTPException(status_code=400,
@@ -3316,7 +3400,21 @@ def delete_contest(request: Request, cid: str) -> dict:
     return {"ok": True}
 
 
-def _contest_scoreboard(contest: dict, live: bool) -> List[dict]:
+def _contest_result_frozen(contest: Optional[dict], submission: dict) -> bool:
+    if not contest or _contest_window(contest) != "running":
+        return False
+    try:
+        minutes = int(contest.get("freeze_minutes") or 0)
+        if minutes <= 0:
+            return False
+        end = dt.datetime.fromisoformat(str(contest["ends_at"]).replace("Z", "+00:00"))
+        created = dt.datetime.fromisoformat(str(submission["created_at"]).replace("Z", "+00:00"))
+        return created > end - dt.timedelta(minutes=minutes)
+    except (ValueError, TypeError, KeyError):
+        return True  # malformed dates cannot disclose a frozen result
+
+
+def _contest_scoreboard(contest: dict, live: bool, allowed_pids: Optional[set] = None) -> List[dict]:
     """Best score per problem per user inside one contest.
 
     Non-admins see a frozen board while the contest runs: submissions newer than
@@ -3324,29 +3422,36 @@ def _contest_scoreboard(contest: dict, live: bool) -> List[dict]:
     """
     if _sb is None:
         return []
+    rows = []
+    offset = 0
     try:
-        end = dt.datetime.fromisoformat(str(contest.get("ends_at")).replace("Z", "+00:00"))
-    except Exception:
-        end = None
-    freeze_at = None
-    if not live and end and (contest.get("freeze_minutes") or 0) > 0:
-        freeze_at = end - dt.timedelta(minutes=int(contest["freeze_minutes"]))
-    try:
-        res = _sb.table("submissions").select(
-            "user_email,name,problem,score,accepted,created_at").eq(
-            "contest_id", contest.get("id", "")).order("created_at").limit(5000).execute()
+        while offset < 50000:
+            res = _sb.table("submissions").select(
+                "user_email,name,problem,score,accepted,created_at", count="exact").eq(
+                "contest_id", contest.get("id", "")).order("created_at").order("id").range(
+                offset, offset + 499).execute()
+            batch = res.data or []
+            rows.extend(batch)
+            offset += len(batch)
+            total = res.count
+            if total is not None and offset >= total:
+                break
+            if total is None and len(batch) < 500:
+                break
+            if not batch:
+                raise HTTPException(status_code=503, detail="incomplete scoreboard data")
+        else:
+            raise HTTPException(status_code=503, detail="scoreboard exceeds safe query budget")
+    except HTTPException:
+        raise
     except Exception as e:
         raise _db_err(e)
     users: Dict[str, dict] = {}
-    for r in res.data or []:
-        if freeze_at and dt.datetime.now(dt.timezone.utc) < end:
-            try:
-                created = dt.datetime.fromisoformat(
-                    str(r.get("created_at")).replace("Z", "+00:00"))
-            except Exception:
-                created = None
-            if created and created > freeze_at:
-                continue
+    for r in rows:
+        if allowed_pids is not None and r.get("problem") not in allowed_pids:
+            continue
+        if not live and _contest_result_frozen(contest, r):
+            continue
         u = r.get("user_email") or ""
         if not u:
             continue
@@ -3385,6 +3490,8 @@ def contest_detail(request: Request, cid: str) -> dict:
             continue
         if not show_details:
             continue
+        if not admin and not getattr(p, "is_published", True):
+            continue
         problems.append({"id": p.pid, "no": p.no, "title": p.title,
                          "difficulty": p.difficulty,
                          "tags": p.tags, "tests": _problem_total(pid, p),
@@ -3394,7 +3501,7 @@ def contest_detail(request: Request, cid: str) -> dict:
         **_contest_public(contest, email, _registration_counts()),
         "problem_details": problems,
         "frozen": not live and (contest.get("freeze_minutes") or 0) > 0,
-        "scoreboard": _contest_scoreboard(contest, live),
+        "scoreboard": _contest_scoreboard(contest, live, {p["id"] for p in problems}),
         # Codeforces-style lifecycle: register before the start, problems open at
         # the start, submissions only while running and only for participants.
         "problems_open": started or admin,
@@ -3526,10 +3633,7 @@ async def post_announcement(request: Request, cid: str) -> dict:
     if _sb is None:
         raise HTTPException(status_code=404, detail="announcements not configured")
     await asyncio.to_thread(lambda: _contest_or_404(cid))
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="invalid JSON")
+    body = await _json_object(request)
     text = str(body.get("body", "")).strip()
     if not (1 <= len(text) <= 2000):
         raise HTTPException(status_code=400, detail="body must be 1-2000 characters")
@@ -3556,10 +3660,7 @@ async def admin_rejudge(request: Request) -> dict:
     if _sb is None:
         raise HTTPException(status_code=404, detail="history not configured")
     await asyncio.to_thread(_ensure_problems_fresh)
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="invalid JSON")
+    body = await _json_object(request)
     ids = [str(i) for i in (body.get("ids") or [])][:REJUDGE_MAX]
     problem = _resolve_pid(str(body.get("problem", "")).strip())
     try:
