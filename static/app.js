@@ -710,7 +710,6 @@ const TITLES = {
   home: "Newbiegrader — ฝึกเขียนโปรแกรมด้วยโจทย์ภาษาไทย",
   tasks: "โจทย์ทั้งหมด · Newbiegrader",
   archive: "หมวดโจทย์ · Newbiegrader",
-  leaderboard: "จัดอันดับ · Newbiegrader",
   contests: "การแข่ง · Newbiegrader",
   contest: "การแข่ง · Newbiegrader",
   history: "ประวัติการส่ง · Newbiegrader",
@@ -814,7 +813,6 @@ function currentRouteRender() {
   }
   if (h === "#/tasks") return () => renderTasksTable();
   if (h === "#/archive") return () => renderArchive();
-  if (h === "#/leaderboard") return () => renderLeaderboard();
   if (h === "#/contests") return () => renderContests();
   if (h.startsWith("#/contests/")) {
     const cid = decodeURIComponent(h.slice("#/contests/".length));
@@ -841,7 +839,7 @@ function router() {
   }
   if (h === "#/tasks") { show("tasks"); setTitle("tasks"); state.restoreTasksScroll = true; renderTasksTable(); return; }
   if (h === "#/archive") { show("archive"); setTitle("archive"); renderArchive(); return; }
-  if (h === "#/leaderboard") { show("leaderboard"); setTitle("leaderboard"); renderLeaderboard(); return; }
+  if (h === "#/leaderboard") { _nav("#/tasks", "replace"); return; }
   if (h === "#/contests") { show("contests"); setTitle("contests"); renderContests(); return; }
   if (h.startsWith("#/contests/")) {
     const cid = decodeURIComponent(h.slice("#/contests/".length));
@@ -1082,7 +1080,7 @@ async function fetchMyBest() {
   }
 }
 
-/* ---------------- archive + leaderboard ---------------- */
+/* ---------------- archive ---------------- */
 function renderArchive() {
   const tagCount = {};
   state.problems.forEach((p) => (p.tags || []).forEach((t) => {
@@ -1150,48 +1148,6 @@ function renderArchive() {
     fetchMyBest().then(() => {
       if (document.querySelector("#view-archive.active")) renderArchive();
     });
-  }
-}
-
-async function renderLeaderboard() {
-  const body = $("leader-body");
-  body.classList.remove("dim");
-  body.innerHTML = skel(6);
-  try {
-    const d = await apiGet("/api/leaderboard?limit=50");
-    if (!d.configured) {
-      body.innerHTML = `<span class="dim">ยังไม่เปิด leaderboard (ตั้งค่า Supabase ที่ backend)</span>`;
-      return;
-    }
-    const top = d.top || [];
-    if (!top.length) {
-      body.innerHTML = `<span class="dim">ยังไม่มีคะแนน</span>`;
-      return;
-    }
-    const stars = top.slice(0, 3);
-    let html = `<div class="podium">` + stars.map((t, i) =>
-      `<div class="podium-card podium-${i + 1}">` +
-      `<span class="rank rank-${i + 1}">${i + 1}</span>` +
-      `<div class="podium-name">${esc(t.name)}</div>` +
-      `<div class="dim">${t.solved} ข้อ</div>` +
-      `<div class="podium-pts"><span class="${scoreCls(t.points)}">${t.points}</span></div>` +
-      `</div>`).join("") + `</div>`;
-    if (top.length > 3) {
-      html += `<table class="tests"><thead><tr>
-      <th>#</th><th>ชื่อ</th><th>ผ่านเต็ม</th><th>คะแนนรวม</th>
-    </tr></thead><tbody>`;
-      top.slice(3).forEach((t, k) => {
-        const i = k + 3;
-        html += `<tr><td>${i + 1}</td><td>${esc(t.name)}</td><td>${t.solved} ข้อ</td><td><strong class="${scoreCls(t.points)}">${t.points}</strong></td></tr>`;
-      });
-      html += `</tbody></table>`;
-    }
-    body.classList.remove("dim");
-    body.innerHTML = html +
-      `<p class="dim">คะแนนรวม = ผลรวมคะแนนดีสุดของแต่ละข้อ (ข้อที่ยังไม่ผ่านก็นับคะแนนบางส่วน)
-      — คนที่ "ผ่านเต็ม" น้อยกว่าแต้มมาก แปลว่าทำได้บางเทสต์หลายข้อ</p>`;
-  } catch (e) {
-    body.innerHTML = `<span class="dim">โหลดไม่ได้: ${esc(e.message)}</span>`;
   }
 }
 

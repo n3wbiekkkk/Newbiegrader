@@ -400,7 +400,7 @@ async def _csrf_origin_check(request: Request, call_next):
 # Tiny in-memory cache for slow aggregate endpoints (Supabase RTT dominates).
 # Invalidated on every stored submission.
 _cache: dict = {}
-CACHE_TTL = {"stats": 30, "leaderboard": 60}
+CACHE_TTL = {"stats": 30}
 
 
 def _cached(key: str, ttl: int, build):
@@ -427,10 +427,6 @@ async def _acached(key: str, ttl: int, build):
 
 def _bust_cache() -> None:
     _cache.pop("stats", None)
-    # leaderboard keys carry the limit ("leaderboard:50") — clear them all,
-    # otherwise scores stay stale for the full 60s TTL after every submit.
-    for k in [k for k in _cache if k.startswith("leaderboard")]:
-        _cache.pop(k, None)
 
 # Split deployment: same-origin via frontend /api proxy (Cloudflare Pages
 # Function or legacy vercel.json), so the browser never talks cross-origin.
@@ -505,7 +501,7 @@ async def _store_submission(row: dict, target_id: Optional[str] = None) -> Optio
 
     try:
         res = await asyncio.wait_for(asyncio.to_thread(_write), timeout=15)
-        _bust_cache()  # aggregates changed: drop cached stats/leaderboard
+        _bust_cache()  # aggregates changed: drop cached stats
         data = getattr(res, "data", None) or []
         if data:
             return data[0].get("id") or target_id
@@ -3119,134 +3115,6 @@ async def admin_overview(request: Request) -> dict:
         "system": {"uptime_s": int(time.monotonic() - _boot_time),
                    "problems_loaded": sorted(PROBLEMS.keys()), **_host_limits()},
     }
-
-
-@app.get("/api/leaderboard")
-async def leaderboard(limit: int = 50) -> dict:
-    if _sb is None:
-        return {"configured": False, "top": []}
-    limit = max(1, min(limit, 100))
-    return await _acached(f"leaderboard:{limit}", CACHE_TTL["leaderboard"],
-                          lambda: _build_leaderboard(limit))
-
-
-def _leaderboard_names(emails: List[str], from_view: Dict[str, str]) -> Dict[str, str]:
-    """Resolve a display name per email.
-
-    Priority: Settings display_name > newest submission name (the view carries an
-    all-time one; a bounded scan fills gaps for views created before the `name`
-    column existed) > account email local part. Never "?" unless we truly have
-    nothing (no email), because a board full of "?" looks broken.
-    """
-    names: Dict[str, str] = {}
-    for email, name in (from_view or {}).items():
-        if email and (name or "").strip():
-            names[email] = name.strip()[:50]
-    # The view already carries the newest non-empty name per user: only scan
-    # submissions for users the view could not name (legacy rows predate the
-    # name column). Early-exit once every missing user is resolved instead of
-    # always reading 2000 rows.
-    missing = {e for e in emails if e and e not in names}
-    if missing:
-        try:  # newest non-empty submission name per user (bounded, newest first)
-            res = _sb.table("submissions").select("user_email,name").order(
-                "created_at", desc=True).limit(2000).execute()
-            for r in res.data or []:
-                u = r.get("user_email") or ""
-                if u not in missing:
-                    continue
-                n = (r.get("name") or "").strip()
-                if u and n:
-                    names[u] = n[:50]
-                    missing.discard(u)
-                    if not missing:
-                        break
-        except Exception as e:
-            print(f"[web] leaderboard name scan failed: {e}", file=sys.stderr)
-    try:  # Settings display name wins over anything stored on submissions
-        for i in range(0, len(emails), 200):
-            chunk = emails[i:i + 200]
-            if not chunk:
-                continue
-            pres = _sb.table("profiles").select(
-                "user_email,display_name").in_("user_email", chunk).execute()
-            for p in pres.data or []:
-                dn = (p.get("display_name") or "").strip()
-                if dn:
-                    names[p["user_email"]] = dn[:50]
-    except Exception as e:
-        print(f"[web] leaderboard profile lookup failed: {e}", file=sys.stderr)
-    for email in emails:
-        if not names.get(email) and email:
-            names[email] = email.split("@")[0][:50]   # local part only, no domain
-    return names
-
-
-def _build_leaderboard(limit: int) -> dict:
-    """All-time best score per user per problem.
-
-    Uses the `leaderboard_scores` view (supabase/schema.sql) so no submission
-    ever falls out of the window; falls back to a bounded row scan when the view
-    has not been created yet.
-    """
-    best: Dict[str, Dict[str, int]] = {}
-    acc: Dict[str, set] = {}
-    view_names: Dict[str, str] = {}
-    view_seen: Dict[str, str] = {}
-    rows: List[dict] = []
-    # The view gained columns over time (name/last_at): try the richest select
-    # first so an un-migrated database still works without a redeploy.
-    view_error: Optional[Exception] = None
-    for cols in ("user_email,problem,best,accepted,name,last_at",
-                 "user_email,problem,best,accepted,name",
-                 "user_email,problem,best,accepted"):
-        try:
-            res = _sb.table("leaderboard_scores").select(cols).limit(20000).execute()
-            rows = res.data or []
-            view_error = None
-            break
-        except Exception as e:
-            view_error = e
-    if view_error is not None or (rows and "best" not in rows[0]):
-        print(f"[web] leaderboard_scores view unavailable ({view_error}); "
-              "falling back to a 2000-row scan — run supabase/schema.sql", file=sys.stderr)
-        try:
-            res = _sb.table("submissions").select(
-                "problem,user_email,name,accepted,score,created_at,contest_id").order(
-                "created_at", desc=True).limit(2000).execute()
-        except Exception as e2:
-            raise _db_err(e2)
-        rows = [r for r in (res.data or []) if not r.get("contest_id")]
-    for r in rows:
-        u = r.get("user_email") or ""
-        if not u:
-            continue
-        p = r.get("problem") or ""
-        if "best" in r:                      # view row
-            best.setdefault(u, {})[p] = int(r.get("best") or 0)
-            if r.get("accepted"):
-                acc.setdefault(u, set()).add(p)
-            n = (r.get("name") or "").strip()
-            at = str(r.get("last_at") or "")
-            if n and at >= view_seen.get(u, ""):
-                view_seen[u] = at
-                view_names[u] = n[:50]
-        else:                                # raw submissions row (newest first)
-            cur = best.setdefault(u, {})
-            cur[p] = max(cur.get(p, 0), r.get("score") or 0)
-            if r.get("accepted"):
-                acc.setdefault(u, set()).add(p)
-            n = (r.get("name") or "").strip()
-            if n and not view_names.get(u):
-                view_names[u] = n[:50]
-    if not best:
-        return {"configured": True, "top": []}
-    names = _leaderboard_names(list(best.keys()), view_names)
-    top = sorted(
-        ({"name": names.get(u) or "?", "solved": len(acc.get(u, ())),
-          "points": sum(v.values())} for u, v in best.items()),
-        key=lambda t: (-t["points"], -t["solved"], t["name"]))
-    return {"configured": True, "top": top[:limit]}
 
 
 @app.get("/api/stats")

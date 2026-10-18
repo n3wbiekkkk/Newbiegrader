@@ -61,7 +61,7 @@ Hidden tests return only a verdict and resource figures. Inputs, expected output
 Submissions are accepted immediately and placed in a durable queue. Page reloads, navigation and server restarts never lose a submission.
 
 ### Contests
-Timed Codeforces-style rounds with registration, frozen scoreboards and organizer announcements. Contest-only problems stay out of the public task list, and contest scores never leak into the global leaderboard.
+Timed Codeforces-style rounds with registration, frozen scoreboards and organizer announcements. Contest-only problems stay out of the public task list. Practice statistics exclude contest submissions.
 
 ### Teacher tooling
 Submission history, per-problem statistics, plagiarism screening, one-click rejudging, problem reporting and an admin overview with queue monitoring.

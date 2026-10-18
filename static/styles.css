@@ -33,7 +33,7 @@
   /* statement notice banner */
   --notice-bg: #fff8e6; --notice-fg: #7a5b00; --notice-line: #f0dfae;
 
-  /* leaderboard medals */
+  /* ranking medals for problem solvers and contests */
   --rank1-bg: #f6c945; --rank1-fg: #5c430a; --rank1-line: #d9a821;
   --rank2-bg: #e2e8f0; --rank2-fg: #3d4b5e; --rank2-line: #b6c2d2;
   --rank3-bg: #f0c8a0; --rank3-fg: #6b3d16; --rank3-line: #d69a63;
@@ -745,20 +745,6 @@ tr.test-row:hover td { background: var(--panel2); }
   background-size: 200% 100%; animation: skel 1.2s ease-in-out infinite;
 }
 @keyframes skel { to { background-position: -200% 0; } }
-
-/* leaderboard podium */
-.podium { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px; }
-.podium-card {
-  background: var(--card); border: 1px solid var(--border); border-radius: var(--r-lg);
-  padding: 18px 12px; text-align: center; box-shadow: var(--shadow-sm);
-}
-.podium-card .rank { width: 34px; height: 34px; font-size: var(--fs-md); margin-bottom: 8px; }
-.podium-name { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.podium-pts { font-family: var(--mono); font-size: var(--fs-xl); font-weight: 700; }
-.podium-1 { border-color: var(--rank1-line); }
-.podium-2 { border-color: var(--rank2-line); }
-.podium-3 { border-color: var(--rank3-line); }
-@media (max-width: 900px) { .podium { grid-template-columns: 1fr; } }
 
 /* contest timeline: start → now → end */
 .ct-track { height: 6px; border-radius: 3px; background: var(--panel2); border: 1px solid var(--border); overflow: hidden; margin-top: 8px; }
