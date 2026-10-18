@@ -2,8 +2,9 @@
 
 ## Decision and evidence boundary
 
-**Not ready for unrestricted public execution.** There are confirmed database
-exposures and cross-job isolation failures. Local fixes in this branch are not
+**Not ready for unrestricted public execution.** The confirmed S01 database
+exposure was closed after explicit approval; cross-job isolation failures remain.
+Other local fixes in this branch are not
 production fixes until reviewed and released. Passing tests do not establish
 sandbox security. No rewrite is recommended.
 
@@ -15,8 +16,10 @@ sandbox security. No rewrite is recommended.
   Python 3.11, root, default container capabilities, network disabled, explicit
   development isolation flags. Synthetic attacks never touched user workloads.
 - Database tests: disposable PostgreSQL 17 with Supabase-like default grants.
-  Production Supabase access was **read-only**, through the configured MCP,
-  project `qblnlfzjublfnnsasgpe`. No DDL, DML, secret rotation or deployment.
+  Initial production Supabase access was **read-only**, through the configured
+  MCP, project `qblnlfzjublfnnsasgpe`. Following explicit approval, S01 permission
+  DDL was applied at 2026-10-18 02:18 UTC. No application rows, secrets or deployment
+  were changed; migration history was recorded by Supabase.
 - All public HTTP GETs in this audit originated from the audit Mac's current
   network. Public IP/network classification was not established. Backend
   reachability from this vantage is confirmed; unrestricted Internet
@@ -55,7 +58,7 @@ problem counts; deployed facts above take precedence.
 
 ### S01 — Anonymous aggregate views bypass protected table RLS
 
-**High · CONFIRMED in production · SQL prepared, not applied.**
+**High · CONFIRMED in production · FIXED and verified in production after approval.**
 
 - References: view definitions `supabase/schema.sql:182`; remediation
   `supabase/schema.sql:480`; regression `tests/security_sql.sql:1`.
@@ -75,7 +78,16 @@ problem counts; deployed facts above take precedence.
   Supabase grants; updated schema applies twice and passes service-role/ACL/RLS
   checks in PostgreSQL 17. See production review SQL and rollback in
   [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md).
-- Remaining risk: production stays exposed until approved SQL is applied.
+- Approved follow-up: migration `20261018021803_server_only_data_api_permissions`
+  applied successfully. Both views now have `security_invoker=true`; all 12
+  scoped relations deny table/column privileges to anon/authenticated. Actual
+  role-based SELECT attempts on both views and problems raise insufficient_privilege;
+  service_role still reads 18 leaderboard rows, 13 stats rows and 68 problems.
+  The two Security Definer View advisor errors disappeared. API health/problems/
+  stats/contests return 200 from the audit Mac. Before/after ACL evidence was
+  saved locally; no application row contents were retrieved.
+- Remaining risk: this closes S01, not the backend stats visibility bug S12 or
+  other local fixes awaiting release. Future schema/column grants need the gate.
   Direct REST exploitation requires a project anon/publishable key or an
   authenticated token; its external availability was not tested. The confirmed
   observation is production **role authorization**, not a keyless REST request.

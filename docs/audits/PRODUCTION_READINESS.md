@@ -4,8 +4,9 @@
 
 **Do not open unrestricted public judging yet.** The existing architecture can
 be retained. Small local corrections close several confirmed defects, but kernel
-isolation, identity ownership and production database permissions remain launch
-gates. No push, deployment or production mutation occurred in this audit.
+isolation and identity ownership remain launch gates. Initial audit work made no
+production changes. After explicit approval, S01 permission SQL was applied and
+verified in production; no application data, push or deployment was performed.
 
 See [security findings](SECURITY_AUDIT.md) and [correctness/operations findings](BUG_AUDIT.md).
 Status is scoped: a local regression pass is not a verified production rollout.
@@ -14,7 +15,7 @@ Status is scoped: a local regression pass is not a verified production rollout.
 
 | Rank | Finding | Severity / evidence | Current disposition |
 | --- | --- | --- | --- |
-| 1 | S01 anon view access bypasses protected RLS | High, production CONFIRMED | SQL ready; approval/application outstanding |
+| 1 | S01 anon view access bypasses protected RLS | High, production CONFIRMED | Fixed and verified in production after approval, 02:18 UTC |
 | 2 | S03 equal UID reads/writes other job source | High, synthetic CONFIRMED | Open; contest integrity and plagiarism evidence affected |
 | 3 | S04 parent-only memory and wrong runtime budget | High, mechanism CONFIRMED; OOM LIKELY | Open; 512 MB production host reported |
 | 4 | S05 unverified-email pre-hijacking | High, synthetic CONFIRMED | Open; provider verification fix is only partial |
@@ -35,8 +36,9 @@ not demonstrated on production). No direct compiler-root execution is asserted.
 
 ### P0 — before unrestricted public launch
 
-1. Review/apply the **scoped server-only permission migration** below; verify
-   anon/authenticated cannot read both views or direct problem metadata.
+1. **Completed after approval:** applied the scoped server-only permission
+   migration below; verified anon/authenticated cannot read either view or direct
+   problem metadata, while service_role access remains available.
 2. Review and release local S02/S06/S07 fixes with the recorded gates. Dependency
    updates are substantial parser changes and need a staging smoke test before
    production approval, despite the offline suite passing.
@@ -136,7 +138,31 @@ docker run --rm --network none --memory 1g --pids-limit 256 \
 No production container, host Docker socket or home directory is mounted. This
 gate runs without the private problem set and exits nonzero on any skip.
 
-## Production permission change — prepared for review, NOT executed
+## Production permission change — approved, applied and verified
+
+Migration `20261018021803_server_only_data_api_permissions` was applied on
+2026-10-18 at 02:18 UTC to project `qblnlfzjublfnnsasgpe`, with 5 s lock and 30 s
+statement timeouts. The approved block below was used; historical migrations were
+not replayed. No application rows were inserted, updated or deleted.
+
+Verified after commit:
+
+- anon/authenticated have no table or column privileges on all 12 scoped relations.
+- Actual SELECT attempts under each role on both views and problems are denied.
+- Both views are invoker-rights; reports RLS remains on; direct problem policy is
+  removed; Storage bucket remains private.
+- Service-role read checks work (counts only, no user data retrieved).
+- Both Security Definer View ERROR advisories disappeared. Remaining RLS-with-no-
+  policy INFO messages describe the intended server-only deny-default tables.
+- GET health/problems/stats/contests still return 200 from the audit Mac's current
+  network; network classification remains unknown. Runtime code was not deployed.
+
+Before/after ACLs and migration evidence are saved in the private audit directory
+as `production-s01-preflight-20261018T021741.json` and
+`production-s01-postflight-20261018.json`. Read-only verification did not exercise
+authenticated user submissions or write paths against production.
+
+The following is retained as the exact reviewed scope and recovery procedure.
 
 Apply **only the 2026-10-18 block**, `supabase/schema.sql:480–493`, in a transaction,
 after catalog preflight. Do not blindly replay historical schema migrations:
@@ -286,7 +312,7 @@ production login floods. Storage/network/host metadata reachability is unverifie
 
 ## First three execution tasks and acceptance criteria
 
-1. **Close production Data API exposure after reviewing scoped SQL.** Acceptance:
+1. **Completed: close production Data API exposure with approved scoped SQL.** Acceptance:
    catalog shows no anon/authenticated table/column SELECT on views/problems;
    invoker flags true; service-role API health/problems/stats/contests work;
    before/after ACL snapshots retained; no data changed; security advisor errors
@@ -328,5 +354,5 @@ git revert d160662 f0028bc bcb0ca1 7864a27
 The report-only commit can remain for the evidence trail. `main` still points to
 `3014da34992cebcf7b5d00c303944accf12852da`. No commits were pushed.
 
-**Single next action: review and approve the scoped S01 permission SQL; the
-production anonymous-view exposure is confirmed and still open.**
+**Single next action: close S03's shared-UID/filesystem isolation failure using
+overlapping synthetic-job tests before unrestricted public judging.**
