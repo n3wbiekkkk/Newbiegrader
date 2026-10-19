@@ -11,7 +11,9 @@
   "cpu_credit_balance_observed": false,
   "credit_mode": "unlimited",
   "date": "2026-10-19",
+  "initially_reported_type": "t8i.small",
   "instance_id": "i-0e1c8c4d0256f541e",
+  "instance_type_discrepancy_resolved": true,
   "local_capacity_probe": {
     "cases": [
       {
@@ -60,8 +62,8 @@
   },
   "public_ipv4": "15.135.225.193",
   "queue_mode": "database",
-  "requested_type": "t8i.small",
-  "requested_type_on_live_host": "UNVERIFIED: refreshed Console shows t3.small; clarification pending",
+  "requested_type": "t3.small",
+  "requested_type_on_live_host": "CONFIRMED: user selected t3.small, matching refreshed Console observation",
   "scope": "read-only AWS Console refreshed and SSH using original verified host key; no resize/restart/deploy by this agent",
   "state": "Running",
   "status_checks": "3/3 passed",
@@ -69,6 +71,7 @@
   "swap_total_kib": 0,
   "system_oom_kill_since_boot": 0,
   "tunnel_active": true,
+  "user_confirmed_type": "t3.small",
   "worker": {
     "active": true,
     "active_job_groups_at_observation": 0,
