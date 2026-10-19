@@ -1,6 +1,63 @@
 # Cloudflare connection — verified isolated staging
 
-## Executed checkpoint — 2026-10-19 (Asia/Bangkok)
+## Latest checkpoint — gated API rehearsal (2026-10-19)
+
+The separate staging Pages project now uses `BACKEND_STAGING_ONLY=1`. Non-health
+API requests need `x-newbiegrader-staging-key`; missing/wrong keys return 403
+**before cache/origin access**. Missing/short key or invalid mode returns 503.
+The key is a Cloudflare Pages secret, never frontend configuration. Both this
+header and the independent origin key are stripped before reaching FastAPI.
+
+After proving that fence externally, the **private staging Worker** was deployed
+with `API_ENABLED=1` and its shared-key secret, and its specific VPC Service now
+targets **127.0.0.1:8082**, the new loopback `staging-api-nginx.conf` listener.
+This is an operator-only rehearsal: production Pages is untouched, API admission
+is still zero and the real judge consumer remains disabled. The earlier
+health-only setup below is historical, not the current API exposure policy.
+
+Actual command on the audit Mac:
+
+```sh
+python3 deploy/ec2/smoke_https.py --expected-samesite none
+```
+
+**17 checks passed** through Pages → private Worker → VPC → tunnel → Nginx → API:
+anonymous identity/admin/job restrictions; unauthorized submit/run denial; 1 MiB
+body bound; canonical manual Google redirect; Secure/HttpOnly/host-only session
+cookie; Origin/Referer CSRF rejection; wrong OAuth state denial; canonical logout;
+and both cookie deletions surviving both proxies. No Google token exchange,
+email, authenticated job or account mutation occurred. The database queue still
+contained the same 39 completed jobs and zero running/leased jobs afterward.
+
+The first smoke attempt expected SameSite=Lax and failed. Comparing EC2 and
+Pages cookie **attributes only** proved both used the copied legacy
+`SESSION_SAMESITE=none`, Secure/HttpOnly; no cookie loss was found. The test now
+accepts an explicit expected setting and the actual run used `none`. Do not
+silently weaken cookie checks or claim an unexecuted complete Google/OTP login.
+
+A temporary Nginx log recorded only the forwarded IP and **booleans** for key
+presence; it never logged cookies, keys or URLs. Two real HTTPS requests proved
+a single unchanged client IP despite forged XFF/X-Real-IP and origin-key headers,
+and both access keys absent at Nginx. The temporary config/log was removed and
+access logging disabled again. A combined probe including a forged
+CF-Connecting-IP returned 403; its exact rejecting layer is UNVERIFIED, and that
+probe is not counted as an origin spoofing test. Earlier immediate post-reload
+probe transport errors are not counted as passes.
+
+The host was actually rebooted after setup. Named-tunnel/API automatic recovery
+and the same stable HTTPS hostname passed all **17 checks again**; the UID ledger
+was preserved and the consumer remained disabled. Production Pages readback
+still showed canonical deployment `ec40128a-991f-418b-916d-a1951180723d`,
+compatibility date 2026-10-15, no origin variables and no service bindings.
+Staging uses compatibility date 2026-10-18. No production project configuration
+was changed; changing its binding/transport still requires final approval.
+
+For staging rollback, first redeploy its private Worker with `API_ENABLED=0`,
+then return its VPC Service to port 8080 if desired. Keep Pages explicitly in
+service transport; never introduce legacy-origin retry/fallback. Production
+cutover still needs the separate final approval and queue/backup gates.
+
+## Earlier health-only checkpoint — 2026-10-19 (Asia/Bangkok)
 
 The latest authorization permits staging setup, not production cutover. Official
 Cloudflare skills and the Cloudflare MCP are installed/authenticated; see

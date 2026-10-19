@@ -1,6 +1,61 @@
 # EC2 migration work log and runbook
 
-## Latest checkpoint — stable HTTPS staging (2026-10-19)
+## Current checkpoint — operator-only API rehearsal (2026-10-19)
+
+Production remains on JustRunMy. The separate Pages staging API now requires a
+private test key; missing/wrong credentials were actually denied before enabling
+the private Worker's full API mode. VPC targets loopback port 8082. This opens
+no public submissions: AWS API admission remains zero, the consumer is inactive,
+and its enable file is absent. See `EC2_CLOUDFLARE_SETUP.md` for exact fences.
+
+- **17 actual HTTPS smoke checks passed** on the audit Mac, including canonical
+  Google redirect, session attributes, two logout cookies, CSRF, anonymous
+  admin/job/submit/run rejection and the 1 MiB body cap. Real Google/OTP login
+  and authenticated submission/history remain unverified.
+- The copied legacy session setting is **SameSite=None, Secure, HttpOnly**.
+  An initial Lax expectation failed and was corrected to explicitly check the
+  actual existing setting. No proxy cookie loss was demonstrated.
+- Temporary Nginx metadata-only probes confirmed a single unchanged client IP
+  despite XFF/X-Real-IP spoofing, and both keys stripped. Temporary logs/config
+  were removed; access logging is off. CF-header combined probe 403 origin/layer
+  is unverified; earlier transient probe failures are excluded from passes.
+- **11/11 actual EC2 isolation canaries passed this round**, zero skips. Linux
+  arm64/root disposable Docker suite: **267 run, 264 pass, 3 skipped** (private
+  problem modules); critical **187/187, no skips**, overlapping that full suite.
+  Node **61/61**, zero skips. Storage recovery synthetic tests **4/4** on macOS.
+- Read-only production diagnostics after anonymous smoke tests still showed
+  **39 completed jobs, zero running/leased**. This does not establish that the
+  old in-memory queue is drained.
+- Re-read the deployed old `_create_job` and `_lifespan` through provider MCP:
+  it has **no admission-pause flag** and shutdown cancels its async workers.
+  Provider port/env changes require a restart. A proper old admission fence and
+  authenticated inspection of its actual in-process queue remain cutover gates;
+  neither an environment edit alone nor database counts prove safe drain.
+
+Storage file-byte backup/recovery **passed**: 2,679 objects / 185,493,091 bytes,
+all restored hashes matched, plaintext temporary files removed; encrypted archive
+0600 on the FileVault-protected Mac. This does not prove DB/managed Auth/Storage
+API recovery. The PostgreSQL dump connection remains unavailable until the
+operator-provided libpq files exist. Browser admin overview returned 403 in the
+automation profile; authenticated old in-process queue counts remain unverified.
+Actual OS reboot was repeated after the gated API setup and complete Storage
+backup. SSH recovered in **24.0 seconds**, boot ID changed and the UID ledger hash
+was unchanged before new canaries ran. API/nginx/named tunnel recovered;
+application/metrics ports remained loopback-only. The worker stayed inactive,
+its enable flag absent. Post-reboot **11/11 kernel canaries** and **17/17 HTTPS
+smoke checks** passed again. A fresh encrypted configuration/UID/tunnel backup
+was taken after those canaries. No EC2 stop/start or address-stability guarantee
+is asserted.
+
+New local review commits: `b0c3f39` (gated HTTPS API rehearsal), `be856ff`
+(encrypted Storage byte recovery). No additional branch push or main merge was
+performed; only the earlier approved seven-commit range is on origin. Changed
+file secret scanning returned zero findings.
+
+No production route, queue claim, old-backend deployment, credential rotation,
+paid AWS resource or public judge enable occurred in this checkpoint.
+
+## Earlier checkpoint — stable health-only HTTPS staging (2026-10-19)
 
 This checkpoint supersedes earlier notes saying Cloudflare connection approval
 was withheld. The latest task authorized safe staging setup and pushing the
