@@ -96,6 +96,21 @@ and the frontend were not changed. `grader.py`, `judge_runner.py`,
 12. Encrypted configuration/UID/tunnel plus the new file-mode env and drop-ins:
     `20261019T124435Z-ae06c238.tar.age`; authenticated decryption verified.
 
+## Git and Pages publication
+
+The reviewed branch was fetched, confirmed a fast-forward of `origin/main`, and
+published **without force** as commit `a529ee177fb6fdbc258ab69ce450d2e1ffd63426`
+(code through `609bbf1` plus the documentation). The GitHub push triggered
+Cloudflare Pages production deployment
+`8d8482f2-7e7f-4150-b313-1d598e39928b`, which finished successfully. Production
+still serves unchanged frontend assets: `app.js?v=52` with SHA-256
+`2cefa4af97e62b0c5c35cf87193383c95fc7fa8281e7585d044f37990ad534fb`, matching the
+repository file, and `config.js?v=6`. Service binding, secrets, compatibility
+date and CSP were unchanged. Post-publication smoke passed **15/15**; a public
+sample and PDF returned 200, and `/api/version` still reported
+`problem_file_storage=local`, 68 problems. The deployed backend code remains
+`609bbf1`; `a529ee1` adds documentation only.
+
 ## Evidence and limits
 
 - Local implementation suite before deployment: 310 tests (307 passed, three
