@@ -97,7 +97,7 @@ def _upload_object(client, bucket_name: str, path: str, data: bytes,
         raise RuntimeError(f"upload {path!r}: {e}")
 
 
-def _upload_many(client, bucket_name: str, jobs: list, dry: bool) -> None:
+def _upload_many(client, bucket_name: str, jobs: list, dry: bool, public_samples=()) -> None:
     """Upload many objects concurrently (I/O-bound HTTPS). Bounded pool.
 
     storage3 handles are not shared across threads — each upload is an
@@ -109,7 +109,7 @@ def _upload_many(client, bucket_name: str, jobs: list, dry: bool) -> None:
     if dry or not jobs:
         return
     if problem_store.backend_problem_files.backend() == "local":
-        problem_store.backend_problem_files.publish(bucket_name, jobs)
+        problem_store.backend_problem_files.publish(bucket_name, jobs, public_samples)
         return
     from concurrent.futures import ThreadPoolExecutor
     with ThreadPoolExecutor(max_workers=min(16, len(jobs))) as ex:
@@ -178,9 +178,12 @@ def import_one(client, bucket_name: str, slug: str, dry: bool) -> tuple[str, str
         if has_pdf:
             jobs.append((f"{slug}/statement.pdf", pdf_path.read_bytes(),
                          "application/pdf"))
-        _upload_many(client, bucket_name, jobs, dry)
+        _upload_many(client, bucket_name, jobs, dry, public_samples={
+            f"{slug}/tests/{name}.{suffix}" for name in prob.samples for suffix in ("in", "out")})
     except Exception as e:
         return "failed", f"storage upload: {e}"
+    if problem_store.backend_problem_files.backend() == "local":
+        row["samples_data"] = []  # canonical sample bytes live only in backend files
     row["updated_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
     try:
         client.table("problems").upsert(row, on_conflict="slug").execute()

@@ -2440,7 +2440,7 @@ def _problem_or_404(pid: str) -> grader.Problem:
     slug = _resolve_pid(pid)
     p = PROBLEMS.get(slug)
     if p is not None:
-        if PROBLEM_SOURCE == "supabase" and len(p.tests) == len(p.samples):
+        if PROBLEM_SOURCE == "supabase" and len(p.tests) <= len(p.samples):
             # โหลดเมตาดาต้าแค่ตัวอย่างตอน boot — ตอนเข้าถึงจริงต้องโหลด
             # เทสต์ลับเต็มก่อนตัดสิน (fail closed ถ้าโหลดไม่ได้)
             try:
@@ -2936,6 +2936,15 @@ def problem_sample(request: Request, pid: str, name: str) -> dict:
         if not _is_admin(email) and meta.pid in _live_hidden_pids():
             raise HTTPException(status_code=404,
                                 detail="not a public sample (hidden tests are not served)")
+        if problem_store.backend_problem_files.backend() == "local":
+            try:
+                inp = problem_store._download(_sb, problem_store.problem_bucket(),
+                                              f"{meta.pid}/tests/{name}.in").decode("utf-8")
+                out = problem_store._download(_sb, problem_store.problem_bucket(),
+                                              f"{meta.pid}/tests/{name}.out").decode("utf-8")
+            except (problem_store.ProblemUnavailable, UnicodeDecodeError):
+                raise HTTPException(status_code=503, detail="public sample file unavailable")
+            return {"problem": meta.pid, "test": name, "input": inp, "output": out}
         try:
             row = problem_store.fetch_row(meta.pid, client=_sb)
         except problem_store.ProblemNotFound:

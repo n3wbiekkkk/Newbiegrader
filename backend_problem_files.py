@@ -50,7 +50,7 @@ def _logical(bucket, name):
 
 def _public(name):
     # Public here means API-readable, not anonymously exposed. HTTP authorization
-    # still runs before opening PDFs, including unpublished/contest problems.
+    # still runs before opening PDFs/samples, including contest problems.
     return name.endswith('.pdf')
 
 
@@ -164,8 +164,12 @@ def _lock(folder):
 
 def download(bucket, name):
     key = _logical(bucket, name)
-    folder = root(_public(name))
-    value = _index(folder)
+    public = root(True)
+    public_index = _index(public)
+    folder, value = ((public, public_index) if key in public_index['objects'] else
+                     (root(False), None))
+    if value is None:
+        value = _index(folder)
     item = value['objects'].get(key)
     if item is None:
         raise FilesUnavailable('required backend asset is missing')
@@ -175,7 +179,7 @@ def download(bucket, name):
     return data
 
 
-def publish(bucket, jobs):
+def publish(bucket, jobs, public_samples=()):
     """Trusted author tool. Atomically publish each index; never delete versions.
 
     Files are written before metadata updates. The caller must fence/drain problem
@@ -185,6 +189,11 @@ def publish(bucket, jobs):
     public, private = root(True, create=True), root(False, create=True)
     if public == private or public in private.parents or private in public.parents:
         raise FilesUnavailable('public/private asset roots must be separate')
+    public_samples = set(public_samples)
+    for name in public_samples:
+        _logical(bucket, name)
+        if not name.endswith(('.in', '.out')):
+            raise FilesUnavailable('invalid public sample asset')
     with _lock(public), _lock(private):
         indexes = {kind: {'schema': 1, 'objects': dict(_index(folder, True)['objects'])}
                    for kind, folder in [(True, public), (False, private)]}
@@ -196,7 +205,7 @@ def publish(bucket, jobs):
                 raise FilesUnavailable('invalid asset bytes/size')
             if _public(name) and not data.startswith(b'%PDF'):
                 raise FilesUnavailable('invalid statement PDF')
-            kind = _public(name)
+            kind = _public(name) or name in public_samples
             folder = public if kind else private
             digest = hashlib.sha256(data).hexdigest()
             item = {'sha256': digest, 'size': len(data)}
@@ -206,16 +215,25 @@ def publish(bucket, jobs):
                     raise FilesUnavailable('existing immutable asset is corrupt')
             else:
                 _atomic(folder, blob.name, data)
+            if key in indexes[not kind]['objects']:
+                indexes[not kind]['objects'].pop(key)
+                changed.add(not kind)
             if indexes[kind]['objects'].get(key) != item:
                 indexes[kind]['objects'][key] = item
                 changed.add(kind)
             count += 1
-        # Ensure even an empty category has a valid initial index.
+        # Preserve immutable manifests even when importing a previous index.
         for kind, folder in [(False, private), (True, public)]:
+            raw = encode(indexes[kind])
+            if len(raw) > MAX_INDEX:
+                raise FilesUnavailable('asset index exceeds limit')
+            manifest_name = hashlib.sha256(raw).hexdigest() + '.manifest.json'
+            if os.path.lexists(folder / manifest_name):
+                if _read(folder, manifest_name, MAX_INDEX) != raw:
+                    raise FilesUnavailable('immutable manifest is corrupt')
+            else:
+                _atomic(folder, manifest_name, raw)
             if kind in changed or not (folder / 'index.json').exists():
-                raw = encode(indexes[kind])
-                if len(raw) > MAX_INDEX:
-                    raise FilesUnavailable('asset index exceeds limit')
                 _atomic(folder, 'index.json', raw)
     return {'objects_published': count, 'storage': 'local', 'remote_writes': 0}
 
@@ -228,6 +246,8 @@ def validate(role='worker', verify_bytes=False):
     if (not private_root.is_absolute() or private_root.resolve() != private_root or
             public_root == private_root or public_root in private_root.parents or private_root in public_root.parents):
         raise FilesUnavailable('public/private asset roots must be separate/canonical')
+    if role != 'api' and set(_index(public_root)['objects']) & set(_index(root(False))['objects']):
+        raise FilesUnavailable('duplicate public/private asset paths')
     indexes = []
     for public in ((True,) if role == 'api' else (True, False)):
         folder = root(public)
@@ -235,7 +255,7 @@ def validate(role='worker', verify_bytes=False):
         if verify_bytes:
             for key in value['objects']:
                 bucket, name = key.split('/', 1)
-                if _public(name) != public:
+                if (public and not name.endswith(('.pdf', '.in', '.out'))) or (not public and _public(name)):
                     raise FilesUnavailable('asset in wrong access category')
                 download(bucket, name)
         indexes.append(len(value['objects']))

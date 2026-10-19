@@ -49,7 +49,8 @@ class CriticalBackendFiles(unittest.TestCase):
         for t in self.prob.tests:
             self.jobs.extend([(f'{self.prob.pid}/tests/{t.name}.in',t.input.encode(),'text/plain'),
                               (f'{self.prob.pid}/tests/{t.name}.out',t.expected.encode(),'text/plain')])
-        files.publish(self.bucket,self.jobs)
+        self.public_samples={f"{self.prob.pid}/tests/{name}.{suffix}" for name in self.prob.samples for suffix in ("in","out")}
+        files.publish(self.bucket,self.jobs,self.public_samples)
         problem_store.invalidate_cache()
         self.addCleanup(problem_store.invalidate_cache)
 
@@ -63,11 +64,10 @@ class CriticalBackendFiles(unittest.TestCase):
 
     def test_critical_public_files_contain_no_private_input_expected_bytes(self):
         public=files._index(self.public)['objects']
-        self.assertTrue(all(k.endswith('.pdf') for k in public))
-        for name,raw,_ in self.jobs:
-            if not name.endswith('.pdf'):
-                digest=hashlib.sha256(raw).hexdigest()
-                self.assertFalse((self.public/(digest+'.blob')).exists())
+        self.assertTrue(all(k.endswith('.pdf') or k.split('/',1)[1] in self.public_samples for k in public))
+        self.assertFalse(any('/1001.' in key for key in public))
+        self.assertTrue(all(b'synthetic-hidden-input' not in path.read_bytes()
+                            for path in self.public.glob('*.blob')))
         self.assertEqual(self.private.stat().st_mode & 0o777,0o700)
         self.assertTrue(all(p.stat().st_mode & 0o077 == 0 for p in self.private.iterdir()))
 
@@ -152,7 +152,7 @@ class CriticalBackendFiles(unittest.TestCase):
 
     def test_critical_import_uploads_local_without_touching_storage(self):
         with patch.object(importer,'_upload_object',side_effect=AssertionError('remote upload')):
-            importer._upload_many(self.fake,self.bucket,self.jobs,False)
+            importer._upload_many(self.fake,self.bucket,self.jobs,False,self.public_samples)
         self.assertEqual(files.download(self.bucket,self.row['statement_pdf_path']),self.pdf)
 
     def test_critical_legacy_cli_publish_and_prune_refused_before_db_access(self):
@@ -206,6 +206,34 @@ class CriticalBackendFiles(unittest.TestCase):
         tool=Path(__file__).resolve().parents[1]/'tools/ec2_problem_file_canary.py'
         result=subprocess.run([sys.executable,str(tool)],capture_output=True,text=True,timeout=10)
         self.assertNotEqual(result.returncode,0);self.assertIn('REFUSED',result.stderr)
+
+    def test_critical_all_test_bytes_are_local_even_without_database_sample_bytes(self):
+        self.row['samples_data']=[]
+        with patch.object(self.fake.storage,'from_',side_effect=AssertionError('remote Storage')):
+            prob=problem_store.load_problem_supabase(self.prob.pid,self.fake)
+        self.assertEqual(grader.tests_hash(prob),self.row['tests_hash'])
+
+    def test_critical_sample_api_checks_visibility_before_local_bytes(self):
+        req=Request({'type':'http','session':{}})
+        with patch.object(server,'PROBLEM_SOURCE','supabase'),patch.object(server,'_ensure_problems_fresh'), \
+                patch.object(server,'_meta_or_404',return_value=self.prob),patch.object(server,'_visible_to',return_value=True), \
+                patch.object(server,'_live_hidden_pids',return_value=set()),patch.object(server,'_is_admin',return_value=False), \
+                patch.object(problem_store,'fetch_row',side_effect=AssertionError('sample bytes from DB')):
+            result=server.problem_sample(req,self.prob.pid,self.prob.samples[0]);self.assertEqual(result['input'],self.prob.tests[0].input)
+            with self.assertRaises(HTTPException) as e:server.problem_sample(req,self.prob.pid,'1001')
+            self.assertEqual(e.exception.status_code,404)
+            with patch.object(server,'_visible_to',return_value=False),patch.object(problem_store,'_download',side_effect=AssertionError('read before visibility')):
+                with self.assertRaises(HTTPException) as e:server.problem_sample(req,self.prob.pid,self.prob.samples[0])
+                self.assertEqual(e.exception.status_code,404)
+
+    def test_critical_full_helper_loads_cases_when_metadata_has_no_sample_bytes(self):
+        self.row['samples_data']=[]
+        meta,_=problem_store.load_meta(self.prob.pid,self.fake)
+        self.assertEqual(len(meta.tests),0)
+        with patch.object(server,'PROBLEM_SOURCE','supabase'),patch.object(server,'_sb',self.fake), \
+                patch.object(server,'PROBLEMS',{self.prob.pid:meta}):
+            loaded=server._problem_or_404(self.prob.pid)
+        self.assertEqual(grader.tests_hash(loaded),self.row['tests_hash'])
 
     @unittest.skipUnless(sys.platform.startswith('linux') and os.geteuid()==0,
                          '[CRITICAL-SKIP] real UID/file-access check requires Linux/root')

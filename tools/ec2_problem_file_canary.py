@@ -70,7 +70,7 @@ class FileBoundary(unittest.TestCase):
                 'GRADER_PRIVATE_FILE_ROOT':str(Path(tmp)/'private')}):
             jobs=[]
             for t in prob.tests:jobs.extend([(f'{prob.pid}/tests/{t.name}.in',t.input.encode(),'text/plain'),(f'{prob.pid}/tests/{t.name}.out',t.expected.encode(),'text/plain')])
-            files.publish('judge-assets',jobs);loaded=store.load_problem_supabase(prob.pid,fake)
+            files.publish('judge-assets',jobs,{f'{prob.pid}/tests/{name}.{suffix}' for name in prob.samples for suffix in ('in','out')});loaded=store.load_problem_supabase(prob.pid,fake)
             for source,expected in [('print("hello")',{'AC':2}),('import sys;sys.stderr.write(sys.stdin.read());sys.exit(1)',{'RE':2})]:
                 result=asyncio.run(runner.run_isolated('submission',{'problem':None,
                     'problem_data':store.serialize_problem(loaded),'ext':'.py','source':source,

@@ -33,7 +33,7 @@ def verify(catalog):
     class NoRemoteStorage:
         def from_(self,*args):raise AssertionError('offline verification cannot use remote Storage')
     fake.storage=NoRemoteStorage()
-    cases=pdfs=0;largest_suite=0
+    cases=pdfs=source_pdfs=0;largest_suite=0
     for row in rows:
         prob=problem_store.load_problem_supabase(row['slug'],fake)
         if grader.tests_hash(prob)!=row['tests_hash'] or len(prob.tests)!=row['tests_count']:
@@ -48,13 +48,14 @@ def verify(catalog):
         largest_suite=max(largest_suite,suite);cases+=len(prob.tests)
         if row.get('statement_pdf_path'):
             pdf=problem_store.get_statement_pdf(row['slug'],'supabase',fake)
-            expected=source['objects'][row['statement_pdf_path']]
-            if len(pdf)!=int(expected['size']):raise files.FilesUnavailable('PDF size mismatch')
-            # Optional source manifest records authenticated content hashes.
-            if expected.get('sha256') and hashlib.sha256(pdf).hexdigest()!=expected['sha256']:
-                raise files.FilesUnavailable('PDF checksum mismatch')
+            expected=source.get('objects',{}).get(row['statement_pdf_path'])
+            if expected is not None:
+                if len(pdf)!=int(expected['size']):raise files.FilesUnavailable('PDF size mismatch')
+                if expected.get('sha256') and hashlib.sha256(pdf).hexdigest()!=expected['sha256']:
+                    raise files.FilesUnavailable('PDF checksum mismatch')
+                source_pdfs+=1
             pdfs+=1
-    report.update(problems=len(rows),cases=cases,pdfs=pdfs,raw_suite_bytes_equal=True,
+    report.update(problems=len(rows),cases=cases,pdfs=pdfs,pdf_source_versions_compared=source_pdfs,raw_suite_bytes_equal=True,
                   tests_hashes_equal=True,largest_suite_bytes=largest_suite,
                   process_maxrss=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
                   maxrss_units='KiB on Linux; bytes on macOS',network_requests=0,
