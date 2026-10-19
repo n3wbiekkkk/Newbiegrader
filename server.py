@@ -777,7 +777,7 @@ def _judge_isolation_posture(*, role: str, strict: bool, acknowledged: bool,
 
 
 async def validate_runtime() -> None:
-    if JUDGE_WORKERS < 1:
+    if GRADER_ROLE != "api" and JUDGE_WORKERS < 1:
         raise RuntimeError("host RAM cannot safely fit a judge, compiler and API reserve")
     if QUEUE_MODE not in ("local", "database"):
         raise RuntimeError("GRADER_QUEUE_MODE must be local or database")
@@ -948,6 +948,16 @@ def _remember_job(row: dict) -> dict:
     job.setdefault("created_monotonic", time.monotonic())
     _jobs[row["id"]] = job
     return job
+
+
+async def _queue_position_hint() -> Optional[int]:
+    """Advisory only: a diagnostics outage cannot undo durable admission."""
+    if QUEUE_MODE != "database":
+        return _queue_depth_cached()
+    try:
+        return int((await _queue_rpc("diagnostics"))["queued"])
+    except (HTTPException, KeyError, TypeError, ValueError):
+        return None
 
 
 async def _load_job(jid: str) -> Optional[dict]:
@@ -1166,51 +1176,22 @@ async def _run_job(job: dict) -> None:
     _jobs[jid] = job
     playground = job.get("kind") == "playground"
     prob = PROBLEMS.get(job.get("problem", ""))
-    if prob is not None and not playground and PROBLEM_SOURCE == "supabase" \
-            and len(prob.tests) == len(prob.samples):
-        # Metadata-only boot: hidden tests not loaded yet — โหลดเต็มก่อนตัดสิน
+    if not playground and PROBLEM_SOURCE == "supabase":
+        # Revalidate each job, even if this worker already holds a full suite.
+        # Keep the executed suite consistent with the admitted test hash.
         slug = str(job.get("problem", ""))
-        if _sb is None:
-            await _finish_job(jid, error="problem store unavailable")
-            return
         try:
-            prob = await asyncio.to_thread(
-                problem_store.get_problem, slug, "supabase", _sb)
+            prob = await asyncio.to_thread(problem_store.load_problem_supabase, slug, _sb)
+            actual_hash = grader.tests_hash(prob)
+            if job.get("tests_hash") and job["tests_hash"] != actual_hash:
+                await _finish_job(jid, error="problem version changed; resubmit required")
+                return
             PROBLEMS[prob.pid] = prob
-            _TESTS_HASH_CACHE[prob.pid] = grader.tests_hash(prob)
+            _TESTS_HASH_CACHE[prob.pid] = actual_hash
         except problem_store.ProblemNotFound:
-            await _finish_job(jid, error=f"unknown problem: {slug}")
+            await _finish_job(jid, error="unknown problem")
             return
-        except problem_store.ProblemUnavailable as e:
-            print(f"[web] job {jid} problem unavailable: {e}", file=sys.stderr)
-            await _finish_job(jid, error="problem store unavailable")
-            return
-        except Exception as e:
-            print(f"[web] job {jid} problem lookup failed: {e}", file=sys.stderr)
-            await _finish_job(jid, error="problem store unavailable")
-            return
-    if prob is None and not playground and PROBLEM_SOURCE == "supabase":
-        # Worker-side cache miss (separate worker process / TTL expiry):
-        # resolve exactly this problem server-side. Any failure is an
-        # explicit job error — never an empty suite, never Accepted.
-        slug = str(job.get("problem", ""))
-        if _sb is None:
-            await _finish_job(jid, error="problem store unavailable")
-            return
-        try:
-            prob = await asyncio.to_thread(
-                problem_store.get_problem, slug, "supabase", _sb)
-            PROBLEMS[prob.pid] = prob
-            _TESTS_HASH_CACHE[prob.pid] = grader.tests_hash(prob)
-        except problem_store.ProblemNotFound:
-            await _finish_job(jid, error=f"unknown problem: {slug}")
-            return
-        except problem_store.ProblemUnavailable as e:
-            print(f"[web] job {jid} problem unavailable: {e}", file=sys.stderr)
-            await _finish_job(jid, error="problem store unavailable")
-            return
-        except Exception as e:
-            print(f"[web] job {jid} problem lookup failed: {e}", file=sys.stderr)
+        except Exception:
             await _finish_job(jid, error="problem store unavailable")
             return
     if prob is None and not playground:
@@ -1486,6 +1467,43 @@ def _is_registered(cid: str, email: str) -> bool:
         return False
 
 
+def _registered_contest_ids(email: str, contest_ids: list) -> set:
+    """Contest ids one user is registered for, fetched in batches.
+
+    /api/contests lists up to 200 contests; calling _is_registered per row was
+    an N+1 query (200 sequential round trips for every logged-in visitor).
+    """
+    if not email or not contest_ids or not _registrations_supported() or _sb is None:
+        return set()
+    found = set()
+    ids = list(contest_ids)
+    try:
+        # Chunk the IN list so a 200-contest listing never builds a URL near
+        # the proxy/PostgREST request-line limit.
+        for start in range(0, len(ids), 100):
+            chunk = ids[start:start + 100]
+            offset = 0
+            while offset <= len(chunk):
+                res = _sb.table("contest_registrations").select("contest_id", count="exact").eq(
+                    "user_email", email).in_("contest_id", chunk).order("contest_id").range(
+                    offset, offset + len(chunk)).execute()
+                batch = res.data or []
+                found.update(r.get("contest_id") for r in batch if r.get("contest_id"))
+                offset += len(batch)
+                if res.count is not None and offset >= res.count:
+                    break
+                if not batch:
+                    if res.count is not None and offset < res.count:
+                        raise RuntimeError("incomplete user registrations")
+                    break
+            else:
+                raise RuntimeError("user registrations exceed unique contest budget")
+        return found
+    except Exception as e:
+        _register_note_missing_table(e)
+        return set()
+
+
 def _registration_count(cid: str) -> int:
     return len(_registered_emails(cid))
 
@@ -1506,13 +1524,27 @@ def _registration_counts() -> Dict[str, int]:
     counts: Dict[str, int] = {}
     if _sb is not None and _reg_table_ok["value"]:
         try:
-            res = _sb.table("contest_registrations").select(
-                "contest_id").limit(5000).execute()
-            for r in res.data or []:
-                cid = r.get("contest_id") or ""
-                counts[cid] = counts.get(cid, 0) + 1
+            offset = 0
+            while offset < 50000:
+                res = _sb.table("contest_registrations").select(
+                    "contest_id", count="exact").order("contest_id").order(
+                    "user_email").range(offset, offset + 999).execute()
+                batch = res.data or []
+                for r in batch:
+                    cid = r.get("contest_id") or ""
+                    counts[cid] = counts.get(cid, 0) + 1
+                offset += len(batch)
+                if res.count is not None and offset >= res.count:
+                    break
+                if not batch:
+                    if res.count is not None and offset < res.count:
+                        raise RuntimeError("incomplete registration counts")
+                    break
+            else:
+                raise RuntimeError("registration counts exceed safe query budget")
         except Exception as e:
             _register_note_missing_table(e)
+            raise _db_err(e)
     _reg_count_cache.update({"at": now, "counts": counts})
     return counts
 
@@ -2782,6 +2814,7 @@ def _run_playground(prob: Optional[grader.Problem], ext: str, source: str,
 def health(request: Request, response: Response) -> dict:
     # Per-user body (admin sees hidden ids): private cache only, never shared.
     response.headers["Cache-Control"] = "private, max-age=20"
+    response.headers["Vary"] = "Cookie, Authorization"
     _ensure_problems_fresh()
     email = (request.session.get("user") or {}).get("email", "")
     if _is_admin(email):
@@ -2793,7 +2826,10 @@ def health(request: Request, response: Response) -> dict:
 
 
 @app.get("/api/languages")
-def languages() -> dict:
+def languages(response: Response) -> dict:
+    # Constant payload; let browsers and the edge keep it instead of paying a
+    # backend round trip for every page that asks for the language list.
+    response.headers["Cache-Control"] = "public, max-age=3600"
     return {"languages": [
         {"id": lid, "name": info["name"], "ext": info["ext"]}
         for lid, info in LANGS.items()
@@ -2804,6 +2840,7 @@ def languages() -> dict:
 def list_problems(request: Request, response: Response, sort: str = "") -> dict:
     # Per-user body (admin sees hidden rows): private cache only, never shared.
     response.headers["Cache-Control"] = "private, max-age=20"
+    response.headers["Vary"] = "Cookie, Authorization"
     _ensure_problems_fresh()
     order = {"easy": 0, "medium": 1, "hard": 2}
     sort_by_difficulty = (sort or "").strip().lower() == "difficulty"
@@ -3014,13 +3051,12 @@ async def submit(
         raise HTTPException(status_code=401, detail="login first")
     email = user["email"]
     await asyncio.to_thread(_ensure_problems_fresh)
-    # Authorization uses metadata; hidden tests are loaded only after it succeeds.
+    # Admission needs only authorized metadata and its version. The worker,
+    # not the API, resolves private test bytes after claiming the durable job.
     meta = await asyncio.to_thread(_meta_or_404, problem)
     if not await asyncio.to_thread(lambda: _visible_to(meta.pid, email)):
         raise HTTPException(status_code=404, detail=f"unknown problem: {problem}")
-    prob = await asyncio.to_thread(_problem_or_404, meta.pid)
-    if not await asyncio.to_thread(lambda: _visible_to(problem, email)):
-        raise HTTPException(status_code=404, detail=f"unknown problem: {problem}")
+    prob = meta
 
     contest_obj: Optional[dict] = None
     if contest:
@@ -3043,12 +3079,11 @@ async def submit(
     source, filename = await _read_source(language, code, file)
     display = await asyncio.to_thread(
         _profile_display_name, email, user.get("name") or email)
-    # Blocking policy lookups off the loop: _effective_reveal hits
-    # _live_hidden_pids -> _all_contest_rows (Supabase), _tests_hash may
-    # fetch hidden tests on cache miss. Same values, no extra RTT on loop.
-    reveal, tests_hash = await asyncio.to_thread(
-        lambda: (_effective_reveal(contest_obj, email, prob.pid),
-                 _tests_hash(prob.pid)))
+    reveal = await asyncio.to_thread(_effective_reveal, contest_obj, email, prob.pid)
+    tests_hash = (_TESTS_HASH_CACHE.get(prob.pid) if PROBLEM_SOURCE == "supabase"
+                  else _tests_hash(prob.pid))
+    if not tests_hash:
+        raise HTTPException(status_code=503, detail="problem version unavailable")
 
     job = await _create_job({
         "kind": "submit", "user_email": email, "name": display[:50],
@@ -3061,7 +3096,7 @@ async def submit(
     return {
         "job_id": job["id"], "status": "queued", "problem": prob.pid,
         "samples": len(prob.samples),
-        "queued_ahead": (await _queue_rpc("diagnostics"))["queued"] if QUEUE_MODE == "database" else _queue_depth_cached(),
+        "queued_ahead": await _queue_position_hint(),
     }
 
 
@@ -3087,8 +3122,7 @@ async def job_status(request: Request, jid: str) -> dict:
     return {
         "id": jid, "status": status, "problem": job.get("problem", ""),
         "kind": job.get("kind", "submit"), "error": job.get("error", "") or "",
-        "queued_ahead": ((await _queue_rpc("diagnostics"))["queued"] if QUEUE_MODE == "database"
-                         else _queue_depth_cached()) if status == "queued" else 0,
+        "queued_ahead": await _queue_position_hint() if status == "queued" else 0,
         "result": result,
         "created_at": job.get("created_at"), "started_at": job.get("started_at"),
         "finished_at": job.get("finished_at"),
@@ -3101,6 +3135,7 @@ def version(request: Request, response: Response) -> dict:
     # Hashes are precomputed at boot (_TESTS_HASH_CACHE); this stays O(n) dict
     # build with no SHA256. Per-user body: private cache only, never shared.
     response.headers["Cache-Control"] = "private, max-age=20"
+    response.headers["Vary"] = "Cookie, Authorization"
     _ensure_problems_fresh()
     email = (request.session.get("user") or {}).get("email", "")
     admin = _is_admin(email)
@@ -3470,26 +3505,36 @@ def _norm_ts(value: str, field: str) -> str:
     return parsed.astimezone(dt.timezone.utc).isoformat()
 
 
-def _contest_public(row: dict, email: str = "", counts: Dict[str, int] | None = None) -> dict:
+def _contest_public(row: dict, email: str = "", counts: Dict[str, int] | None = None,
+                    registered_ids: Optional[set] = None) -> dict:
     cid = row.get("id", "")
-    upcoming = _contest_window(row) == "upcoming"
+    status = _contest_window(row)
+    upcoming = status == "upcoming"
+    admin = _is_admin(email)
     # Before the start, non-admins see neither the problem slugs nor any detail:
     # the list opens when the contest does. Admins always see everything.
-    show_problems = _is_admin(email) or not upcoming
+    show_problems = admin or not upcoming
+    # Resolve each slug once; the old comprehension resolved it up to three
+    # times per problem just to filter it.
+    problems = []
+    if show_problems:
+        for raw in row.get("problems") or []:
+            pid = _resolve_pid(str(raw))
+            prob = PROBLEMS.get(pid)
+            if admin or (prob is not None and getattr(prob, "is_published", True)):
+                problems.append(pid)
+    registered = (cid in registered_ids if registered_ids is not None else
+                  (_is_registered(cid, email) if _registrations_supported() else False))
     return {
         "participants": (counts or {}).get(cid, 0),
-        "registered": _is_registered(cid, email) if _registrations_supported() else False,
+        "registered": registered,
         "id": cid, "title": row.get("title", ""),
         "starts_at": row.get("starts_at"), "ends_at": row.get("ends_at"),
         "freeze_minutes": row.get("freeze_minutes") or 0,
         "show_samples": row.get("show_samples", True),
         "hide_from_tasks": row.get("hide_from_tasks", True),
-        "status": _contest_window(row),
-        "problems": ([_resolve_pid(str(x)) for x in (row.get("problems") or [])
-                      if _is_admin(email) or (
-                          _resolve_pid(str(x)) in PROBLEMS and
-                          getattr(PROBLEMS[_resolve_pid(str(x))], "is_published", True))]
-                     if show_problems else []),
+        "status": status,
+        "problems": problems,
     }
 
 
@@ -3528,14 +3573,24 @@ def _all_contest_rows() -> List[dict]:
 
 
 @app.get("/api/contests")
-def list_contests(request: Request) -> dict:
+def list_contests(request: Request, response: Response = None) -> dict:
+    if response is not None:
+        response.headers["Cache-Control"] = "private, no-store"
+        response.headers["Vary"] = "Cookie, Authorization"
     if _sb is None:
         return {"configured": False, "contests": []}
     try:
         email = (request.session.get("user") or {}).get("email", "")
+        rows = _contest_rows()
+        if not rows:
+            return {"configured": True, "contests": []}
         counts = _registration_counts()
+        # Batched registration lookup for the whole listing, not one per contest.
+        registered = _registered_contest_ids(
+            email, [r.get("id", "") for r in rows if r.get("id")])
         return {"configured": True,
-                "contests": [_contest_public(r, email, counts) for r in _contest_rows()]}
+                "contests": [_contest_public(r, email, counts, registered)
+                             for r in rows]}
     except Exception as e:
         # Read-only listing: degrade instead of 500 while the contests table is
         # missing (schema migration not run yet).
@@ -3629,23 +3684,50 @@ def _contest_scoreboard(contest: dict, live: bool, allowed_pids: Optional[set] =
     """
     if _sb is None:
         return []
+    # Precompute the freeze cutoff once: parsing ends_at for every submission
+    # (contest boards can hold tens of thousands of rows) is pure overhead.
+    # freeze_all mirrors _contest_result_frozen's fail-closed behaviour when the
+    # contest timestamps are malformed.
+    freeze_cutoff = None
+    freeze_all = False
+    if not live and _contest_window(contest) == "running":
+        try:
+            minutes = int(contest.get("freeze_minutes") or 0)
+            if minutes > 0:
+                end = dt.datetime.fromisoformat(
+                    str(contest["ends_at"]).replace("Z", "+00:00"))
+                freeze_cutoff = end - dt.timedelta(minutes=minutes)
+        except (ValueError, TypeError, KeyError):
+            freeze_all = True
+    # Push the published-problem filter into the query: rows for removed or
+    # unpublished problems are discarded below anyway, so fetching them wastes
+    # bandwidth and memory on large boards. An empty allowed set means no row
+    # can ever count, so skip the database entirely.
+    wanted = list(allowed_pids) if allowed_pids is not None else None
+    if wanted is not None and not wanted:
+        return []
     rows = []
     offset = 0
     try:
+        # PostgREST returns at most 1000 rows per request by default, so fetch
+        # full pages. 500-row pages doubled the round trips on large boards.
         while offset < 50000:
-            res = _sb.table("submissions").select(
+            query = _sb.table("submissions").select(
                 "user_email,name,problem,score,accepted,created_at", count="exact").eq(
-                "contest_id", contest.get("id", "")).order("created_at").order("id").range(
-                offset, offset + 499).execute()
+                "contest_id", contest.get("id", ""))
+            if wanted is not None:
+                query = query.in_("problem", wanted)
+            res = query.order("created_at").order("id").range(
+                offset, offset + 999).execute()
             batch = res.data or []
             rows.extend(batch)
             offset += len(batch)
             total = res.count
             if total is not None and offset >= total:
                 break
-            if total is None and len(batch) < 500:
-                break
             if not batch:
+                if total is None:
+                    break
                 raise HTTPException(status_code=503, detail="incomplete scoreboard data")
         else:
             raise HTTPException(status_code=503, detail="scoreboard exceeds safe query budget")
@@ -3657,8 +3739,17 @@ def _contest_scoreboard(contest: dict, live: bool, allowed_pids: Optional[set] =
     for r in rows:
         if allowed_pids is not None and r.get("problem") not in allowed_pids:
             continue
-        if not live and _contest_result_frozen(contest, r):
-            continue
+        if not live and (freeze_all or freeze_cutoff is not None):
+            if freeze_all:
+                continue
+            try:
+                created = dt.datetime.fromisoformat(
+                    str(r["created_at"]).replace("Z", "+00:00"))
+                frozen = created > freeze_cutoff
+            except (ValueError, TypeError, KeyError):
+                frozen = True  # malformed dates cannot disclose a frozen result
+            if frozen:
+                continue
         u = r.get("user_email") or ""
         if not u:
             continue
@@ -3704,16 +3795,18 @@ def contest_detail(request: Request, cid: str) -> dict:
                          "tags": p.tags, "tests": _problem_total(pid, p),
                          "samples": len(p.samples),
                          "time_limit": p.time_limit, "memory_limit": p.memory_limit})
+    public = _contest_public(contest, email, _registration_counts())
     body = {
-        **_contest_public(contest, email, _registration_counts()),
+        **public,
         "problem_details": problems,
         "frozen": not live and (contest.get("freeze_minutes") or 0) > 0,
         "scoreboard": _contest_scoreboard(contest, live, {p["id"] for p in problems}),
         # Codeforces-style lifecycle: register before the start, problems open at
         # the start, submissions only while running and only for participants.
+        # Reuse the registration check already made by _contest_public above
+        # instead of paying a second round trip for the same row.
         "problems_open": started or admin,
-        "can_submit": (status == "running" and _is_registered(contest.get("id", ""), email))
-                      or admin,
+        "can_submit": (status == "running" and public["registered"]) or admin,
         "starts_in_s": _seconds_until(contest.get("starts_at")),
         "ends_in_s": _seconds_until(contest.get("ends_at")),
         "registration_open": status != "ended" or admin,

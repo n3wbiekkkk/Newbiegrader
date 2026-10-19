@@ -90,7 +90,8 @@ def invalidate_stale(hashmap: Dict[str, str], extra: Optional[dict] = None) -> l
     """
     dropped = []
     for slug, entry in list(_PROBLEMS_CACHE.items()):
-        if hashmap.get(slug) != entry[1]:
+        if (hashmap.get(slug) != entry[1] or (extra is not None and
+                str((extra.get(slug) or {}).get("updated_at") or "") != entry[2])):
             _PROBLEMS_CACHE.pop(slug, None)
             _PDF_CACHE.pop(slug, None)
             dropped.append(slug)
@@ -361,11 +362,25 @@ def _fetch_row(client, slug: str) -> dict:
 
 
 def _fetch_all_rows(client) -> List[dict]:
+    rows = []
     try:
-        res = client.table("problems").select("*").order("no").limit(1000).execute()
+        while len(rows) < 10000:
+            res = client.table("problems").select("*", count="exact").order("no").order(
+                "slug").range(len(rows), len(rows) + 499).execute()
+            batch = res.data or []
+            rows.extend(dict(r) for r in batch)
+            total = getattr(res, "count", None)
+            if total is not None and len(rows) >= total:
+                return rows
+            if not batch:
+                if total is not None and len(rows) < total:
+                    raise ProblemUnavailable("incomplete problem catalog")
+                return rows
+        raise ProblemUnavailable("problem catalog exceeds safe query budget")
+    except ProblemUnavailable:
+        raise
     except Exception as e:
         raise ProblemUnavailable(f"problem listing failed: {e}")
-    return [dict(r) for r in (getattr(res, "data", None) or [])]
 
 
 def _download(client, bucket: str, path: str) -> bytes:
@@ -437,7 +452,8 @@ def load_problem_supabase(slug: str, client=None) -> grader.Problem:
     ttl = cache_ttl_s()
     if cached is not None:
         _prob, _hash, _updated, _at = cached
-        if ttl > 0 and time.monotonic() - _at < ttl and _hash == (row.get("tests_hash") or ""):
+        if ttl > 0 and time.monotonic() - _at < ttl and _hash == (row.get("tests_hash") or "") \
+                and _updated == str(row.get("updated_at") or ""):
             return _prob
     samples_data = row.get("samples_data") or []
     sample_map: Dict[str, Tuple[str, str]] = {}
