@@ -1,0 +1,102 @@
+{
+  "cold_api_submission_admission": {
+    "p50_ms": 1.144,
+    "p95_ms": 3.046,
+    "samples": 50,
+    "storage_downloads_per_request": 0.0,
+    "table_queries_per_request": 4.0
+  },
+  "cold_test_preparation_fake_storage": {
+    "downloads_per_load": 2.0,
+    "p50_ms": 0.071,
+    "p95_ms": 0.272,
+    "samples": 50
+  },
+  "date": "2026-10-19",
+  "handlers": {
+    "contest_detail": {
+      "p50_ms": 9.406,
+      "p95_ms": 9.84,
+      "samples": 50,
+      "table_queries_per_request": 4.0
+    },
+    "contest_list_cold_counts": {
+      "p50_ms": 0.971,
+      "p95_ms": 1.059,
+      "samples": 50,
+      "table_queries_per_request": 4.0
+    },
+    "contest_list_warm_counts": {
+      "p50_ms": 0.783,
+      "p95_ms": 0.844,
+      "samples": 50,
+      "table_queries_per_request": 3.0
+    },
+    "problem_detail": {
+      "p50_ms": 0.018,
+      "p95_ms": 0.037,
+      "samples": 50,
+      "table_queries_per_request": 0.0
+    },
+    "problem_list": {
+      "p50_ms": 0.002,
+      "p95_ms": 0.007,
+      "samples": 50,
+      "table_queries_per_request": 0.0
+    },
+    "scoreboard_2000_rows": {
+      "p50_ms": 9.548,
+      "p95_ms": 12.026,
+      "samples": 50,
+      "table_queries_per_request": 2.0
+    },
+    "submission_history": {
+      "p50_ms": 0.27,
+      "p95_ms": 1.528,
+      "samples": 50,
+      "table_queries_per_request": 1.0
+    }
+  },
+  "mirror_support_in_this_release": false,
+  "process_maxrss_kib": 64912,
+  "production_changes_this_review": 0,
+  "queue_admission_fake_rpc": {
+    "p50_ms": 0.193,
+    "p95_ms": 0.334,
+    "samples": 50
+  },
+  "queue_claim_fake_rpc": {
+    "p50_ms": 0.027,
+    "p95_ms": 0.068,
+    "samples": 50
+  },
+  "scope": "synthetic in-process Linux; zero network latency",
+  "source_commit": "837366cdee37622bcad7dbb6c76611f9a6d1610d",
+  "source_sha256": {
+    ".github/workflows/ci.yml": "6573c92f4a7cbb98ec611625f8e134a8023aa3bebbd384eec5c1814a24acfb69",
+    "functions/api/[[proxy]].js": "c1defcacfc58b50cf638256ef79a32b699a298480824821775af9e0556c03fcc",
+    "problem_store.py": "981d8dbf5333c97f06b2bafb438c9f2d4d5899186ee74466dd054a63952defda",
+    "server.py": "7eb3e8906a6f1dbd1018f103aee85ba3a8482c8299a38a4fad91e95e597292a0",
+    "static/app.js": "2cefa4af97e62b0c5c35cf87193383c95fc7fa8281e7585d044f37990ad534fb",
+    "static/index.html": "e8cf743220a4e4ef47661622f35ea04ce6879b98e1fb944a4f1e704cdbd739fe",
+    "tests/test_critical_release_correctness.py": "4727317043a85245cceebcfabdb314630083b1e65496c530e20aaebb30050f2c",
+    "tests/test_edge_proxy.js": "b2c84b2258317bd999ac933ef15b3b6a303ee607da87521567ea48801e78c302",
+    "tests/test_optimization.js": "bc3d9afa3f53832b8747f6fc21c9a75269cb2755d5c37c1e0f2a6458a5fc85ba",
+    "tests/test_optimization_review.py": "4b895ec68e06d71eef55e11f2e6367e3865afb3922d6914d7de3be123e056156",
+    "tools/run_critical_tests.py": "cd12c311716c619dcd7c8859d6c6378a70f4ac7c5b46427d7d37fb7e1e25673c"
+  },
+  "test_environment": "macOS Apple Silicon host; Docker Linux ARM64/root Python 3.11; network disabled; 2 CPUs / 1536 MiB",
+  "tests": {
+    "critical_fail": 0,
+    "critical_run": 204,
+    "critical_skip": 0,
+    "javascript_fail": 0,
+    "javascript_run": 76,
+    "javascript_skip": 0,
+    "python_fail": 0,
+    "python_pass": 281,
+    "python_run": 284,
+    "python_skip": 3
+  },
+  "worker_count_target": 1
+}
