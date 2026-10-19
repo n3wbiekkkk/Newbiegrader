@@ -110,3 +110,14 @@ class CriticalReleaseCorrectness(unittest.TestCase):
             response = asyncio.run(server.job_status(request, 'durably-admitted'))
             self.assertEqual(response['status'], 'queued')
             self.assertIsNone(response['queued_ahead'])
+
+    def test_critical_native_qualification_refuses_an_ordinary_process(self):
+        import subprocess
+        import sys
+        from pathlib import Path
+        result = subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] /
+                                                     'tools/ec2_single_canary.py')],
+                                env={**os.environ, 'GRADER_JOB_CGROUP_ROOT': 'not-approved'},
+                                text=True, capture_output=True, timeout=5)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('REFUSED', result.stderr)
