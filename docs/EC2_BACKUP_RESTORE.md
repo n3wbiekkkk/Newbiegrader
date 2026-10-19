@@ -1,9 +1,117 @@
 # EC2 migration backup/restore gate
 
-Status 2026-10-19: EC2 configuration recovery and private Storage **file-byte**
-recovery verified; PostgreSQL/managed Auth/full Storage service recovery remains
-**UNVERIFIED**. No production restore, DB permission change, credential reset,
+Status 2026-10-19: EC2 configuration recovery, PostgreSQL **logical database**
+recovery and private Storage **file-byte** recovery verified. Running managed
+Auth/full Storage service recovery remains **UNVERIFIED**. No production restore,
+DB permission change, credential reset,
 new paid project, user-account mutation or job execution was performed here.
+
+## Verified PostgreSQL logical recovery
+
+The operator created `~/.pg_service.conf` and `~/.pgpass`: both regular files,
+owner-only 0600. No password was displayed. The first connection failed CA
+verification before authentication: the pooler uses Supabase's private CA, absent
+from the client's system roots. The CA was obtained over verified HTTPS from
+the **existing project's Database Settings → Download certificate** link:
+`https://supabase-downloads.s3-ap-southeast-1.amazonaws.com/prod/ssl/prod-ca-2021.crt`.
+Its SHA-256 certificate fingerprint was
+`807025AD50D4ED219D2C9C7D299C004F824EB00CF7F65AFEF607D07B72E6CAFA`.
+Only the PostgreSQL client's CA file was selected; the system trust store was
+not changed and `sslmode=verify-full` stayed mandatory. Authentication then
+succeeded, reporting PostgreSQL 17.11 and 68 public problem records.
+
+The shared session pooler did **not** carry the requested read-only default from
+`PGOPTIONS`: an initial readback returned `default_transaction_read_only=off`.
+It is not an admission/security boundary. A subsequent explicit `BEGIN READ
+ONLY` returned `transaction_read_only=on`. The backup holder used **REPEATABLE
+READ READ ONLY**, exported a snapshot, and kept it open while `pg_dump 17.11`
+used `--snapshot`. Its table-content manifest was read in that same transaction.
+No source DDL, data write, job admission/claim or password reset was executed.
+
+Actual consistent archive: **`20261019T003815Z-postgres-snapshot.dump.age`**,
+**791,071 encrypted bytes**, dump **10.9 seconds**. It streamed from a disposable
+Docker PostgreSQL client directly into local age encryption; no plaintext dump
+was saved. The matching manifest, role export **without role passwords**, public
+function manifest and exact private recovery recipe are separately encrypted in
+`~/.local/share/newbiegrader-private/ec2-backups/`. All five matching artifacts
+were checked/corrected to 0600; their directory is 0700 on FileVault storage.
+An earlier non-exported-snapshot dump is not the consistency evidence above.
+
+Actual restore used the official image
+`supabase/postgres:17.11.0.004`, digest
+`sha256:b15d862126dd2dac02da524696ccfde2dcce2ceaee0a58973b2727befe492706`,
+in a **separate container with network=none, no published ports, no source
+credentials, 768 MiB RAM/no swap, one CPU, 96 tasks, logging disabled and a
+384 MiB tmpfs PGDATA**. No Auth, mailer, Storage API, cron consumer or judge ran.
+Restore targeted a new empty `recovery` database, never the source service.
+`pg_restore --clean --if-exists --single-transaction --exit-on-error` returned
+zero. The successful restore command plus comparison took about **0.3 seconds**;
+image download/bootstrap and earlier diagnostic attempts are excluded.
+
+Verification after restore:
+
+| Check | Actual result |
+| --- | --- |
+| Table/partition counts and deterministic row-content checksums | 51/51 match |
+| Relation names, owners, sorted ACLs, RLS/forced-RLS flags | 58/58 match |
+| Constraint definitions under a fixed `pg_catalog` search path | 150/150 match |
+| RLS policy definitions | Equal; zero explicit policies in this snapshot |
+| Public function definitions, signatures, owners and sorted ACLs | 8/8 match |
+| Non-internal public triggers | Equal; zero in this snapshot |
+
+The table manifest totals 3,096 rows **including partition-parent counts**; this
+is not a count of distinct database records. MD5 row fingerprints are corruption
+comparison evidence, not an authentication primitive; age authenticates the
+encrypted artifacts. Public function comparison was read separately immediately
+after the snapshot restore, not inside the exported data snapshot.
+
+All five final encrypted artifacts passed authenticated decryption. The
+disposable restore container was removed after comparison, discarding its tmpfs
+database; readback confirmed it was absent and no plaintext `.dump` files were
+left in the backup directory. The original connection files remain 0600.
+
+An initial raw comparison exposed ACL ordering and search-path qualification
+differences; both were normalized before comparing. Two **extension monitoring
+views** (`extensions.pg_stat_statements` and `pg_stat_statements_info`) inherited
+different owner/grantor defaults from the local image. Their owner/ACLs were
+restored to the captured source definitions **only in the disposable database**,
+then all 58 relation comparisons matched. Exact local adjustment SQL is in the
+encrypted recovery recipe. No source permission changes were required. The local
+restore role briefly needed superuser and was returned to its original setting.
+
+### Repeating this rehearsal safely
+
+1. On the authorized Mac, decrypt the recovery recipe only into a private 0700
+   temporary directory on encrypted storage; inspect it privately. It records
+   the exact snapshot/manifest procedure and local extension adjustments. Never
+   print its database contents. Keep the age identity local and offline-backed.
+2. Use `postgres:17` as the source client, bind the two 0600 libpq files read-only
+   to `/run/pg_service.conf` and `/run/pgpass`, and the verified public CA to
+   `/run/supabase-ca.crt`. Set only `PGSERVICEFILE` and `PGPASSFILE` path variables.
+   Supply `service=newbiegrader_backup sslrootcert=/run/supabase-ca.crt
+   sslmode=verify-full` as libpq options: no password in argv. Hold/export a
+   read-only repeatable-read snapshot, capture the manifest, and stream
+   `pg_dump --format=custom --compress=6 --lock-wait-timeout=10s --snapshot=<id>`
+   into age. Check both process exits; delete a failed partial encrypted output.
+3. Start the pinned official Supabase PostgreSQL image with the isolation and
+   tmpfs bounds above. Prepare source role **names** locally; do not import real
+   login passwords or mount source connection files. Use an empty template0
+   database. Stream authenticated age decryption into `docker exec -i <restore>
+   pg_restore -U postgres -d recovery --clean --if-exists --single-transaction
+   --exit-on-error`. Only this isolated local role may temporarily need superuser.
+4. Apply the captured two-view correction locally, normalize ACL order/search
+   path, and compare the encrypted manifest. Revoke temporary local privileges,
+   remove the disposable container/tmpfs and verify no plaintext dump remains.
+
+Scope limits: this proves logical database recovery, including Auth/Storage
+**table bytes**, and the listed application metadata. It does not prove hosted
+Auth sessions/OAuth/SMTP settings, service/API startup, Vault key portability,
+every extension implementation, role-password recovery or end-to-end managed
+Supabase recovery. `vault.secrets` had zero rows. The roles export was captured
+separately, not atomically with table data. Storage bytes were backed up earlier;
+the two backups are not one atomic DB/Storage snapshot. Supabase stays on its
+current provider during this backend migration. Scheduled backup/retention,
+offline identity custody and final maintenance-window backup remain outstanding.
 
 ## Verified private Storage object recovery
 
@@ -56,7 +164,7 @@ identity stays on the Mac; keep a separate protected offline copy. Restore into
 approved root-only paths. Never replace the current UID ledger with an older
 snapshot: append/merge reservations under the allocator lock.
 
-## Exact missing access
+## Earlier missing-access checkpoint (resolved for logical backup)
 
 Read-only MCP SQL works and reported PostgreSQL **17.11**. No pg_dump connection
 was configured in the inspected process connection variables, local `.env`,
@@ -71,7 +179,7 @@ files privately; never print them. Use a client at least as new as server major
 17. Configure a separate disposable local restore target; never reuse the source
 service name for restore. No paid Supabase branch is required.
 
-## Required verification sequence (not yet executed)
+## Full managed-service verification sequence (partially executed above)
 
 1. Capture nonsecret source manifest: server version; relation/function/extension
    definitions; row counts by table; RLS/ACLs; object counts and total bytes by

@@ -1,6 +1,45 @@
 # EC2 migration work log and runbook
 
-## Current checkpoint — operator-only API rehearsal (2026-10-19)
+## Current checkpoint — logical DB recovery verified (2026-10-19)
+
+Operator-provided libpq files are regular 0600 files. Initial TLS verification
+failed because Supabase's CA was absent from system roots; the project's actual
+dashboard certificate link supplied the CA. `verify-full` authentication then
+succeeded. The session pooler ignored the requested read-only `PGOPTIONS`
+default; explicit read-only transactions were verified instead. No source
+permission change, password reset or database write was made.
+
+A repeatable-read read-only exported snapshot produced an age-encrypted full
+logical dump: **791,071 bytes / 10.9 seconds**. Actual restore into a separate
+network-disabled Supabase PostgreSQL 17.11 container passed. Source/restored
+comparison matched **51 table/partition counts/content hashes, 58 relation
+owners/ACL/RLS definitions, 150 constraints, zero explicit policies and eight
+public functions**. Two local extension monitoring views needed their captured
+owner/grantor defaults restored before the final metadata comparison matched.
+Source was unchanged. Details, limitations and exact encrypted recipe location:
+`EC2_BACKUP_RESTORE.md`. This is logical DB recovery, not a running managed
+Auth/Storage service rehearsal. Earlier Storage byte recovery remains separate.
+
+The operator's existing Chrome profile displayed an authenticated legacy admin
+overview with **zero queued/running/backlog** when inspected. This is a point-in-
+time observation before an admission fence, not proof of a drained migration
+window. The separate automation profile's earlier 403 is historical evidence.
+Final cutover still requires a verified old admission fence, fresh in-process
+queue readback under that fence, final backup/UID merge and explicit approval
+for production routing/worker enable and authenticated smoke tests. JustRunMy
+and production Pages remain unchanged; AWS public admission/worker remain off.
+
+After the DB rehearsal, the unchanged application snapshot was retested in a
+network-disabled Linux arm64/root Docker container: **267 tests, 264 passed,
+three private-problem-module skips**. The separate critical gate passed
+**187/187 with zero skips**; Node passed **61/61 with zero skips**, frontend
+syntax/ID/style checks and plagiarism self-test 4/4 passed. These overlapping
+suite counts are not additive. No real problem/reference validator or user
+submission was run; this checkpoint changes documentation only. Changed-file
+Gitleaks scan and `git diff --check` passed. These local follow-up changes were
+not pushed; the approved original seven-commit remote range is unchanged.
+
+## Earlier checkpoint — operator-only API rehearsal (2026-10-19)
 
 Production remains on JustRunMy. The separate Pages staging API now requires a
 private test key; missing/wrong credentials were actually denied before enabling
