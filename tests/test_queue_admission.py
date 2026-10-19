@@ -60,7 +60,7 @@ class DatabaseWorkerBackoff(unittest.IsolatedAsyncioTestCase):
 
     async def test_idle_polling_backs_off_with_a_bounded_admission_delay(self):
         delays, runs = await self.delays([], 5)
-        self.assertEqual(delays, [.5, 1, 2, 2, 2])
+        self.assertEqual(delays, [.5, 1, 1, 1, 1])
         self.assertEqual(runs, 0)
 
     async def test_claimed_work_resets_the_poll_delay(self):

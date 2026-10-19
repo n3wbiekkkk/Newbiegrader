@@ -69,6 +69,16 @@ MAX_CACHED_PROBLEMS = 200
 MAX_CACHED_PDFS = 50
 PDF_CACHE_TTL_S = 300.0
 
+# Browsing metadata. The statement markdown is deliberately excluded from the
+# 30s refresh: it is the largest column and is only needed by detail pages
+# without a PDF. Keeping it out cuts the catalog response from ~300 KB to
+# ~90 KB, so a refresh does not compete with request handling on the tiny host.
+SNAPSHOT_COLUMNS = (
+    "slug,no,title,time_limit,memory_limit,checker,tolerance,difficulty,tags,"
+    "samples,samples_data,hidden,is_published,statement_pdf_path,tests_hash,"
+    "tests_count,hidden_tests,updated_at"
+)
+
 # slug -> (Problem, tests_hash, updated_at, fetched_monotonic)
 _PROBLEMS_CACHE: "OrderedDict[str, tuple]" = OrderedDict()
 # slug -> (bytes, fetched_monotonic, (updated_at, statement_pdf_path))
@@ -210,15 +220,19 @@ def load_tests_hash_map(client=None) -> Dict[str, str]:
     return load_snapshot(client)[1]
 
 
-def load_snapshot(client=None) -> tuple:
-    """One SELECT *: (meta, hashes, extra). No Storage access.
+def load_snapshot(client=None, *, lean: bool = False) -> tuple:
+    """One SELECT: (meta, hashes, extra). No Storage access.
 
     meta[slug] = Problem with samples-only tests (fast browsing);
     hashes[slug] = tests_hash; extra[slug] = {"tests": total count,
     "has_pdf": bool}. Powers boot/refresh/detail/version without downloads.
+
+    ``lean`` omits the large statement markdown column for the periodic
+    refresh. Callers keep the previous description for unchanged problems and
+    fetch it lazily for changed/no-PDF problems.
     """
     client = client if client is not None else _supabase_client()
-    rows = _fetch_all_rows(client)
+    rows = _fetch_all_rows(client, columns=SNAPSHOT_COLUMNS if lean else "*")
     meta: Dict[str, grader.Problem] = {}
     hashes: Dict[str, str] = {}
     extra: Dict[str, dict] = {}
@@ -364,11 +378,28 @@ def _fetch_row(client, slug: str) -> dict:
     return dict(rows[0])
 
 
-def _fetch_all_rows(client) -> List[dict]:
+def load_statement_md(slug: str, client=None) -> str:
+    """Fetch only the public statement markdown for a single problem.
+
+    The periodic catalog refresh omits this column to keep the payload small;
+    detail pages call this only when a Problem has no description cached.
+    """
+    try:
+        res = (client if client is not None else _supabase_client()).table(
+            "problems").select("statement_md").eq("slug", slug).limit(1).execute()
+    except Exception as e:
+        raise ProblemUnavailable(f"statement lookup failed for {slug!r}: {e}")
+    rows = getattr(res, "data", None) or []
+    if not rows:
+        raise ProblemNotFound(f"unknown problem: {slug}")
+    return str(rows[0].get("statement_md") or "")
+
+
+def _fetch_all_rows(client, columns: str = "*") -> List[dict]:
     rows = []
     try:
         while len(rows) < 10000:
-            res = client.table("problems").select("*", count="exact").order("no").order(
+            res = client.table("problems").select(columns, count="exact").order("no").order(
                 "slug").range(len(rows), len(rows) + 499).execute()
             batch = res.data or []
             rows.extend(dict(r) for r in batch)

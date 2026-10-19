@@ -11,7 +11,8 @@ function cacheHarness() {
     apiGet: url => new Promise((resolve, reject) => requests.push({url,resolve,reject})),
     $: id => {if (!elements.has(id)) elements.set(id, {value:'', classList:{remove(){}}}); return elements.get(id);},
     skel: () => 'loading', esc: String, historyTable: rows => JSON.stringify(rows), bindViewButtons() {}});
-  vm.runInContext('const DETAIL_CACHE_TTL=60000;const _detailInflight=new Map();', c);
+  vm.runInContext('const DETAIL_CACHE_TTL=60000;const _detailInflight=new Map();'
+    + 'const _sampleInflight=new Map();const _pdfPrefetched=new Set();', c);
   vm.runInContext(slice('const _getCache =', 'function apiPostJson'), c);
   vm.runInContext(slice('async function loadHistory(', 'async function viewSubmission('), c);
   return {c,requests,elements};
