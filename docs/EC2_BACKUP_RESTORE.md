@@ -1,8 +1,49 @@
 # EC2 migration backup/restore gate
 
-Status 2026-10-19: EC2 configuration recovery archive verified; Supabase data and
-Storage recovery **UNVERIFIED**. No production restore, permission change,
-credential reset, new paid project or user-data export was performed here.
+Status 2026-10-19: EC2 configuration recovery and private Storage **file-byte**
+recovery verified; PostgreSQL/managed Auth/full Storage service recovery remains
+**UNVERIFIED**. No production restore, DB permission change, credential reset,
+new paid project, user-account mutation or job execution was performed here.
+
+## Verified private Storage object recovery
+
+Actual command on the authorized FileVault-protected Mac:
+
+```sh
+python3 deploy/ec2/backup_storage.py
+```
+
+The read-only source runs as the unprivileged `newbiegrader-api` user in a
+transient systemd service on EC2, with EnvironmentFile loaded by systemd (not
+printed/exported), NoNewPrivileges, 256 MiB memory, no swap, 25% CPU, 32 tasks and
+a 1,200-second deadline. Eight bounded HTTPS downloads run concurrently; judge
+concurrency is unchanged. Only the fixed existing project and `judge-assets`
+bucket are accepted. Limits: 10,000 objects, 16 MiB/object, 256 MiB total.
+
+Source listing before/after download matched. All bytes and a checksum manifest
+streamed through SSH directly into age encryption on the Mac. Actual final run:
+**2,679 objects / 185,493,091 bytes**, **445.6 seconds**. It decrypted into an
+isolated 0700 temporary directory on FileVault storage, recovered 0600 regular
+files, and re-read every restored SHA-256: **all matched**. Recovery rejects path
+traversal, symlinks, duplicates, excessive sizes and hash mismatches; four
+synthetic regression tests passed. The temporary plaintext directory was removed
+and a separate check found zero leftovers. Encrypted archive mode is 0600.
+
+Private archive: `~/.local/share/newbiegrader-private/ec2-backups/`, file ending
+`-storage.tar.age`; use its matching local `backup-identity.txt`, never Git/chat.
+The bucket manifest/object paths and bytes are not printed in logs/reports.
+No production objects were written/deleted. This confirms **file-byte recovery**,
+not restored Supabase bucket policies, managed Auth or a working Storage API.
+Those still require the DB/metadata/full-stack rehearsal below. This is a
+one-time backup; scheduled retention and off-host/offline identity custody remain
+operational tasks.
+
+Earlier attempts are excluded: the initial source lacked python-dotenv, so the
+implementation now uses systemd EnvironmentFile with installed dependencies;
+a four-download run was stopped because network throughput threatened its
+original deadline and its partial archive was removed. Only the complete final
+eight-download run above counts as verified. Interrupted/failed backups do not
+produce a usable archive.
 
 ## Available verified backup
 
