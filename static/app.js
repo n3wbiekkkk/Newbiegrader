@@ -3611,7 +3611,7 @@ $("ct-save").onclick = async () => {
 };
 
 /* ---------------- init (cache-first, parallel, non-blocking) ---------------- */
-const PROBLEMS_CACHE_KEY = "ng_problems_v1";
+const PROBLEMS_CACHE_KEY = "ng_problems_v2";
 const PROBLEMS_CACHE_TTL = 3600 * 1000;
 
 function loadProblemsCache() {
