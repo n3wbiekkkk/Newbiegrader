@@ -15,7 +15,8 @@ Git เพื่อให้ AI คนละตัวหรือคนละ se
 - `tools/make_statement_tex.py` + `tools/fonts/`: รูปแบบ PDF กลาง ห้ามสร้าง renderer
   หรือแต่งฟอนต์ ระยะขอบ และ template ใหม่แยกตาม AI
 - `problems/`, `examples/` และไฟล์ build ภายในนั้นเป็นข้อมูลส่วนตัวที่ Git ignore
-  source of truth ที่เผยแพร่คือ Supabase ห้าม force-add tests/เฉลยเข้า public repo
+  ไฟล์ที่เผยแพร่จริง (PDF, public samples, hidden tests) อยู่บน backend storage
+  ที่ป้องกันไว้ ส่วน metadata อยู่ที่ Supabase ห้าม force-add tests/เฉลยเข้า public repo
 
 ก่อนสร้าง ให้สรุป I/O contract: ทุกบรรทัดมีกี่ค่า ชนิดและช่วงค่า ตัวคั่น ขนาดตาราง
 ลำดับคำตอบ EOF และกรณีพิเศษ ตารางจำนวนเต็มคั่นช่องว่าง (`0 1 0`) กับสตริงติดกัน
@@ -153,7 +154,11 @@ CI มี synthetic authoring tests ใน Git จึงตรวจเครื
 ## 7. เผยแพร่และตรวจของจริง
 
 เก็บ credentials ใน environment ของเครื่องมือฝั่ง server ไม่พิมพ์ค่าลงคำสั่งหรือ log
-สำหรับโจทย์ใหม่ที่ได้รับอนุญาตให้เผยแพร่:
+ตั้งแต่ 2026-10-19 ไฟล์โจทย์เผยแพร่ลง backend disk ไม่ใช่ Supabase Storage แล้ว
+ตั้ง `GRADER_FILE_STORAGE=local` พร้อม `GRADER_PUBLIC_FILE_ROOT` /
+`GRADER_PRIVATE_FILE_ROOT` ของ EC2 ที่ป้องกันไว้ใน environment ของผู้เผยแพร่
+ชื่อ `import_problems_supabase.py` ยังใช้อยู่เพราะยังอัปเดต metadata ใน PostgreSQL
+แต่ตัวไฟล์จะถูกเขียนลง disk ก่อนแล้วจึงอัปเดต metadata สำหรับโจทย์ใหม่ที่ได้รับอนุญาต:
 
 ```sh
 python tools/import_problems_supabase.py --problem new_problem --strict --dry-run
@@ -162,16 +167,20 @@ python tools/import_problems_supabase.py --problem new_problem --strict
 
 `--strict` ตรวจ local ทั้งหมดก่อนติดต่อ Supabase; ถ้าไม่ผ่าน ไม่มี remote writes
 ทุกโหมดของ CLI มี sample/build preflight แม้ไม่ได้ใช้ strict ส่วน `--dry-run`
-ตรวจความพร้อมเท่านั้น **ไม่ได้** อัปโหลดหรือพิสูจน์ว่า publish สำเร็จ
+ตรวจความพร้อมเท่านั้น **ไม่ได้** เขียนไฟล์หรือพิสูจน์ว่า publish สำเร็จ
 ตรวจ metadata, samples, tests hash, PDF และสิทธิ์เข้าถึงบนเว็บหลัง publish จริง
+ห้ามใช้ CLI นี้ในโหมด Supabase Storage แบบเดิมสำหรับ production แล้ว (จะถูกปฏิเสธ)
+และห้าม `--prune` ในโหมด local
 
 สำหรับแก้เฉพาะเรื่อง/PDF ของข้อเดิม ใช้ `--statements-only --problem <id>`
 พร้อม dry-run ก่อน โหมดนี้ไม่แก้เทสต์/เลข/visibility และห้ามใช้เพื่อเผยแพร่การเปลี่ยน input
-สำรองแถวเดิมและ assets ก่อนอัปเดตเสมอ importer ปกติไม่ใช่ transaction ข้าม Storage/DB
+สำรองแถวเดิมและไฟล์/index ก่อนอัปเดตเสมอ importer ไม่ใช่ transaction ข้ามไฟล์กับ DB
+ต้อง pause admission, drain, หยุด worker และเผยแพร่แบบ serialize
 ถ้าแก้ชุดเทสต์ของโจทย์เดิม ต้องตรวจ active jobs และวางแผน rollback ของไฟล์กับ row
+สำรองข้อมูลไฟล์แบบ off-host ด้วย age ตาม `EC2_BACKUP_RESTORE.md` ก่อนและหลังเปลี่ยน
 
-local source ต้อง restart หลังเปลี่ยนโจทย์; Supabase source มี metadata TTL refresh
-ให้ตรวจว่า `/api/version` และ problem detail เห็น hash รุ่นใหม่ก่อนสรุปว่างานเสร็จ
+หลังเปลี่ยนโจทย์ให้ restart worker (local file mode) และตรวจ `/api/version`
+เห็น hash รุ่นใหม่ก่อนสรุปว่างานเสร็จ
 commit/push เฉพาะ code/docs/tools ที่เปลี่ยน ห้าม `git add -A` หรือ force-add ข้อมูลส่วนตัว
 
 ## Prompt ย่อสำหรับ AI ตัวอื่น

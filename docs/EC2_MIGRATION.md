@@ -1,13 +1,24 @@
 # EC2 migration work log and runbook
 
-## Latest application deployment — 2026-10-19
+## Latest deployment — backend problem files — 2026-10-19
 
 Production is **Cloudflare Pages + AWS t3.small / one worker**; Vercel and
-JustRunMy are not used. Correctness/cache backend `f883647` and Pages deployment
+JustRunMy are not used. Release `609bbf1f49c510d914c440763bb2304a45db376e` is
+active and reads all problem PDFs, public samples and private tests from
+`/var/lib/newbiegrader/problem-files/g1-4e9ba14273bc/` with
+`GRADER_FILE_STORAGE=local`. Native parity, the gated 21-test suite, encrypted
+backup/restore rehearsal, controlled activation, public smoke and a synthetic CE
+job passed. See the
+[backend file release record](releases/PRODUCTION_BACKEND_FILES_2026-10-19.md)
+and [storage design](BACKEND_PROBLEM_FILES.md). Supabase Storage objects remain
+untouched pending explicit deletion approval.
+
+## Previous deployment — correctness/cache — 2026-10-19
+
+Correctness/cache backend `f883647` and Pages deployment
 `f826f65a-5f93-49f0-9ca5-4f2d286a2c85` passed the approved rollout. See
 [exact tests, backups and AWS-only rollback](releases/PRODUCTION_CORRECTNESS_RELEASE_2026-10-19.md).
-The older 6cba18c migration checkpoints below are historical. A subsequent
-backend file-storage migration is requested, not yet deployed at this checkpoint.
+The older 6cba18c migration checkpoints below are historical.
 
 ## Current checkpoint — AWS production cutover verified (2026-10-19)
 

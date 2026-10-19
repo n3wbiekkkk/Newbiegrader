@@ -119,7 +119,8 @@ cutover still needs the separate final approval and queue/backup gates.
 
 The latest authorization permits staging setup, not production cutover. Official
 Cloudflare skills and the Cloudflare MCP are installed/authenticated; see
-`CODEX_MCP_SETUP.md`. Existing Newbiegrader production still uses JustRunMy.
+`CODEX_MCP_SETUP.md`. This paragraph is superseded: production moved to AWS on
+2026-10-19 and JustRunMy is retired, not an active production route.
 
 Selected path:
 
