@@ -1,0 +1,306 @@
+{
+  "artifact_sha256": "e9871ad1ddc1107cc5045fa0b2fdc5325c22246cd40ebd4d22b3c387fa2aa0f0",
+  "begun": {
+    "admission_paused": true,
+    "at": 1792406647.1675727,
+    "queue": {
+      "queued": 0,
+      "running": 0
+    }
+  },
+  "canary": {
+    "health_samples": [
+      {
+        "seconds": 0.05939240299994708,
+        "status": 200
+      },
+      {
+        "seconds": 1.0630923409999014,
+        "status": 200
+      },
+      {
+        "seconds": 0.0036593940003513126,
+        "status": 200
+      },
+      {
+        "seconds": 0.0027941819998886785,
+        "status": 200
+      },
+      {
+        "seconds": 0.0036892269999952987,
+        "status": 200
+      },
+      {
+        "seconds": 0.0037570350000351027,
+        "status": 200
+      },
+      {
+        "seconds": 0.002591544000097201,
+        "status": 200
+      },
+      {
+        "seconds": 0.0036521679999168555,
+        "status": 200
+      },
+      {
+        "seconds": 0.003636372999608284,
+        "status": 200
+      },
+      {
+        "seconds": 0.6870757490000869,
+        "status": 200
+      },
+      {
+        "seconds": 0.0033640649999142624,
+        "status": 200
+      },
+      {
+        "seconds": 0.00362208600017766,
+        "status": 200
+      },
+      {
+        "seconds": 0.003407795999919472,
+        "status": 200
+      },
+      {
+        "seconds": 0.0034475439997549984,
+        "status": 200
+      },
+      {
+        "seconds": 0.003756247000183066,
+        "status": 200
+      },
+      {
+        "seconds": 0.3757074619998093,
+        "status": 200
+      },
+      {
+        "seconds": 0.003157410999847343,
+        "status": 200
+      },
+      {
+        "seconds": 0.003424448000259872,
+        "status": 200
+      },
+      {
+        "seconds": 0.00401628100007656,
+        "status": 200
+      },
+      {
+        "seconds": 0.5756586569996216,
+        "status": 200
+      }
+    ],
+    "minimum_host_available_kib": 1275156,
+    "result": {
+      "controlled_job_oom_kills": 7,
+      "errors": 0,
+      "failures": 0,
+      "jobs_observed": 31,
+      "peak_job_bytes": 268435456,
+      "repeatability": {
+        "calibration_wall_s": [
+          0.6789,
+          0.7138,
+          0.6789
+        ],
+        "fixed_deadline_s": 0.89225,
+        "iterations": 4000000,
+        "replay": [
+          {
+            "cpu_s": 0.6637,
+            "verdict": "OK",
+            "wall_s": 0.6803
+          },
+          {
+            "cpu_s": 0.6603,
+            "verdict": "OK",
+            "wall_s": 0.6757
+          },
+          {
+            "cpu_s": 0.7417,
+            "verdict": "OK",
+            "wall_s": 0.7645
+          },
+          {
+            "cpu_s": 0.6681,
+            "verdict": "OK",
+            "wall_s": 0.6855
+          },
+          {
+            "cpu_s": 0.657,
+            "verdict": "OK",
+            "wall_s": 0.6737
+          },
+          {
+            "cpu_s": 0.6483,
+            "verdict": "OK",
+            "wall_s": 0.6549
+          }
+        ]
+      },
+      "single_worker": true,
+      "skipped": 0,
+      "success": true,
+      "synthetic_only": true,
+      "tests": 17
+    },
+    "sampled_cpu_usage_usec": 41016934,
+    "sampled_memory_max_bytes": 246321152,
+    "service_memory_events_local": {
+      "high": 0,
+      "low": 0,
+      "max": 0,
+      "oom": 0,
+      "oom_group_kill": 0,
+      "oom_kill": 0,
+      "sock_throttled": 0
+    },
+    "systemd_exit_status": "0",
+    "systemd_result": "success",
+    "wall_s": 43.65745731399966
+  },
+  "candidate": "/opt/newbiegrader/staging/t3-qualification-ba5d2f15c0e7",
+  "limitations": [
+    "No application deployment or production OAuth/API submission smoke",
+    "CPU credit balance/exhaustion and surplus charging not verified",
+    "Fixed 640 MiB job safety ceiling does not close S04 declared-memory semantics",
+    "Bounded synthetic fixture qualification does not prove all real problem limits or sustained capacity"
+  ],
+  "native_type": "t3.small",
+  "original": {
+    "admission": "1",
+    "api": {
+      "active": true,
+      "cpu_quota": "250ms",
+      "memory_events": {
+        "high": 0,
+        "low": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_group_kill": 0,
+        "oom_kill": 0,
+        "sock_throttled": 0
+      },
+      "memory_events_local": {
+        "high": 0,
+        "low": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_group_kill": 0,
+        "oom_kill": 0,
+        "sock_throttled": 0
+      },
+      "memory_max": "335544320"
+    },
+    "at": 1792406629.53549,
+    "memory_kib": {
+      "MemAvailable": 1409080,
+      "MemTotal": 1951736,
+      "SwapTotal": 0
+    },
+    "queue": {
+      "done": 48,
+      "error": 0,
+      "queued": 0,
+      "running": 0
+    },
+    "release": "/opt/newbiegrader/releases/6cba18c68366993fed7fc7572c87368bbb773ea9",
+    "worker": {
+      "active": true,
+      "cpu_quota": "1s",
+      "memory_events": {
+        "high": 0,
+        "low": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_group_kill": 0,
+        "oom_kill": 0,
+        "sock_throttled": 0
+      },
+      "memory_events_local": {
+        "high": 0,
+        "low": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_group_kill": 0,
+        "oom_kill": 0,
+        "sock_throttled": 0
+      },
+      "memory_max": "1073741824"
+    }
+  },
+  "public_post_restore_health": {
+    "http_status": 200,
+    "seconds": 0.352941,
+    "vantage": "normal curl from macOS public network outside AWS VPC through https://newbiegrader.pages.dev/api/health"
+  },
+  "restored": {
+    "admission": "1",
+    "api": {
+      "active": true,
+      "cpu_quota": "250ms",
+      "memory_events": {
+        "high": 0,
+        "low": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_group_kill": 0,
+        "oom_kill": 0,
+        "sock_throttled": 0
+      },
+      "memory_events_local": {
+        "high": 0,
+        "low": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_group_kill": 0,
+        "oom_kill": 0,
+        "sock_throttled": 0
+      },
+      "memory_max": "335544320"
+    },
+    "api_dropin_remaining": false,
+    "approval_gate_remaining": false,
+    "at": 1792406755.1930676,
+    "canary_active": false,
+    "canary_cgroup_remaining": false,
+    "new_workers_active": false,
+    "queue": {
+      "done": 48,
+      "error": 0,
+      "queued": 0,
+      "running": 0
+    },
+    "release_unchanged": true,
+    "restored": true,
+    "tunnel_active": true,
+    "worker": {
+      "active": true,
+      "cpu_quota": "1s",
+      "memory_events": {
+        "high": 0,
+        "low": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_group_kill": 0,
+        "oom_kill": 0,
+        "sock_throttled": 0
+      },
+      "memory_events_local": {
+        "high": 0,
+        "low": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_group_kill": 0,
+        "oom_kill": 0,
+        "sock_throttled": 0
+      },
+      "memory_max": "1073741824"
+    },
+    "worker_active": true,
+    "workspace_remaining": false
+  },
+  "scope": "approved single-worker synthetic qualification; no app deployment or queue writes by test unit",
+  "source_commit": "c206dd7faa5420866858082f161fc0a3c277387a"
+}
