@@ -6,6 +6,13 @@
 const DEFAULT_BACKEND = "https://grader.n.onjrnm.vip";
 const BODY_MAX = 1024 * 1024;
 
+async function sameKey(provided, expected) {
+  const encoder = new TextEncoder();
+  const hashes = await Promise.all([provided, expected].map(value =>
+    crypto.subtle.digest("SHA-256", encoder.encode(value))));
+  return crypto.subtle.timingSafeEqual(hashes[0], hashes[1]);
+}
+
 function backendOrigin(env) {
   const url = new URL(env?.BACKEND_ORIGIN || DEFAULT_BACKEND);
   if (url.protocol !== "https:" || url.username || url.password ||
@@ -60,6 +67,20 @@ function isAnonymousGet(request, pathname) {
 
 export async function onRequest(context) {
   const url = new URL(context.request.url);
+  const stagingMode = context.env?.BACKEND_STAGING_ONLY ?? "0";
+  if (!["0", "1"].includes(stagingMode)) {
+    return new Response("staging configuration unavailable", { status: 503 });
+  }
+  if (stagingMode === "1") {
+    const key = context.env?.STAGING_ACCESS_KEY;
+    if (typeof key !== "string" || key.length < 32) {
+      return new Response("staging configuration unavailable", { status: 503 });
+    }
+    const health = url.pathname === "/api/health" && ["GET", "HEAD"].includes(context.request.method);
+    if (!health && !await sameKey(context.request.headers.get("x-newbiegrader-staging-key") || "", key)) {
+      return new Response("staging access required", { status: 403, headers: { "cache-control": "no-store" } });
+    }
+  }
   let backend;
   let service = null;
   try {
@@ -82,7 +103,7 @@ export async function onRequest(context) {
   // content-length breaks POST submit on Workers).
   const HOP_BY_HOP = new Set(["connection", "keep-alive", "proxy-authenticate",
     "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade",
-    "content-length", "host", "x-newbiegrader-proxy-key", "x-forwarded-for",
+    "content-length", "host", "x-newbiegrader-proxy-key", "x-newbiegrader-staging-key", "x-forwarded-for",
     "x-forwarded-proto", "x-real-ip", "cf-connecting-ip"]);
   const fwdHeaders = new Headers();
   context.request.headers.forEach((v, k) => {

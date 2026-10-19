@@ -3,12 +3,15 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { test } = require('node:test');
+const { webcrypto, timingSafeEqual } = require('node:crypto');
 const code = fs.readFileSync(path.join(__dirname, '../functions/api/[[proxy]].js'), 'utf8')
   .replace('export async function onRequest', 'async function onRequest') + '\nthis.onRequest = onRequest;';
 
 function harness() {
   const calls = [];
-  const context = vm.createContext({ URL, Request, Response, Headers, Uint8Array,
+  const crypto = { subtle: { digest: webcrypto.subtle.digest.bind(webcrypto.subtle),
+    timingSafeEqual: (a, b) => timingSafeEqual(Buffer.from(a), Buffer.from(b)) } };
+  const context = vm.createContext({ URL, Request, Response, Headers, Uint8Array, TextEncoder, crypto,
     fetch: async (url, init) => { calls.push({ url, init }); return new Response('ok'); } });
   vm.runInContext(code, context);
   return { calls, run: (request, env = {}) => context.onRequest({ request, env, waitUntil() {} }) };
@@ -109,4 +112,47 @@ test('a failed service returns generic 502 and never retries the old judge', asy
   assert.equal(result.status, 502);
   assert.equal(await result.text(), 'backend unavailable');
   assert.equal(h.calls.length, 0);
+});
+
+test('staging API requires its separate access key before any origin or cache access', async () => {
+  const key = 's'.repeat(64);
+  for (const provided of ['', 'wrong', 's'.repeat(63), 's'.repeat(63) + 'x']) {
+    const h = harness();
+    const r = await h.run(new Request('https://staging.invalid/api/auth/me', {
+      headers: { 'x-newbiegrader-staging-key': provided },
+    }), { BACKEND_STAGING_ONLY: '1', STAGING_ACCESS_KEY: key });
+    assert.equal(r.status, 403);
+    assert.equal(r.headers.get('cache-control'), 'no-store');
+    assert.equal(h.calls.length, 0);
+  }
+});
+
+test('staging gate fails closed when its flag or secret is misconfigured', async () => {
+  for (const env of [{ BACKEND_STAGING_ONLY: 'invalid' },
+    { BACKEND_STAGING_ONLY: '1' }, { BACKEND_STAGING_ONLY: '1', STAGING_ACCESS_KEY: 'short' }]) {
+    const h = harness();
+    assert.equal((await h.run(new Request('https://staging.invalid/api/health'), env)).status, 503);
+    assert.equal(h.calls.length, 0);
+  }
+});
+
+test('authorized staging requests strip the test key and preserve the independent origin key', async () => {
+  const h = harness();
+  await h.run(new Request('https://staging.invalid/api/auth/me', {
+    headers: { 'x-newbiegrader-staging-key': 's'.repeat(64) },
+  }), { BACKEND_STAGING_ONLY: '1', STAGING_ACCESS_KEY: 's'.repeat(64),
+    BACKEND_PROXY_KEY: 'p'.repeat(64) });
+  assert.equal(h.calls[0].init.headers.get('x-newbiegrader-staging-key'), null);
+  assert.equal(h.calls[0].init.headers.get('x-newbiegrader-proxy-key'), 'p'.repeat(64));
+});
+
+test('staging exposes only GET and HEAD health without the test key', async () => {
+  const h = harness();
+  const env = { BACKEND_STAGING_ONLY: '1', STAGING_ACCESS_KEY: 's'.repeat(64) };
+  for (const method of ['GET', 'HEAD']) {
+    await h.run(new Request('https://staging.invalid/api/health', { method }), env);
+  }
+  assert.equal(h.calls.length, 2);
+  assert.equal((await h.run(new Request('https://staging.invalid/api/health', { method: 'POST' }), env)).status, 403);
+  assert.equal(h.calls.length, 2);
 });

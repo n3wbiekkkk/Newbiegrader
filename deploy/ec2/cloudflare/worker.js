@@ -1,23 +1,30 @@
 // Private Pages service-binding bridge to a fixed VPC Service. No public route.
 // Default is health-only. Full API access requires the separate cutover gate
 // AND a server-side shared key from the Pages Function; never a browser key.
+async function sameKey(provided, expected) {
+  const encoder = new TextEncoder();
+  const hashes = await Promise.all([provided, expected].map(value =>
+    crypto.subtle.digest('SHA-256', encoder.encode(value))));
+  return crypto.subtle.timingSafeEqual(hashes[0], hashes[1]);
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const health = url.pathname === '/api/health' && ['GET', 'HEAD'].includes(request.method);
     if (!health) {
       if (env.API_ENABLED !== '1') return new Response('not found', { status: 404 });
-      if (!env.BACKEND_PROXY_KEY || env.BACKEND_PROXY_KEY.length < 32) {
+      if (typeof env.BACKEND_PROXY_KEY !== 'string' || env.BACKEND_PROXY_KEY.length < 32) {
         return new Response('origin configuration unavailable', { status: 503 });
       }
-      if (request.headers.get('x-newbiegrader-proxy-key') !== env.BACKEND_PROXY_KEY) {
+      if (!await sameKey(request.headers.get('x-newbiegrader-proxy-key') || '', env.BACKEND_PROXY_KEY)) {
         return new Response('forbidden', { status: 403 });
       }
       if (!url.pathname.startsWith('/api/')) return new Response('not found', { status: 404 });
     }
     if (!env.PRIVATE_API) return new Response('origin unavailable', { status: 503 });
     const headers = new Headers(request.headers);
-    for (const name of ['x-newbiegrader-proxy-key', 'cf-connecting-ip', 'x-real-ip',
+    for (const name of ['x-newbiegrader-proxy-key', 'x-newbiegrader-staging-key', 'cf-connecting-ip', 'x-real-ip',
       'connection', 'transfer-encoding', 'host']) headers.delete(name);
     if (health) {
       headers.delete('cookie');
