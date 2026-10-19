@@ -49,20 +49,17 @@ async function boundedBody(request) {
   return { body };
 }
 
-// Zero-account GETs whose body is identical for every visitor. The backend
-// origin sits ~200ms away, so every proxied request pays a full round trip;
-// caching these at the edge makes repeat page loads ~10x faster. Anything that
-// carries a session (or is not a GET) always goes straight through: a logged-in
-// admin sees hidden problems, and only the anonymous body is shareable.
+// Candidate shared-cache routes. Requests with credentials and responses with
+// private/no-store/no-cache, Set-Cookie or identity-dependent Vary bypass storage.
+// Contest listings are personalized and are never in this allowlist.
 const EDGE_CACHE_PATHS = new Set([
   "/api/problems", "/api/health", "/api/languages", "/api/version", "/api/stats",
 ]);
 const EDGE_CACHE_TTL = 30;   // seconds; matches the server's own 20-30s caches
-const AUTH_COOKIES = /(?:^|;\s*)(?:ng_session|ng_remember)=/;
 
 function isAnonymousGet(request, pathname) {
   if (request.method !== "GET" || !EDGE_CACHE_PATHS.has(pathname)) return false;
-  return !AUTH_COOKIES.test(request.headers.get("cookie") || "");
+  return !request.headers.has("authorization") && !request.headers.has("cookie");
 }
 
 export async function onRequest(context) {
@@ -133,6 +130,7 @@ export async function onRequest(context) {
       edgeCache = caches.default;
       const cacheUrl = new URL(url);
       cacheUrl.searchParams.set("__ng_origin", backend);
+      cacheUrl.searchParams.set("__ng_policy", "2");
       cacheKey = new Request(cacheUrl.toString(), { method: "GET" });
       const hit = await edgeCache.match(cacheKey);
       if (hit) {
@@ -159,9 +157,14 @@ export async function onRequest(context) {
   getSetCookie.forEach((c) => headers.append("set-cookie", c));
 
   // Only store a clean, cookieless 200 for the next anonymous visitor.
-  if (edgeCache && res.status === 200 && getSetCookie.length === 0) {
+  const cacheControl = res.headers.get("cache-control") || "";
+  const vary = (res.headers.get("vary") || "").split(",").map(v => v.trim().toLowerCase()).filter(Boolean);
+  const shareable = !/(?:^|,)\s*(?:private|no-store|no-cache)(?:[=,\s]|$)/i.test(cacheControl)
+    && vary.every(v => v === "accept-encoding") && !res.headers.has("set-cookie");
+  if (edgeCache && shareable && res.status === 200 && getSetCookie.length === 0) {
+    const ttl = EDGE_CACHE_TTL;
     headers.set("cache-control",
-      `public, max-age=${EDGE_CACHE_TTL}, s-maxage=${EDGE_CACHE_TTL}`);
+      `public, max-age=${ttl}, s-maxage=${ttl}`);
     headers.set("x-ng-cache", "MISS");
     const stored = new Response(await res.arrayBuffer(), { status: 200, headers });
     context.waitUntil(edgeCache.put(cacheKey, stored.clone()).catch(() => {}));

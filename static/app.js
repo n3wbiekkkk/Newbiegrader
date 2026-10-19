@@ -95,7 +95,7 @@ function openPalette() {
   paletteIdx = 0;
   const ensure = (state.problems && state.problems.length)
     ? Promise.resolve()
-    : apiGet("/api/problems").then((d) => { state.problems = d.problems || []; }).catch(() => {});
+    : apiGet("/api/problems").then((d) => { state.problems = problemRowsForIdentity(d.problems); }).catch(() => {});
   ensure.then(() => { renderPalette(); $("palette-input").focus(); });
   $("palette-input").oninput = () => { paletteIdx = 0; renderPalette(); };
   $("palette-overlay").onclick = (e) => {
@@ -333,13 +333,10 @@ document.querySelectorAll(".tab-btn").forEach((b) => {
 });
 
 function esc(s) {
-  return String(s)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+  // One pass instead of five regexes; callers run this on every table cell.
+  return String(s).replace(/[&<>"']/g, (c) => ESC_MAP[c]);
 }
+const ESC_MAP = {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"};
 
 function inlineMd(s) {
   s = esc(s);
@@ -623,17 +620,22 @@ const _getCache = new Map();
 const _getInflight = new Map();
 let _getGen = 0;   // bumped on logout: late responses must not repopulate the cache
 
-function apiGetCached(path, ttlMs) {
+function apiGetCached(path, ttlMs, force = false) {
+  if (force) { _getCache.delete(path); _getInflight.delete(path); }
   const hit = _getCache.get(path);
   if (hit && Date.now() - hit.t < ttlMs) return Promise.resolve(hit.v);
   if (_getInflight.has(path)) return _getInflight.get(path);
   const gen = _getGen;
   const p = apiGet(path).then((v) => {
-    if (gen === _getGen) _getCache.set(path, { t: Date.now(), v: v });
-    _getInflight.delete(path);
+    if (gen === _getGen && _getInflight.get(path) === p) {
+      const pending = (v.submissions || []).some(r => ["queued", "running"].includes(r.status));
+      if (!pending) _getCache.set(path, { t: Date.now(), v: v });
+      if (_getCache.size > 100) _getCache.delete(_getCache.keys().next().value);
+      _getInflight.delete(path);
+    }
     return v;
   }, (e) => {
-    _getInflight.delete(path);
+    if (_getInflight.get(path) === p) _getInflight.delete(path);
     throw e;
   });
   _getInflight.set(path, p);
@@ -678,6 +680,7 @@ async function fetchStats() {
 
 /* ---------------- router ---------------- */
 function show(view) {
+  if (view !== "contest") state.contestSeq = (state.contestSeq || 0) + 1;
   // Leaving the task list remembers where you were: coming back from a
   // problem restores the scroll instead of dumping you at the top.
   try {
@@ -939,8 +942,28 @@ function problemNameHtml(title) {
     (match ? `<span class="problem-english">${esc(match[2])}</span>` : "");
 }
 
+function problemRowsForIdentity(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  if (state.is_admin) return list;
+  // A late admin response must never repopulate a logged-out user's task list.
+  return list.filter(p => !p.hidden && !p.contest_only && !p.config_hidden).map(p => {
+    const { hidden, contest_only, config_hidden, ...publicRow } = p;
+    return publicRow;
+  });
+}
+
+const _byPidIndex = new WeakMap();
 function byPidOf(list, pid) {
-  return (list || []).find((p) => p.id === pid) || null;
+  if (!list) return null;
+  let index = _byPidIndex.get(list);
+  if (!index) {
+    index = new Map();
+    list.forEach((p) => {
+      if (p && p.id != null && !index.has(p.id)) index.set(p.id, p);
+    });
+    _byPidIndex.set(list, index);
+  }
+  return index.get(pid) || null;
 }
 
 function problemCell(pid) {
@@ -1072,9 +1095,11 @@ function renderTasksTable() {
 }
 
 async function fetchMyBest() {
+  const gen = _getGen, pid = state.current;
   state.myBestLoaded = true;
   try {
     const h = await apiGetCached("/api/history?limit=100&mine=1", 15000);
+    if (gen !== _getGen) return;
     const best = {};
     ((h.configured && h.submissions) || []).forEach((r) => {
       if (r.contest_id) return;   // contest scores belong to the contest board
@@ -1082,11 +1107,11 @@ async function fetchMyBest() {
     });
     state.myBest = best;
   } catch (e) {
+    if (gen !== _getGen) return;
     state.myBest = state.myBest || {};
     state.myBestLoaded = false;  // retry on next view render
   }
 }
-
 /* ---------------- archive ---------------- */
 function renderArchive() {
   const tagCount = {};
@@ -1357,28 +1382,34 @@ async function selectProblem(pid) {
 }
 
 async function refreshYourScore() {
+  const gen = _getGen, pid = state.current;
   if (!state.current || !state.user) {
     $("your-score-num").textContent = state.user ? "0" : "—";
     return;
   }
   try {
     const h = await apiGetCached(`/api/history?limit=100&problem=${encodeURIComponent(state.current)}&mine=1`, 10000);
+    if (gen !== _getGen || pid !== state.current) return;
     const rows = (h.configured && h.submissions) || [];
     const best = rows.reduce((m, r) => Math.max(m, r.score || 0), 0);
     const ysn = $("your-score-num");
     ysn.textContent = rows.length ? `${best}/100` : "0";
     ysn.className = scoreCls(best);
   } catch (e) {
+    if (gen !== _getGen || pid !== state.current) return;
     $("your-score-num").textContent = "?";
   }
 }
-
 async function loadTaskSubs() {
+  const gen = _getGen, pid = state.current;
   const body = $("task-all-body");
   if (!state.current) return;
   body.innerHTML = skel(4);
   try {
-    const h = await apiGet(`/api/history?limit=50&problem=${encodeURIComponent(state.current)}`);
+    // Public per-problem feed: safe to reuse briefly; clearGetCache() runs after
+    // this user submits, so their own new row is never hidden by the cache.
+    const h = await apiGetCached(`/api/history?limit=50&problem=${encodeURIComponent(state.current)}`, 10000);
+    if (gen !== _getGen || pid !== state.current) return;
     if (!h.configured) {
       body.innerHTML = `<span class="dim">ยังไม่เปิด submissions (ตั้งค่า Supabase ที่ backend)</span>`;
       $("task-top-body").innerHTML = `<span class="dim">—</span>`;
@@ -1394,10 +1425,10 @@ async function loadTaskSubs() {
     body.innerHTML = historyTable(rows, false);
     bindViewButtons(body);
   } catch (e) {
+    if (gen !== _getGen || pid !== state.current) return;
     body.innerHTML = `<span class="dim">ดูไม่ได้: ${esc(e.message)}</span>`;
   }
 }
-
 function renderTopScores(rows) {
   const body = $("task-top-body");
   const best = new Map();
@@ -1425,6 +1456,7 @@ function renderTopScores(rows) {
 }
 
 async function loadTaskMine() {
+  const gen = _getGen, pid = state.current;
   const body = $("task-mine-body");
   if (!state.current) return;
   if (!state.user) {
@@ -1434,6 +1466,7 @@ async function loadTaskMine() {
   body.innerHTML = skel(4);
   try {
     const h = await apiGetCached(`/api/history?limit=100&problem=${encodeURIComponent(state.current)}&mine=1`, 10000);
+    if (gen !== _getGen || pid !== state.current) return;
     const rows = (h.configured && h.submissions) || [];
     if (!rows.length) {
       body.innerHTML = `<span class="dim">ยังไม่เคยส่งข้อนี้ — ไปแท็บ Submit เลย</span>`;
@@ -1443,25 +1476,31 @@ async function loadTaskMine() {
     body.innerHTML = historyTable(rows, false);
     bindViewButtons(body);
   } catch (e) {
+    if (gen !== _getGen || pid !== state.current) return;
     body.innerHTML = `<span class="dim">ดูไม่ได้: ${esc(e.message)}</span>`;
   }
 }
-
 /* ---------------- auth ---------------- */
 async function refreshMe() {
+  const seq = state.meSeq = (state.meSeq || 0) + 1;
   const previousIdentity = JSON.stringify([state.user && state.user.email, !!state.is_admin]);
   let embedded = null;
   try {
     const me = await apiGet("/api/auth/me");
+    if (seq !== state.meSeq) return;
     state.user = (me && me.user) || null;
     state.is_admin = state.isAdmin = !!(me && me.is_admin);
     embedded = me && me.profile ? me : null;
   } catch (e) {
+    if (seq !== state.meSeq) return;
     state.user = null;
     state.is_admin = state.isAdmin = false;
   }
   if (previousIdentity !== JSON.stringify([state.user && state.user.email, !!state.is_admin])) {
     clearGetCache();
+    state.problems = problemRowsForIdentity(state.problems);
+    state.contests = [];
+    state.contestCache = {};
   }
   state.myBestLoaded = false;
   state.myBest = {};
@@ -1484,6 +1523,7 @@ async function refreshMe() {
         prof = data.profile || null;
       } catch (e) { /* ignore */ }
     }
+    if (seq !== state.meSeq) return;
     if (prof) {
       if (prof.display_name) display = prof.display_name;
       if (prof.default_language) setLang(prof.default_language);
@@ -2068,6 +2108,7 @@ async function resumeJob(pid, jid) {
 
 function jobStateText(job) {
   if (job.status === "queued") {
+    if (job.queued_ahead == null || !Number.isFinite(Number(job.queued_ahead))) return "อยู่ในคิวตรวจ";
     const n = Number(job.queued_ahead) || 0;
     return n > 0 ? `อยู่ในคิวตรวจ (มีงานก่อนหน้า ${n} งาน)` : "อยู่ในคิวตรวจ (ถึงคิวเป็นคนแรก)";
   }
@@ -2424,13 +2465,16 @@ function rowVerdictCode(r) {
   return ["CE", "RE", "MLE", "TLE", "OLE", "WA"].find((k) => counts[k]) || "WA";
 }
 
+const SHORT_TIME_OPTS = { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" };
+const _shortTimeFmt = new Intl.DateTimeFormat("th-TH", SHORT_TIME_OPTS);
+const _shortTimeFmtYear = new Intl.DateTimeFormat("th-TH", { ...SHORT_TIME_OPTS, year: "2-digit" });
+
 function shortTime(iso) {
   const t = Date.parse(iso);
   if (!t) return iso || "";
   const d = new Date(t);
-  const opts = { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" };
-  if (d.getFullYear() !== new Date().getFullYear()) opts.year = "2-digit";
-  return d.toLocaleString("th-TH", opts);
+  const fmt = d.getFullYear() !== new Date().getFullYear() ? _shortTimeFmtYear : _shortTimeFmt;
+  return fmt.format(d);
 }
 
 function historyTable(rows, showProblem) {
@@ -2453,7 +2497,8 @@ function bindViewButtons(root) {
   });
 }
 
-async function loadHistory() {
+async function loadHistory(force) {
+  const gen = _getGen, seq = state.historySeq = (state.historySeq || 0) + 1;
   const body = $("hist-body");
   const filt = $("hist-filter").value;
   if (!state.user) {
@@ -2463,7 +2508,11 @@ async function loadHistory() {
   }
   body.innerHTML = skel(6);
   try {
-    const h = await apiGet(`/api/history?limit=100${filt ? `&problem=${encodeURIComponent(filt)}` : ""}&mine=1`);
+    const path = `/api/history?limit=100${filt ? `&problem=${encodeURIComponent(filt)}` : ""}&mine=1`;
+    // The refresh button must bypass the short cache (force === true); change
+    // handlers receive an Event object and keep using the cached read.
+    const h = await apiGetCached(path, 10000, force === true);
+    if (gen !== _getGen || seq !== state.historySeq) return;
     if (!h.configured) {
       body.innerHTML = `<span class="dim">ยังไม่เปิด history — ตั้งค่า SUPABASE_URL / SUPABASE_KEY ที่ backend (schema ใน supabase/schema.sql)</span>`;
       $("hist-stats").textContent = "";
@@ -2510,10 +2559,10 @@ async function loadHistory() {
     }
     bindViewButtons(body);
   } catch (e) {
+    if (gen !== _getGen || seq !== state.historySeq) return;
     body.innerHTML = `<span class="dim">ดูประวัติไม่ได้: ${esc(e.message)}</span>`;
   }
 }
-
 async function viewSubmission(sid) {
   try {
     const r = await apiGet(`/api/history/${encodeURIComponent(sid)}`);
@@ -2558,14 +2607,16 @@ function contestStatusBadge(st) {
   return badge(CONTEST_STATUS_TH[key] || key, key);
 }
 
+const _thaiTimeFmt = new Intl.DateTimeFormat("th-TH", {
+  day: "2-digit", month: "short", year: "numeric",
+  hour: "2-digit", minute: "2-digit",
+});
+
 function thaiTime(iso) {
   if (!iso) return "—";
   const d = new Date(iso);
   if (isNaN(d.getTime())) return String(iso);
-  return d.toLocaleString("th-TH", {
-    day: "2-digit", month: "short", year: "numeric",
-    hour: "2-digit", minute: "2-digit",
-  });
+  return _thaiTimeFmt.format(d);
 }
 
 function contestWindowText(c) {
@@ -2640,6 +2691,8 @@ async function renderContests() {
 }
 
 async function renderContest(cid) {
+  const seq = state.contestSeq = (state.contestSeq || 0) + 1;
+  const gen = _getGen;
   const title = $("contest-title"), meta = $("contest-meta");
   title.textContent = "Loading...";
   meta.textContent = "";
@@ -2648,8 +2701,13 @@ async function renderContest(cid) {
   $("contest-problems").innerHTML = skel(4);
   $("contest-scoreboard").innerHTML = skel(3);
   $("contest-annc").innerHTML = skel(2);
+  // Announcements only need the contest id, so let them travel in parallel with
+  // the (larger) detail payload instead of adding a second serial round trip.
+  const anncPromise = apiGet(`/api/contests/${encodeURIComponent(cid)}/announcements`)
+    .catch((e) => ({ __error: e }));
   try {
     const d = await apiGet(`/api/contests/${encodeURIComponent(cid)}`);
+    if (seq !== state.contestSeq || gen !== _getGen) return;
     state.contestCache[cid] = d;
     setTitle("contest", d.title || d.id);
     title.textContent = d.title || d.id;
@@ -2661,10 +2719,11 @@ async function renderContest(cid) {
     if (d.frozen) $("contest-freeze").classList.remove("hidden");
     renderContestJoin(d);
     renderContestProblems(d);
-    renderContestAnnc(d);
+    renderContestAnnc(d, anncPromise, seq, gen);
     renderContestScoreboard(d);
     startContestTicker(d.id || cid, d);
   } catch (e) {
+    if (seq !== state.contestSeq || gen !== _getGen) return;
     const msg = isUnconfiguredMessage(e.message) ? CONTESTS_UNCONFIGURED : e.message;
     title.textContent = "โหลดคอนเทสต์ไม่สำเร็จ";
     meta.textContent = "";
@@ -2815,14 +2874,18 @@ function renderContestProblems(d) {
   });
 }
 
-async function renderContestAnnc(d) {
+async function renderContestAnnc(d, pending, seq = state.contestSeq, gen = _getGen) {
   const box = $("contest-annc");
   const form = $("contest-annc-form");
   box.classList.add("dim");
   box.innerHTML = skel(2);
   form.classList.add("hidden");
   try {
-    const a = await apiGet(`/api/contests/${encodeURIComponent(d.id)}/announcements`);
+    const a = pending
+      ? await pending
+      : await apiGet(`/api/contests/${encodeURIComponent(d.id)}/announcements`);
+    if (seq !== state.contestSeq || gen !== _getGen) return;
+    if (a && a.__error) throw a.__error;
     const list = a.announcements || [];
     box.classList.remove("dim");
     box.innerHTML = list.length
@@ -2833,6 +2896,7 @@ async function renderContestAnnc(d) {
         ? `<span class="dim">ประกาศจะแสดงเมื่อเริ่มแข่ง</span>`
         : `<span class="dim">ยังไม่มีประกาศ</span>`);
   } catch (e) {
+    if (seq !== state.contestSeq || gen !== _getGen) return;
     box.innerHTML = `<span class="dim">โหลดประกาศไม่ได้: ${esc(e.message)}</span>`;
   }
   if (state.is_admin) {
@@ -2849,6 +2913,7 @@ async function renderContestAnnc(d) {
         toast("โพสต์ประกาศแล้ว", "t-ok");
         renderContestAnnc(d);
       } catch (e) {
+        if (seq !== state.contestSeq || gen !== _getGen) return;
         st.textContent = "โพสต์ไม่สำเร็จ: " + e.message;
       }
     };
@@ -3015,6 +3080,21 @@ function showAdminTab(name) {
     b.classList.toggle("active", on);
     b.setAttribute("aria-selected", String(on));
   });
+  // Load heavy panels on first open instead of on every admin visit. The
+  // overview and the contest badge still load immediately; reports and the
+  // tool selects wait until the operator actually asks for them.
+  if (name === "overview" && !state.adminOverviewLoaded) {
+    state.adminOverviewLoaded = true;
+    loadOverview();
+  }
+  if (name === "reports" && !state.adminReportsLoaded) {
+    state.adminReportsLoaded = true;
+    loadAdminReports();
+  }
+  if (name === "tools" && !state.adminToolsBuilt) {
+    state.adminToolsBuilt = true;
+    renderAdminTools();
+  }
 }
 
 function renderAdmin() {
@@ -3036,23 +3116,27 @@ function renderAdmin() {
       refresh.disabled = true;
       if (label) label.textContent = "กำลังโหลด…";
       await Promise.all([loadOverview(), loadAdminContests(), loadAdminReports()]);
+      state.adminReportsLoaded = true;
+      state.adminOverviewLoaded = true;
       if (label) label.textContent = "รีเฟรช";
       refresh.disabled = false;
     };
   }
   const repRefresh = $("admin-reports-refresh");
   if (repRefresh) repRefresh.onclick = loadAdminReports;
+  state.adminReportsLoaded = false;
+  state.adminToolsBuilt = false;
+  state.adminOverviewLoaded = false;
+  // The contest tab shows a count badge, so its list still starts immediately;
+  // only the panel bodies wait until their tab is opened.
+  loadAdminContests();
   showAdminTab(state.adminTab || "overview");
-  loadAdminReports();
-  loadOverview();
-  renderAdminTools();
 }
 
 function renderAdminTools() {
   buildProblemSelect($("rejudge-problem"));
   buildProblemSelect($("plag-problem"));
   renderContestProblemPicker();
-  loadAdminContests();
 }
 
 /* ---- contest problem picker (checkbox list beats a ctrl-click multiselect) ---- */
@@ -3462,7 +3546,7 @@ function loadProblemsCache() {
     if (!raw) return false;
     const c = JSON.parse(raw);
     if (!c || !Array.isArray(c.data) || Date.now() - c.t > PROBLEMS_CACHE_TTL) return false;
-    state.problems = c.data;
+    state.problems = problemRowsForIdentity(c.data);
     return state.problems.length > 0;
   } catch (e) { return false; }
 }
@@ -3495,7 +3579,7 @@ async function refreshProblems() {
   try {
     const d = await apiGet("/api/problems");
     if (d && Array.isArray(d.problems)) {
-      state.problems = d.problems;
+      state.problems = problemRowsForIdentity(d.problems);
       saveProblemsCache();
       buildFilterOptions();
       if (document.querySelector("#view-tasks.active")) renderTasksTable();
@@ -3641,7 +3725,7 @@ async function init() {
   hf.onchange = loadHistory;
   if ($("hist-verdict")) $("hist-verdict").onchange = loadHistory;
   if ($("hist-group")) $("hist-group").onchange = loadHistory;
-  $("hist-refresh").onclick = loadHistory;
+  $("hist-refresh").onclick = () => loadHistory(true);
   $("auth-go").onclick = () => doPasswordAuth();
   $("auth-code").onkeydown = (e) => { if (e.key === "Enter") doPasswordAuth(); };
   $("auth-pass").onkeydown = (e) => { if (e.key === "Enter") doPasswordAuth(); };
@@ -3726,7 +3810,7 @@ async function init() {
     renderHome();
   }
   if (data && JSON.stringify(data.problems) !== JSON.stringify(state.problems)) {
-    state.problems = data.problems;
+    state.problems = problemRowsForIdentity(data.problems);
     saveProblemsCache();
     buildFilterOptions();
     const h = location.hash || "#/";
