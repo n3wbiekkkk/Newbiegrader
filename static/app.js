@@ -1540,58 +1540,141 @@ function uptimeText(s) {
   return (d ? `${d}d ` : "") + (h ? `${h}h ` : "") + `${m}m`;
 }
 
+function overviewKpi(iconName, label, value, note, cls) {
+  return `<div class="kpi${cls ? " " + cls : ""}">` +
+    `<div class="kpi-top"><span class="kpi-icon">${icon(iconName)}</span>` +
+    `<span class="kpi-label">${esc(label)}</span></div>` +
+    `<div class="kpi-value">${esc(String(value))}</div>` +
+    (note ? `<div class="kpi-note">${esc(note)}</div>` : "") +
+    `</div>`;
+}
+
+function setDashCount(id, value) {
+  const el = $(id);
+  if (el) el.textContent = value;
+}
+
 async function loadOverview() {
   const stats = $("overview-stats"), probs = $("overview-problems"), recent = $("overview-recent");
+  const hiddenBox = $("overview-hidden"), health = $("overview-health"), meta = $("overview-meta");
+  [stats, probs, recent, hiddenBox].forEach((el) => {
+    if (!el) return;
+    el.classList.add("dim");
+    el.innerHTML = skel(3);
+  });
+  if (health) health.innerHTML = "";
   try {
     const d = await apiGet("/api/admin/overview");
     const j = d.jobs || {};
-    const tiles = [
-      ["โจทย์", d.problems], ["ผู้ใช้", d.users], ["ส่งทั้งหมด", d.submissions],
-      ["ผ่าน", d.accepted], ["รีพอร์ตค้าง", d.reports_open], ["uptime", uptimeText(d.system.uptime_s)],
-      ["งานรอคิว", j.queued ?? 0], ["กำลังตรวจ", j.running ?? 0],
-      ["คิวค้าง", j.queue_depth ?? 0], ["workers", j.workers ?? 0],
-    ];
-    stats.classList.remove("dim");
-    const queueWarn = (j.queue_full || j.queue_alert)
-      ? `<div class="notice" role="alert">คิวตรวจค้าง ${esc(String(j.queue_depth ?? j.queued ?? 0))} งาน` +
-        `${j.queue_full ? " (คิวเต็ม — ผู้ใช้ใหม่จะได้ 503)" : " — งานใหม่อาจรอนาน"}` +
-        `</div>`
-      : "";
-    stats.innerHTML = queueWarn + tiles.map(([k, v]) =>
-      `<div class="stat"><div class="stat-num">${esc(String(v))}</div><div class="stat-label">${esc(k)}</div></div>`).join("");
-    const pp = d.per_problem || {};
-    probs.classList.remove("dim");
-    probs.innerHTML = `<table class="tests"><thead><tr>
-      <th>ข้อ</th><th>ส่ง</th><th>ผ่าน</th><th>ดีสุด</th>
-      </tr></thead><tbody>` + Object.keys(pp).sort().map((k) =>
-      `<tr><td>${esc(k)}</td><td>${pp[k].subs}</td><td>${pp[k].accepted}</td><td>${pp[k].best}</td></tr>`
-    ).join("") + `</tbody></table>`;
-    const rows = d.recent || [];
-    const hid = $("overview-hidden");
-    const hidList = d.problems_contest_only || [];
-    if (hid) {
-      hid.classList.remove("dim");
-      hid.innerHTML = hidList.length
-        ? `<table class="tests"><thead><tr><th>ข้อ</th><th>ชื่อ</th><th>ที่มา</th><th></th></tr></thead><tbody>` +
-          hidList.map((h) =>
-            `<tr><td>${esc(h.id)}</td><td>${esc(h.title)}</td>` +
-            `<td>${h.config_hidden ? "config hidden" : ""}${h.config_hidden && h.contest_hidden ? " + " : ""}` +
-            `${h.contest_hidden ? (h.in_contest ? "ในคอนเทสต์" : "คอนเทสต์ (ไม่มีแล้ว?)") : ""}</td>` +
-            `<td><a class="tlink" href="#/task/${encodeURIComponent(h.id)}">เปิด</a></td></tr>`
-          ).join("") + `</tbody></table>` +
-          `<p class="dim">โจทย์พวกนี้ไม่ขึ้นในหน้า Task ของผู้ใช้ทั่วไป — เข้าถึงได้จากหน้าคอนเทสต์และจากตรงนี้</p>`
-        : `<span class="dim">ไม่มี (โจทย์ทุกข้อขึ้นในหน้า Task)</span>`;
+    const sys = d.system || {};
+    const depth = j.queue_depth ?? j.queued ?? 0;
+    const queueFull = !!j.queue_full;
+    const queueAlert = !!j.queue_alert || queueFull;
+    const reportsOpen = Number(d.reports_open) || 0;
+    const subs = Number(d.submissions) || 0;
+    const accepted = Number(d.accepted) || 0;
+    const rate = subs ? Math.round((100 * accepted) / subs) : 0;
+    const contestOnly = (d.problems_contest_only || []).length;
+
+    if (meta) {
+      meta.textContent = `อัปเดต ${new Date().toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" })}` +
+        ` · uptime ${uptimeText(sys.uptime_s)}`;
     }
+
+    if (health) {
+      const banners = [];
+      if (queueAlert) {
+        banners.push(`<div class="dash-banner dash-banner-warn" role="alert">${icon("alert")}` +
+          `<div><strong>คิวตรวจ${queueFull ? "เต็ม" : "ค้าง"}</strong>` +
+          `<span>${esc(String(depth))} งานค้าง${queueFull ? " — ผู้ใช้ใหม่จะได้ 503" : " — งานใหม่อาจรอนาน"}</span>` +
+          `</div></div>`);
+      } else {
+        banners.push(`<div class="dash-banner dash-banner-ok">${icon("check")}` +
+          `<div><strong>คิวตรวจทำงานปกติ</strong>` +
+          `<span>${esc(String(depth))} งานรอ · ${esc(String(j.running ?? 0))} กำลังตรวจ · ${esc(String(j.workers ?? 0))} workers</span>` +
+          `</div></div>`);
+      }
+      if (reportsOpen) {
+        banners.push(`<div class="dash-banner dash-banner-info">${icon("flag")}` +
+          `<div><strong>มีรีพอร์ตค้าง ${reportsOpen} รายการ</strong><span>ตรวจสอบและปิดรายการได้ที่แท็บ “รีพอร์ต”</span></div>` +
+          `<button class="ghost-btn" type="button" data-goto-tab="reports">เปิดรีพอร์ต</button></div>`);
+      }
+      health.innerHTML = banners.join("");
+      health.querySelectorAll("[data-goto-tab]").forEach((b) => {
+        b.onclick = () => showAdminTab(b.dataset.gotoTab);
+      });
+    }
+
+    stats.classList.remove("dim");
+    stats.innerHTML =
+      overviewKpi("tasks", "โจทย์", d.problems, contestOnly ? `${contestOnly} ข้อซ่อนในคอนเทสต์` : "ทั้งหมดในระบบ") +
+      overviewKpi("users", "ผู้ใช้", d.users, "บัญชีที่ลงทะเบียน") +
+      overviewKpi("send", "คำตอบ", d.submissions, "ทุกการส่งในระบบ") +
+      overviewKpi("check", "ผ่าน", d.accepted, `${rate}% อัตราผ่าน`, rate >= 50 ? "is-ok" : "") +
+      overviewKpi("queue", "งานรอคิว", j.queued ?? 0, "queued") +
+      overviewKpi("refresh", "กำลังตรวจ", j.running ?? 0, "running") +
+      overviewKpi("alert", "คิวค้าง", depth, queueFull ? "คิวเต็ม" : "รอตรวจ", queueAlert ? "is-warn" : "") +
+      overviewKpi("server", "Workers", j.workers ?? 0, "ตัวช่วยตรวจ");
+
+    const pp = d.per_problem || {};
+    const entries = Object.entries(pp).sort((a, b) =>
+      (Number(b[1].subs) || 0) - (Number(a[1].subs) || 0));
+    probs.classList.remove("dim");
+    setDashCount("overview-problems-count", `${entries.length} ข้อ`);
+    probs.innerHTML = entries.length
+      ? `<table class="tests dash-table"><thead><tr>
+          <th>ข้อ</th><th class="num">ส่ง</th><th class="num">ผ่าน</th><th class="num">ดีสุด</th><th>อัตราผ่าน</th>
+        </tr></thead><tbody>` + entries.map(([pid, v]) => {
+          const nSubs = Number(v.subs) || 0;
+          const nAccepted = Number(v.accepted) || 0;
+          const pct = nSubs ? Math.round((100 * nAccepted) / nSubs) : 0;
+          const cls = pct >= 60 ? "" : pct >= 30 ? " mid" : " low";
+          return `<tr><td>${problemCell(pid)}</td><td class="num">${nSubs}</td><td class="num">${nAccepted}</td>` +
+            `<td class="num">${esc(String(v.best ?? "—"))}</td>` +
+            `<td><div class="rate-cell"><span class="rate-track"><span class="rate-fill${cls}" style="width:${pct}%"></span></span>` +
+            `<span class="rate-num">${pct}%</span></div></td></tr>`;
+        }).join("") + `</tbody></table>`
+      : `<p class="dash-empty">ยังไม่มีข้อมูลการส่ง — สถิติจะขึ้นหลังมีคนส่งคำตอบ</p>`;
+
+    const rows = d.recent || [];
+    setDashCount("overview-recent-count", `${rows.length} รายการ`);
     recent.classList.remove("dim");
-    recent.innerHTML = rows.length ? `<table class="tests"><thead><tr>
-      <th>เวลา</th><th>ข้อ</th><th>ชื่อ</th><th>ผล</th><th>คะแนน</th>
+    recent.innerHTML = rows.length ? `<table class="tests dash-table"><thead><tr>
+        <th>เวลา</th><th>ข้อ</th><th>ผู้ส่ง</th><th>ผล</th><th class="num">คะแนน</th>
       </tr></thead><tbody>` + rows.map((r) =>
-      `<tr><td>${esc(new Date(r.created_at).toLocaleString())}</td><td>${problemCell(r.problem)}</td>` +
+      `<tr><td class="dim">${esc(shortTime(r.created_at))}</td><td>${problemCell(r.problem)}</td>` +
       `<td>${esc(r.name || "—")}</td><td>${badge(r.accepted ? "AC" : (r.verdict || "?"))}</td>` +
-      `<td><span class="${scoreCls(r.score)}">${r.score ?? ""}</span></td></tr>`
-    ).join("") + `</tbody></table>` : `<span class="dim">ยังไม่มีข้อมูล</span>`;
+      `<td class="num"><span class="${scoreCls(r.score)}">${esc(String(r.score ?? ""))}</span></td></tr>`
+    ).join("") + `</tbody></table>` : `<p class="dash-empty">ยังไม่มีการส่ง</p>`;
+
+    const hidList = d.problems_contest_only || [];
+    setDashCount("overview-hidden-count", `${hidList.length} ข้อ`);
+    hiddenBox.classList.remove("dim");
+    hiddenBox.innerHTML = hidList.length
+      ? `<table class="tests dash-table"><thead><tr>
+          <th>ข้อ</th><th>ชื่อ</th><th>ที่มา</th><th></th>
+        </tr></thead><tbody>` + hidList.map((h) => {
+          const src = [];
+          if (h.config_hidden) src.push("config hidden");
+          if (h.contest_hidden) src.push(h.in_contest ? "ในคอนเทสต์" : "คอนเทสต์ (ไม่มีแล้ว?)");
+          return `<tr><td>${esc(h.id)}</td><td>${esc(h.title)}</td>` +
+            `<td class="dim">${esc(src.join(" · ") || "—")}</td>` +
+            `<td><a class="tlink" href="#/task/${encodeURIComponent(h.id)}">เปิด</a></td></tr>`;
+        }).join("") + `</tbody></table>` +
+        `<p class="dash-note">โจทย์เหล่านี้ไม่ขึ้นในหน้า Task ของผู้ใช้ทั่วไป — เข้าถึงได้จากหน้าคอนเทสต์และจากตรงนี้</p>`
+      : `<p class="dash-empty">ไม่มีโจทย์ที่ซ่อนอยู่ — โจทย์ทุกข้อแสดงในหน้า Task ปกติ</p>`;
   } catch (e) {
-    stats.innerHTML = `<span class="dim">โหลดไม่ได้: ${esc(e.message)}</span>`;
+    const err = `<p class="dash-empty dash-error">โหลดไม่ได้: ${esc(e.message)}</p>`;
+    [stats, probs, recent, hiddenBox].forEach((el) => {
+      if (!el) return;
+      el.classList.remove("dim");
+      el.innerHTML = err;
+    });
+    if (meta) meta.textContent = "โหลดข้อมูลภาพรวมไม่สำเร็จ";
+    if (health) {
+      health.innerHTML = `<div class="dash-banner dash-banner-err" role="alert">${icon("alert")}` +
+        `<div><strong>เชื่อมต่อข้อมูลภาพรวมไม่ได้</strong><span>${esc(e.message)}</span></div></div>`;
+    }
   }
 }
 
@@ -1617,31 +1700,54 @@ async function loadMyReports() {
 async function loadAdminReports() {
   const box = $("admin-reports");
   if (!box) return;
+  box.classList.add("dim");
+  box.innerHTML = skel(3);
   try {
     const d = await apiGet("/api/reports?all=1&limit=50");
     const rows = (d.configured && d.reports) || [];
+    setDashCount("admin-reports-count", `${rows.length} รายการ`);
+    box.classList.remove("dim");
     if (!rows.length) {
-      box.innerHTML = `<span class="dim">ไม่มีรีพอร์ตค้าง</span>`;
+      box.innerHTML = `<p class="dash-empty">ไม่มีรีพอร์ตค้าง — ทุกอย่างเรียบร้อย</p>`;
       return;
     }
-    box.classList.remove("dim");
-    box.innerHTML = rows.map((r) =>
-      `<div class="report-item"><strong>${esc(r.problem)}</strong> [${esc(r.kind)}] ${esc(r.message)}` +
-      `<br><span class="dim">${esc(r.name || "")} · ${esc(new Date(r.created_at).toLocaleString())} · ${esc(r.status)}</span>` +
-      (r.status === "open" ? ` <button class="ghost-btn" data-close="${esc(r.id)}">close</button>` : "") +
-      `</div>`).join("");
+    box.innerHTML = rows.map((r) => {
+      const open = r.status === "open";
+      return `<article class="admin-report">` +
+        `<div class="admin-report-head">` +
+        `<span class="admin-report-problem">${esc(r.problem)}</span>` +
+        `<span class="diff-tag">${esc(r.kind)}</span>` +
+        badge(open ? "ค้าง" : "ปิดแล้ว", open ? "upcoming" : "OK") +
+        (open ? `<button class="ghost-btn" type="button" data-close="${esc(r.id)}">ปิดรายการ</button>` : "") +
+        `</div>` +
+        `<p class="admin-report-msg">${esc(r.message)}</p>` +
+        `<div class="admin-report-meta">` +
+        `<span>${esc(r.name || "ไม่ระบุผู้ส่ง")}</span>` +
+        `<span>${esc(shortTime(r.created_at))}</span><span>status: ${esc(r.status)}</span>` +
+        `</div></article>`;
+    }).join("");
     box.querySelectorAll("[data-close]").forEach((b) => {
       b.onclick = async () => {
-        await fetch(API + `/api/reports/${encodeURIComponent(b.dataset.close)}`, {
-          method: "PUT", credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: "closed" }),
-        });
-        loadAdminReports();
+        b.disabled = true;
+        try {
+          const res = await fetch(API + `/api/reports/${encodeURIComponent(b.dataset.close)}`, {
+            method: "PUT", credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status: "closed" }),
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          toast("ปิดรีพอร์ตแล้ว", "t-ok");
+          loadAdminReports();
+        } catch (e) {
+          b.disabled = false;
+          toast("ปิดรีพอร์ตไม่สำเร็จ: " + e.message, "t-err");
+        }
       };
     });
   } catch (e) {
-    box.innerHTML = `<span class="dim">โหลดไม่ได้: ${esc(e.message)}</span>`;
+    box.classList.remove("dim");
+    setDashCount("admin-reports-count", "—");
+    box.innerHTML = `<p class="dash-empty dash-error">โหลดไม่ได้: ${esc(e.message)}</p>`;
   }
 }
 
@@ -2896,6 +3002,21 @@ function buildProblemSelect(sel, multiple) {
 }
 
 /* ---------------- admin page (แยกจาก Settings, เห็นเฉพาะ admin) ---------------- */
+const ADMIN_TABS = ["overview", "contests", "reports", "tools"];
+
+function showAdminTab(name) {
+  if (!ADMIN_TABS.includes(name)) name = "overview";
+  state.adminTab = name;
+  document.querySelectorAll("[data-admin-panel]").forEach((el) => {
+    el.classList.toggle("active", el.dataset.adminPanel === name);
+  });
+  document.querySelectorAll("[data-admin-tab]").forEach((b) => {
+    const on = b.dataset.adminTab === name;
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-selected", String(on));
+  });
+}
+
 function renderAdmin() {
   if (!state.is_admin) {
     location.hash = "#/";
@@ -2905,6 +3026,23 @@ function renderAdmin() {
     const el = $(id);
     if (el) el.classList.remove("hidden");
   });
+  document.querySelectorAll("[data-admin-tab]").forEach((b) => {
+    b.onclick = () => showAdminTab(b.dataset.adminTab);
+  });
+  const refresh = $("admin-refresh");
+  if (refresh) {
+    refresh.onclick = async () => {
+      const label = refresh.querySelector("span");
+      refresh.disabled = true;
+      if (label) label.textContent = "กำลังโหลด…";
+      await Promise.all([loadOverview(), loadAdminContests(), loadAdminReports()]);
+      if (label) label.textContent = "รีเฟรช";
+      refresh.disabled = false;
+    };
+  }
+  const repRefresh = $("admin-reports-refresh");
+  if (repRefresh) repRefresh.onclick = loadAdminReports;
+  showAdminTab(state.adminTab || "overview");
   loadAdminReports();
   loadOverview();
   renderAdminTools();
@@ -2913,8 +3051,168 @@ function renderAdmin() {
 function renderAdminTools() {
   buildProblemSelect($("rejudge-problem"));
   buildProblemSelect($("plag-problem"));
-  buildProblemSelect($("ct-problems"), true);
+  renderContestProblemPicker();
   loadAdminContests();
+}
+
+/* ---- contest problem picker (checkbox list beats a ctrl-click multiselect) ---- */
+function contestProblemIds() {
+  const box = $("ct-problems");
+  if (!box || !box.querySelectorAll) return [];
+  return [...box.querySelectorAll("input[data-pid]")]
+    .filter((input) => input.checked)
+    .map((input) => input.dataset.pid);
+}
+
+function renderContestProblemPicker() {
+  const box = $("ct-problems");
+  if (!box) return;
+  const checked = new Set(contestProblemIds());
+  const list = [...state.problems].sort((a, b) =>
+    (b.hidden ? 1 : 0) - (a.hidden ? 1 : 0) || (a.no || 9999) - (b.no || 9999));
+  box.innerHTML = list.length ? list.map((p) => {
+    const no = p.no ? `<span class="pno">${esc(String(p.no))}</span>` : "";
+    const meta = [p.id, p.difficulty, p.hidden ? "ซ่อนจาก Task" : ""].filter(Boolean).join(" · ");
+    const on = checked.has(p.id);
+    return `<label class="ct-problem-option${p.hidden ? " is-contest-only" : ""}${on ? " on" : ""}">` +
+      `<input type="checkbox" data-pid="${esc(p.id)}"${on ? " checked" : ""}>` +
+      `<span class="ct-problem-main">` +
+      `<span class="ct-problem-name">${no}${esc(p.title || p.id)}</span>` +
+      `<span class="ct-problem-meta">${esc(meta)}</span>` +
+      `</span></label>`;
+  }).join("") : `<p class="dim">ยังไม่มีโจทย์ให้เลือก</p>`;
+  box.querySelectorAll("input[data-pid]").forEach((input) => {
+    input.onchange = () => {
+      const option = input.parentElement;
+      if (option) option.classList.toggle("on", input.checked);
+      updateContestProblemCount();
+    };
+  });
+  updateContestProblemCount();
+}
+
+function setContestProblems(ids) {
+  const want = new Set(ids || []);
+  const box = $("ct-problems");
+  if (!box || !box.querySelectorAll) return;
+  box.querySelectorAll("input[data-pid]").forEach((input) => {
+    input.checked = want.has(input.dataset.pid);
+    const option = input.parentElement;
+    if (option) option.classList.toggle("on", input.checked);
+  });
+  updateContestProblemCount();
+}
+
+function updateContestProblemCount() {
+  const el = $("ct-problem-count");
+  if (el) el.textContent = `เลือก ${contestProblemIds().length} ข้อ`;
+  updateContestPreview();
+}
+
+/* Live summary under the form: the admin sees the phase and duration before
+ * saving, and a bad window is flagged instead of failing server-side later. */
+function updateContestPreview() {
+  const el = $("ct-preview");
+  if (!el) return;
+  const startV = $("ct-start") ? $("ct-start").value : "";
+  const endV = $("ct-end") ? $("ct-end").value : "";
+  const a = startV ? Date.parse(startV) : NaN;
+  const b = endV ? Date.parse(endV) : NaN;
+  const parts = [];
+  let err = "";
+  if (startV && endV) {
+    if (!(b > a)) err = "เวลาจบต้องอยู่หลังเวลาเริ่ม";
+    else {
+      const now = Date.now();
+      const st = now < a ? "upcoming" : now < b ? "running" : "ended";
+      parts.push(`${CONTEST_STATUS_TH[st]} · ยาว ${durationText((b - a) / 1000)}`);
+    }
+  } else {
+    parts.push("ยังไม่ได้กำหนดช่วงเวลา");
+  }
+  parts.push(`${contestProblemIds().length} ข้อ`);
+  const freeze = Math.max(0, Number($("ct-freeze") && $("ct-freeze").value) || 0);
+  if (freeze) parts.push(`แช่แข็ง ${freeze} นาที`);
+  el.textContent = err || parts.join(" · ");
+  el.classList.toggle("is-err", !!err);
+}
+
+function nextHalfHourInput() {
+  const d = new Date();
+  d.setMinutes(d.getMinutes() + (30 - (d.getMinutes() % 30)), 0, 0);
+  return utcToLocalInput(d.toISOString());
+}
+
+function applyContestDuration(minutes) {
+  const startEl = $("ct-start");
+  if (!startEl) return;
+  if (!startEl.value) startEl.value = nextHalfHourInput();
+  const start = new Date(startEl.value);
+  if (isNaN(start.getTime())) return;
+  $("ct-end").value = utcToLocalInput(new Date(start.getTime() + minutes * 60000).toISOString());
+  updateContestPreview();
+}
+
+function setContestEditorOpen(open, contest) {
+  const editor = $("ct-editor");
+  if (!editor) return;
+  editor.classList.toggle("hidden", !open);
+  if (!open) {
+    state.editingContest = "";
+    return;
+  }
+  state.editingContest = (contest && contest.id) || "";
+  const isEdit = !!state.editingContest;
+  $("ct-editor-title").textContent = isEdit ? `แก้ไขคอนเทสต์ · ${state.editingContest}` : "สร้างคอนเทสต์ใหม่";
+  $("ct-editor-note").textContent = isEdit
+    ? "เพิ่ม/ลดโจทย์หรือปรับเวลาได้กลางคัน การบันทึกมีผลทันที"
+    : "กรอกรหัสและช่วงเวลา แล้วเลือกโจทย์อย่างน้อย 1 ข้อ";
+  $("ct-id").readOnly = isEdit;
+  $("ct-id").classList.toggle("is-readonly", isEdit);
+  $("ct-id").value = isEdit ? state.editingContest : "";
+  $("ct-title").value = (contest && contest.title) || "";
+  $("ct-start").value = contest ? utcToLocalInput(contest.starts_at) : nextHalfHourInput();
+  $("ct-end").value = contest ? utcToLocalInput(contest.ends_at) : "";
+  $("ct-freeze").value = (contest && contest.freeze_minutes) || 0;
+  $("ct-samples").checked = !contest || contest.show_samples !== false;
+  $("ct-hide").checked = !contest || contest.hide_from_tasks !== false;
+  if ($("ct-problem-search")) $("ct-problem-search").value = "";
+  renderContestProblemPicker();
+  setContestProblems(contest ? contest.problems || [] : []);
+  if (!contest) applyContestDuration(120);
+  $("ct-status").textContent = "";
+  if (contest) {
+    const card = $("contest-card");
+    if (card && card.scrollIntoView) card.scrollIntoView({ behavior: "smooth", block: "start" });
+  } else {
+    const input = $("ct-id");
+    if (input && input.focus) input.focus();
+  }
+  updateContestPreview();
+}
+
+function contestCardHtml(c) {
+  const flags = [];
+  if (c.hide_from_tasks) flags.push("ซ่อนจาก Task");
+  if (c.show_samples === false) flags.push("ปิดตัวอย่าง");
+  if (c.freeze_minutes) flags.push(`แช่แข็ง ${c.freeze_minutes} นาที`);
+  return `<article class="ct-card">` +
+    `<div class="ct-card-top">` +
+    `<div class="ct-card-main">` +
+    `<div class="ct-card-title">${esc(c.title || c.id)}</div>` +
+    `<div class="ct-card-id">${esc(c.id)}</div>` +
+    `</div>${contestStatusBadge(c.status)}</div>` +
+    `<div class="ct-card-window">${esc(contestWindowText(c))}</div>` +
+    `<div class="ct-card-facts">` +
+    `<span><strong>${(c.problems || []).length}</strong> ข้อ</span>` +
+    `<span><strong>${Number(c.participants) || 0}</strong> ผู้ลงทะเบียน</span>` +
+    (flags.length ? `<span>${esc(flags.join(" · "))}</span>` : "") +
+    `</div>` +
+    `<div class="ct-card-actions">` +
+    `<button class="ghost-btn" type="button" data-edit-contest="${esc(c.id)}">${icon("settings")}<span>แก้ไข</span></button>` +
+    `<a class="ghost-btn" href="#/contests/${encodeURIComponent(c.id)}">${icon("eye")}<span>เปิดหน้า</span></a>` +
+    `<button class="ghost-btn" type="button" data-del-contest="${esc(c.id)}"><span>ลบ</span></button>` +
+    `</div></article>`;
 }
 
 async function loadAdminContests() {
@@ -2926,52 +3224,38 @@ async function loadAdminContests() {
     const d = await apiGet("/api/contests");
     state.contests = d.contests || [];
     state.contestsConfigured = !!d.configured;
+    const countEl = $("admin-tab-contest-count");
+    if (countEl) countEl.textContent = String(state.contests.length);
     if (!d.configured) {
-      box.innerHTML = CONTESTS_UNCONFIGURED;
+      box.innerHTML = `<div class="ct-empty">${esc(CONTESTS_UNCONFIGURED)} — ตั้งค่าฐานข้อมูลก่อนจึงจะสร้างคอนเทสต์ได้</div>`;
       return;
     }
     if (!state.contests.length) {
-      box.innerHTML = "ยังไม่มีคอนเทสต์";
+      box.innerHTML = `<div class="ct-empty">ยังไม่มีคอนเทสต์ — กด “สร้างคอนเทสต์” เพื่อเริ่มรอบแรก</div>`;
       return;
     }
     box.classList.remove("dim");
-    box.innerHTML = state.contests.map((c) =>
-      `<div class="report-item"><strong>${esc(c.title || c.id)}</strong> ` +
-      `<span class="dim">${esc(c.id)} · ${esc(contestWindowText(c))} · ${(c.problems || []).length} ข้อ` +
-      `${c.hide_from_tasks ? " · ซ่อนจาก Task" : ""}</span> ` +
-      `${contestStatusBadge(c.status)} ` +
-      `<button class="ghost-btn" type="button" data-edit-contest="${esc(c.id)}">แก้ไข</button> ` +
-      `<button class="ghost-btn" type="button" data-del-contest="${esc(c.id)}">ลบ</button></div>`
-    ).join("");
+    box.innerHTML = state.contests.map(contestCardHtml).join("");
     box.querySelectorAll("[data-edit-contest]").forEach((b) => {
       b.onclick = () => {
         const c = (state.contests || []).find((x) => x.id === b.dataset.editContest);
         if (!c) return;
-        $("ct-id").value = c.id || "";
-        $("ct-title").value = c.title || "";
-        $("ct-start").value = utcToLocalInput(c.starts_at);
-        $("ct-end").value = utcToLocalInput(c.ends_at);
-        $("ct-freeze").value = c.freeze_minutes || 0;
-        $("ct-samples").checked = c.show_samples !== false;
-        $("ct-hide").checked = c.hide_from_tasks !== false;
-        const want = new Set(c.problems || []);
-        [...$("ct-problems").options].forEach((o) => { o.selected = want.has(o.value); });
-        $("ct-status").textContent = `กำลังแก้ไข ${c.id} — บันทึกเพื่อเพิ่ม/ลดโจทย์กลางคันได้`;
-        $("contest-card").scrollIntoView({ behavior: "smooth", block: "start" });
+        showAdminTab("contests");
+        setContestEditorOpen(true, c);
       };
     });
     box.querySelectorAll("[data-del-contest]").forEach((b) => {
       b.onclick = async () => {
         const cid = b.dataset.delContest;
         if (!window.confirm(`ลบคอนเทสต์ ${cid}? การส่งที่ผูกไว้จะยังอยู่ใน Scoreboard`)) return;
-        $("ct-status").textContent = `กำลังลบ ${cid}...`;
         try {
           await apiDelete(`/api/contests/${encodeURIComponent(cid)}`);
-          $("ct-status").textContent = `ลบ ${cid} แล้ว`;
+          toast(`ลบ ${cid} แล้ว`, "t-ok");
+          if (state.editingContest === cid) setContestEditorOpen(false);
           await refreshProblems();
           loadAdminContests();
         } catch (e) {
-          $("ct-status").textContent = "ลบไม่สำเร็จ: " + e.message;
+          toast("ลบไม่สำเร็จ: " + e.message, "t-err");
         }
       };
     });
@@ -3088,9 +3372,34 @@ $("plag-threshold").oninput = () => {
   $("plag-threshold-val").textContent = Number($("plag-threshold").value).toFixed(2);
 };
 
+/* contest editor controls: the editor stays closed until a card or “สร้าง” opens it */
+const ctSearch = $("ct-problem-search");
+if (ctSearch) {
+  ctSearch.oninput = () => {
+    const needle = ctSearch.value.trim().toLowerCase();
+    document.querySelectorAll("#ct-problems .ct-problem-option").forEach((opt) => {
+      opt.classList.toggle("hidden", !!needle && !opt.textContent.toLowerCase().includes(needle));
+    });
+  };
+}
+const ctNew = $("ct-new");
+if (ctNew) ctNew.onclick = () => setContestEditorOpen(true, null);
+const ctCancel = $("ct-cancel");
+if (ctCancel) ctCancel.onclick = () => setContestEditorOpen(false);
+const ctClear = $("ct-problem-clear");
+if (ctClear) ctClear.onclick = () => setContestProblems([]);
+document.querySelectorAll("[data-duration]").forEach((b) => {
+  b.onclick = () => applyContestDuration(Number(b.dataset.duration));
+});
+["ct-start", "ct-end", "ct-freeze"].forEach((id) => {
+  const el = $(id);
+  if (el) el.oninput = updateContestPreview;
+});
+
 $("ct-save").onclick = async () => {
   const st = $("ct-status");
-  const problems = [...$("ct-problems").selectedOptions].map((o) => o.value);
+  const btn = $("ct-save");
+  const problems = contestProblemIds();
   const payload = {
     id: $("ct-id").value.trim().toLowerCase(),
     title: $("ct-title").value.trim(),
@@ -3105,21 +3414,41 @@ $("ct-save").onclick = async () => {
     st.textContent = "กรอก id / เริ่มแข่ง / จบแข่ง ให้ครบก่อน";
     return;
   }
+  if (Date.parse(payload.ends_at) <= Date.parse(payload.starts_at)) {
+    st.textContent = "เวลาจบต้องอยู่หลังเวลาเริ่ม";
+    return;
+  }
   if (!problems.length) {
     st.textContent = "เลือกโจทย์อย่างน้อย 1 ข้อ";
     return;
   }
+  btn.disabled = true;
   st.textContent = "กำลังบันทึก...";
   try {
     const d = await apiPostJson("/api/contests", payload);
-    st.textContent = `บันทึกแล้ว: ${(d.contest && d.contest.id) || payload.id}`;
-    // Visibility changed for the problems in this contest: refresh both lists.
+    const saved = (d.contest && d.contest.id) || payload.id;
+    st.textContent = `บันทึกแล้ว: ${saved}`;
+    toast(`บันทึกคอนเทสต์ ${saved} แล้ว`, "t-ok");
+    // Visibility can change for the problems in this contest: refresh both lists.
     await refreshProblems();
+    renderContestProblemPicker();
+    setContestProblems(problems);
+    // A newly created round stays open for edits, so adding a problem mid-round
+    // is one click instead of finding the card again.
+    if (!state.editingContest) {
+      state.editingContest = saved;
+      $("ct-id").readOnly = true;
+      $("ct-id").classList.add("is-readonly");
+      $("ct-editor-title").textContent = `แก้ไขคอนเทสต์ · ${saved}`;
+      $("ct-editor-note").textContent = "เพิ่ม/ลดโจทย์หรือปรับเวลาได้กลางคัน การบันทึกมีผลทันที";
+    }
     loadAdminContests();
     if (document.querySelector("#view-contests.active")) renderContests();
   } catch (e) {
     // server validation messages are shown verbatim
     st.textContent = "บันทึกไม่สำเร็จ: " + e.message;
+  } finally {
+    btn.disabled = false;
   }
 };
 
@@ -3404,6 +3733,7 @@ async function init() {
     if (h === "#/tasks") renderTasksTable();
     else if (h === "#/") renderHome();
     else if (h === "#/archive") renderArchive();
+    else if (h === "#/admin") renderContestProblemPicker();
   }
 
   // 4. stats never block rendering
