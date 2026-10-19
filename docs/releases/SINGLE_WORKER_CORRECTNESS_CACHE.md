@@ -94,12 +94,12 @@ S04 and the two-worker verdict fairness finding are still open.
 
 ## Host resize update
 
-After preparation, the user reported t8i.small/2 GiB. Refreshed Console instead
-shows t3.small/2 GiB at 15.135.225.193; services/health are up on the resized host.
-Family discrepancy and native qualification are pending; see
-[2-GiB readiness](TWO_GIB_HOST_READINESS.md). Treat the older host observations
-below as historical, not current hardware proof. No instance/service was changed
-by this review.
+The user confirmed **t3.small / 2 GiB**, matching the refreshed Console
+observation at 15.135.225.193. Services/health passed in the resize review;
+instance selection is resolved. Native judge qualification of the resized host
+remains pending; see [2-GiB readiness](TWO_GIB_HOST_READINESS.md). Treat the older
+host observations below as historical, not current hardware proof. No instance
+or service was changed by this review.
 
 ## Production preparation: separate approval required
 

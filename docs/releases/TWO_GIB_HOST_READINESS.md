@@ -3,13 +3,14 @@
 2026-10-19. Documentation/read-only verification only. No instance, security
 rule, credit mode, service, route or application deployment was changed here.
 
-## Actual versus requested hardware
+## Confirmed hardware
 
-The user reports a completed resize to **t8i.small**. Refreshed Sydney EC2
-Console for the original instance `i-0e1c8c4d0256f541e` instead shows
-**t3.small**, Running, **3/3 checks passed**, Public IPv4 **15.135.225.193**,
-credit specification **unlimited**. Target t8i.small remains unverified on that
-live instance; the clarification is pending. Do not resize again automatically.
+The user has confirmed **t3.small** as the selected instance type, matching the
+refreshed Sydney EC2 Console observation for `i-0e1c8c4d0256f541e`: Running,
+**3/3 checks passed**, Public IPv4 **15.135.225.193**, credit specification
+**unlimited**. The earlier instance-family discrepancy is resolved. These are
+recorded observations from the resize review, not a fresh status probe in this
+documentation-only clarification. No further resize is planned.
 The previous 3.25.235.29 SSH endpoint timed out. SSH to the new address succeeded
 with strict checking against the original known host key; no new key trust,
 Security Group change, Elastic IP or public backend listener was introduced.
@@ -58,14 +59,13 @@ recorded Linux ARM64 environment, not native qualification of this resized host.
 
 ## CPU-credit and cost gate
 
-AWS lists both t3.small and t8i.small at 20% baseline per vCPU, earning 24 CPU
+AWS lists t3.small at 20% baseline per vCPU, earning 24 CPU
 credits/hour (aggregate baseline approximately 0.4 vCPU). Unlimited can incur
 surplus charges under sustained load; Standard can reduce available CPU after
-credits are exhausted. Availability of t8i.small in this exact AZ is not verified; use the read-only
-offering query below before planning a change. Actual credit mode is confirmed **unlimited**; balance,
+credits are exhausted. The observed credit mode is **unlimited**; balance,
 surplus balance and charges were not measured. No mode change was made.
 See [AWS credit table](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/burstable-credits-baseline-concepts.html)
-and [official T8i specifications](https://aws.amazon.com/ec2/instance-types/t8i/).
+and [official T3 specifications](https://aws.amazon.com/ec2/instance-types/t3/).
 Do not assume free-tier eligibility or trial credits cover every charge.
 
 Read-only checks after normal AWS authentication (do not export/send credentials):
@@ -78,9 +78,6 @@ aws ec2 describe-instance-status --region ap-southeast-2 \
   --instance-ids i-0e1c8c4d0256f541e --include-all-instances
 aws ec2 describe-instance-credit-specifications --region ap-southeast-2 \
   --instance-ids i-0e1c8c4d0256f541e
-aws ec2 describe-instance-type-offerings --region ap-southeast-2 \
-  --location-type availability-zone \
-  --filters Name=instance-type,Values=t8i.small Name=location,Values=ap-southeast-2b
 ```
 
 Use existing CloudWatch graphs for CPUCreditBalance, CPUSurplusCreditBalance,
@@ -90,11 +87,11 @@ were unavailable in the earlier audit; Console/SSH supplied current evidence.
 
 ## Revised deployment prerequisites
 
-1. Resolve the observed t3.small versus requested t8i.small discrepancy. Do not
-   change type, stop/start or credit mode on inferred permission.
+1. Use the confirmed t3.small target. Type selection is resolved; any further
+   resize, stop/start or credit-mode change needs separate approval.
 2. Keep one worker, existing limits and Supabase. The prior m7i-flex.large
    throughput/fairness results are historical; do not reuse them as a pass on
-   either 2-GiB burstable instance. Never increase problem limits to hide slower CPU.
+   this 2-GiB burstable instance. Never increase problem limits to hide slower CPU.
 3. Before an approved application rollout, record current health, memory/events,
    disk reserve and CPU-credit state. Fresh drain and rollback record are still
    required. Use only an explicitly approved maintenance window for native
