@@ -92,6 +92,15 @@ Google OAuth, one-worker admission/poll/history smoke and production error-rate
 verification remain rollout gates. Passing tests do not prove sandbox security;
 S04 and the two-worker verdict fairness finding are still open.
 
+## Host resize update
+
+After preparation, the user reported t8i.small/2 GiB. Refreshed Console instead
+shows t3.small/2 GiB at 15.135.225.193; services/health are up on the resized host.
+Family discrepancy and native qualification are pending; see
+[2-GiB readiness](TWO_GIB_HOST_READINESS.md). Treat the older host observations
+below as historical, not current hardware proof. No instance/service was changed
+by this review.
+
 ## Production preparation: separate approval required
 
 Read-only inventory still found API, the singleton worker and tunnel active,
