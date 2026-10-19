@@ -10,7 +10,7 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import AsyncMock, patch
-from fastapi import HTTPException, Request
+from fastapi import HTTPException, Request, Response
 import backend_problem_files as files
 from critical_helpers import synthetic_problem, test_server
 from fake_supabase import FakeSupabase
@@ -219,11 +219,12 @@ class CriticalBackendFiles(unittest.TestCase):
                 patch.object(server,'_meta_or_404',return_value=self.prob),patch.object(server,'_visible_to',return_value=True), \
                 patch.object(server,'_live_hidden_pids',return_value=set()),patch.object(server,'_is_admin',return_value=False), \
                 patch.object(problem_store,'fetch_row',side_effect=AssertionError('sample bytes from DB')):
-            result=server.problem_sample(req,self.prob.pid,self.prob.samples[0]);self.assertEqual(result['input'],self.prob.tests[0].input)
-            with self.assertRaises(HTTPException) as e:server.problem_sample(req,self.prob.pid,'1001')
+            resp=Response()
+            result=server.problem_sample(req,self.prob.pid,self.prob.samples[0],resp);self.assertEqual(result['input'],self.prob.tests[0].input)
+            with self.assertRaises(HTTPException) as e:server.problem_sample(req,self.prob.pid,'1001',resp)
             self.assertEqual(e.exception.status_code,404)
             with patch.object(server,'_visible_to',return_value=False),patch.object(problem_store,'_download',side_effect=AssertionError('read before visibility')):
-                with self.assertRaises(HTTPException) as e:server.problem_sample(req,self.prob.pid,self.prob.samples[0])
+                with self.assertRaises(HTTPException) as e:server.problem_sample(req,self.prob.pid,self.prob.samples[0],resp)
                 self.assertEqual(e.exception.status_code,404)
 
     def test_critical_full_helper_loads_cases_when_metadata_has_no_sample_bytes(self):

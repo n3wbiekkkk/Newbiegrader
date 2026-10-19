@@ -76,7 +76,7 @@ class ProblemLoading(unittest.TestCase):
     def test_conditional_get_revalidates_privately_without_storage_download(self):
         first = self.client.get(self.url)
         etag = first.headers["etag"]
-        self.assertEqual(first.headers["cache-control"], "private, no-cache")
+        self.assertEqual(first.headers["cache-control"], "private, max-age=600")
         self.assertIn("Cookie", first.headers["vary"])
         for value in (etag, "W/" + etag, '"old", ' + etag, "*"):
             with self.subTest(value=value):

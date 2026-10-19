@@ -381,6 +381,25 @@ def detect_language(src: Path):
         ".go": "go", ".rs": "rust",
     }.get(ext)
 
+def _cxx_pch_flags() -> list[str]:
+    """Use a precompiled <bits/stdc++.h> when the host provides one.
+
+    Production builds the PCH at image/deploy time (tools/build_cxx_pch.py).
+    Missing or incompatible PCHs are harmless: GCC ignores them and compiles
+    the header normally. The default path is outside the writable job tree.
+    """
+    # Keep the default under /usr: the job's Landlock ruleset already grants
+    # read access there, while /var would need another sandbox exception.
+    raw = os.environ.get("GRADER_CXX_PCH_DIR",
+                         "/usr/local/lib/newbiegrader/pch/cxx").strip()
+    if not raw:
+        return []
+    root = Path(raw)
+    if not (root / "bits" / "stdc++.h.gch").is_file():
+        return []
+    return ["-I", str(root)]
+
+
 def prepare_command(src: Path, workdir: Path) -> tuple[list[str], str, str]:
     """Compile if needed. Returns (argv, display, warnings). Raises CompileError."""
     lang = detect_language(src)
@@ -398,8 +417,8 @@ def prepare_command(src: Path, workdir: Path) -> tuple[list[str], str, str]:
         if not comp:
             raise SystemExit("No C++ compiler (g++/clang++) found")
         exe = workdir / "sol"
-        r = _compile([comp, "-O2", "-std=c++17", "-Wall", "-Wextra",
-                      "-o", str(exe), str(src)], workdir)
+        r = _compile([comp, *_cxx_pch_flags(), "-O2", "-std=c++17", "-Wall",
+                      "-Wextra", "-o", str(exe), str(src)], workdir)
         if r.returncode != 0:
             raise CompileError(r.stderr or r.stdout or "compile failed")
         return [str(exe)], f"{Path(comp).name} -O2 -Wall {src.name}", (r.stderr or "").strip()

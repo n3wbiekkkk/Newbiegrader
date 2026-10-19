@@ -69,6 +69,7 @@ test("PDF is the default statement and markdown is a fallback for packages witho
   h.context.setTitle = () => {};
   h.context.diffBadge = () => "easy";
   h.context.renderSampleButtons = () => {};
+  h.context.prefetchSamples = () => {};
   h.context.renderMd = (text) => "RENDERED: " + text;
   h.context.bindCopyButtons = () => {};
   h.context.document.getElementById = h.context.$;
