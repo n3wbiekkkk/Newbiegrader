@@ -7,7 +7,6 @@ venv/
 .env
 .wrangler/
 .tmp_fmt*
-graphify-out/
 agent.md
 problems/
 examples/
