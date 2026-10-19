@@ -5,6 +5,7 @@ venv/
 .DS_Store
 *.out.log
 .env
+.wrangler/
 .tmp_fmt*
 graphify-out/
 agent.md

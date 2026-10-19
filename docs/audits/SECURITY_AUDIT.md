@@ -1,8 +1,12 @@
 # Newbiegrader security audit — 2026-10-18
 
-2026-10-19 follow-up: [EC2 migration evidence](../EC2_MIGRATION.md) records real
-staging cgroup/tmpfs enforcement and crash-cleanup tests. This does not close
-S04 on the still-live JustRunMy host or authorize public AWS execution.
+2026-10-19 production update: [EC2 migration evidence](../EC2_MIGRATION.md)
+records the approved AWS cutover, stopped JustRunMy, enabled database worker,
+real Google login/synthetic jobs and actual reboot recovery. Kernel cgroup/tmpfs
+canaries passed 11/11 after reboot. This is not a blanket closure of all audit
+findings. S04's host-budget containment is deployed; per-test descendant memory
+verdict accounting remains a separate residual below. Earlier statements retain
+their original checkpoint/deployment scope.
 
 Later production verification and the mandatory compiler/runtime network filter
 are recorded in [PRODUCTION_RELEASE_2026-10-18.md](PRODUCTION_RELEASE_2026-10-18.md)
@@ -176,7 +180,7 @@ See [job isolation operations and evidence](JOB_ISOLATION.md).
 
 ### S04 — Resource budget excludes descendants and Python allowance
 
-**High · CONFIRMED accounting flaws; production OOM LIKELY · scheduling/setup corrections DEPLOYED; aggregate enforcement HOST-BLOCKED.**
+**High · CONFIRMED historical accounting flaws; old production OOM LIKELY · EC2 aggregate host-budget containment DEPLOYED/VERIFIED; per-test accounting remains OPEN.**
 
 - References: `grader.py:660`, `grader.py:749`, `grader.py:784`,
   `server.py:174` (`_derive_capacity`), `server.py:2398` (`_effective`).
@@ -190,7 +194,7 @@ See [job isolation operations and evidence](JOB_ISOLATION.md).
   640 MB and virtual ceiling 704 MB, while scheduler budget is 320 MB/job plus
   170 MB reserve. A single program can outgrow the container before user-space
   RSS enforcement fires. Actual production OOM/restart is not proven.
-- FSIZE=64 MB limits one file, not total workspace size. No job filesystem quota
+- At the initial checkpoint, FSIZE=64 MB limited one file, not total workspace size. No job filesystem quota
   or job cgroup controller is configured in the repository. The previously
   swallowed setrlimit failures now refuse Linux/root sandbox launch
   (`grader.py:787`, deployed `b1531ba`).
@@ -205,11 +209,25 @@ See [job isolation operations and evidence](JOB_ISOLATION.md).
   supervisor reserve. This corrects the single-process scheduling mismatch, not
   aggregate containment. See [RUNTIME_MEMORY_BUDGET.md](RUNTIME_MEMORY_BUDGET.md)
   for exact current references, failing-before tests and release limits.
-- Current host follow-up: the read-only preflight again returned `HOST_BLOCKED`
+- Earlier JustRunMy host follow-up: the read-only preflight returned `HOST_BLOCKED`
   on production: cgroup mount read-only, no enabled child controllers. Scheduling
   correction and fail-closed setup are already deployed; they are not pending
   reimplementation. See [S04_HOST_HANDOFF.md](S04_HOST_HANDOFF.md) for the actual
   probe, prepared provider request and remaining enforcement acceptance criteria.
+
+- Current EC2 evidence: `job_resources.py:153` creates/readbacks a delegated
+  cgroup with `memory.max=640 MiB`, swap zero, `pids.max=64`, CPU quota one core
+  and OOM-group handling; `judge_runner.py:207` attaches the blocked supervisor
+  before execution; `deploy/ec2/newbiegrader-worker.service:34` provides a
+  128 MiB/4,096-inode tmpfs. The worker has a 1 GiB unit ceiling, separate API
+  service and one job. Real canaries, including child accounting/kill/cleanup,
+  passed 11/11 again after production-host reboot. Synthetic public-form runs
+  and normal queue/persistence completed, and no job workspace/cgroup remained.
+- Remaining risk: the configured 640 MiB cgroup limit bounds the **whole job**,
+  including runner/compiler, and is fixed across problem limits. It does not
+  establish aggregate per-test MLE thresholds or correct attribution of every
+  cgroup OOM to a language verdict. Parent RSS sampling remains. Do not describe
+  this migration as exact per-test memory accounting or complete S04 closure.
 
 ### S05 — Password signup can pre-hijack a future Google identity
 

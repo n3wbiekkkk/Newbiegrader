@@ -6,6 +6,13 @@
 const DEFAULT_BACKEND = "https://grader.n.onjrnm.vip";
 const BODY_MAX = 1024 * 1024;
 
+async function sameKey(provided, expected) {
+  const encoder = new TextEncoder();
+  const hashes = await Promise.all([provided, expected].map(value =>
+    crypto.subtle.digest("SHA-256", encoder.encode(value))));
+  return crypto.subtle.timingSafeEqual(hashes[0], hashes[1]);
+}
+
 function backendOrigin(env) {
   const url = new URL(env?.BACKEND_ORIGIN || DEFAULT_BACKEND);
   if (url.protocol !== "https:" || url.username || url.password ||
@@ -60,8 +67,35 @@ function isAnonymousGet(request, pathname) {
 
 export async function onRequest(context) {
   const url = new URL(context.request.url);
+  const stagingMode = context.env?.BACKEND_STAGING_ONLY ?? "0";
+  if (!["0", "1"].includes(stagingMode)) {
+    return new Response("staging configuration unavailable", { status: 503 });
+  }
+  if (stagingMode === "1") {
+    const key = context.env?.STAGING_ACCESS_KEY;
+    if (typeof key !== "string" || key.length < 32) {
+      return new Response("staging configuration unavailable", { status: 503 });
+    }
+    const health = url.pathname === "/api/health" && ["GET", "HEAD"].includes(context.request.method);
+    if (!health && !await sameKey(context.request.headers.get("x-newbiegrader-staging-key") || "", key)) {
+      return new Response("staging access required", { status: 403, headers: { "cache-control": "no-store" } });
+    }
+  }
   let backend;
-  try { backend = backendOrigin(context.env); }
+  let service = null;
+  try {
+    const transport = context.env?.BACKEND_TRANSPORT || "https";
+    if (transport === "service") {
+      service = context.env?.BACKEND_SERVICE;
+      if (typeof service?.fetch !== "function") throw new Error("missing service binding");
+      // A service binding fixes the destination; this hostname is not resolved.
+      backend = "https://newbiegrader-aws.internal";
+    } else if (transport === "https") {
+      backend = backendOrigin(context.env);
+    } else {
+      throw new Error("invalid transport");
+    }
+  }
   catch (e) { return new Response("backend configuration unavailable", { status: 503 }); }
   const target = backend + url.pathname + url.search;
   // Never forward hop-by-hop headers: content-length/connection from the
@@ -69,7 +103,7 @@ export async function onRequest(context) {
   // content-length breaks POST submit on Workers).
   const HOP_BY_HOP = new Set(["connection", "keep-alive", "proxy-authenticate",
     "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade",
-    "content-length", "host", "x-newbiegrader-proxy-key", "x-forwarded-for",
+    "content-length", "host", "x-newbiegrader-proxy-key", "x-newbiegrader-staging-key", "x-forwarded-for",
     "x-forwarded-proto", "x-real-ip", "cf-connecting-ip"]);
   const fwdHeaders = new Headers();
   context.request.headers.forEach((v, k) => {
@@ -111,7 +145,9 @@ export async function onRequest(context) {
     }
   }
 
-  const res = await fetch(target, init);
+  let res;
+  try { res = service ? await service.fetch(target, init) : await fetch(target, init); }
+  catch (e) { return new Response("backend unavailable", { status: 502 }); }
   // Rebuild headers explicitly so multiple Set-Cookie headers survive.
   const headers = new Headers();
   res.headers.forEach((v, k) => {

@@ -1,16 +1,20 @@
 # Newbiegrader production readiness — 2026-10-18
 
-2026-10-19 EC2 staging update: see [EC2 migration evidence](../EC2_MIGRATION.md).
-Real delegated cgroup/tmpfs canaries passed on the new host; production S04 and
-database-queue rollout remain OPEN because traffic/consumer cutover is not
-approved. JustRunMy remains the live backend. Earlier checkpoint statements
-below retain their original deployment scope.
+2026-10-19 production update: see [EC2 migration evidence](../EC2_MIGRATION.md).
+The operator approved cutover/stopping JustRunMy. Production now uses AWS API
+and one database worker; real Google login, synthetic Python/C/C++ runs,
+synthetic CE queue/persistence/history and idle-host reboot recovery passed.
+Kernel isolation canaries passed 11/11 after reboot. Logical DB and Storage
+file-byte recovery were rehearsed separately. This is migration acceptance,
+not a guarantee that all findings are closed or every feature is correct.
+S04 has hard host-budget containment, with per-test descendant verdict accounting
+still open. Earlier decisions/findings below retain their original scope.
 
 For later actual-host checks, deployed 2.0.6 hardening and remaining rollout
 gates, read [PRODUCTION_RELEASE_2026-10-18.md](PRODUCTION_RELEASE_2026-10-18.md).
 Earlier local-only/unverified rollout statements below describe that checkpoint.
 
-## Release decision
+## Initial release decision (historical checkpoint)
 
 **Do not open unrestricted public judging yet.** The existing architecture can
 be retained. Small local corrections close several confirmed defects, but kernel

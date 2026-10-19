@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { test } = require('node:test');
+const { webcrypto, timingSafeEqual } = require('node:crypto');
 const source = fs.readFileSync(path.join(__dirname, '../deploy/ec2/cloudflare/worker.js'), 'utf8')
   .replace('export default', 'this.worker =');
 
@@ -11,7 +12,9 @@ function harness(vars = {}) {
   class CompatibleRequest extends Request {
     constructor(input, init = {}) { super(input, { ...init, duplex: 'half' }); }
   }
-  const context = vm.createContext({ URL, Request: CompatibleRequest, Response, Headers });
+  const crypto = { subtle: { digest: webcrypto.subtle.digest.bind(webcrypto.subtle),
+    timingSafeEqual: (a, b) => timingSafeEqual(Buffer.from(a), Buffer.from(b)) } };
+  const context = vm.createContext({ URL, Request: CompatibleRequest, Response, Headers, TextEncoder, crypto });
   vm.runInContext(source, context);
   const env = { PRIVATE_API: { fetch: async request => {
     calls.push(request);
@@ -34,8 +37,11 @@ test('VPC staging defaults to health only and drops identity headers', async () 
 });
 
 test('API gate requires configuration and server-side key before forwarding', async () => {
-  const noKey = harness({ API_ENABLED: '1' });
-  assert.equal((await noKey.run('https://bridge.invalid/api/jobs/1')).status, 503);
+  for (const value of [undefined, 1234, 'short']) {
+    const noKey = harness({ API_ENABLED: '1', BACKEND_PROXY_KEY: value });
+    assert.equal((await noKey.run('https://bridge.invalid/api/jobs/1')).status, 503);
+    assert.equal(noKey.calls.length, 0);
+  }
   const keyed = harness({ API_ENABLED: '1', BACKEND_PROXY_KEY: 'x'.repeat(64) });
   assert.equal((await keyed.run('https://bridge.invalid/api/jobs/1')).status, 403);
   assert.equal(keyed.calls.length, 0);
@@ -46,12 +52,13 @@ test('authorized bridge preserves API cookies/redirects and strips origin creden
   const h = harness({ API_ENABLED: '1', BACKEND_PROXY_KEY: key });
   const r = await h.run('https://bridge.invalid/api/auth/me?q=1', { headers: {
     'x-newbiegrader-proxy-key': key, cookie: 'ng_session=synthetic', 'x-forwarded-for': '192.0.2.1',
-    'cf-connecting-ip': '198.51.100.1',
+    'cf-connecting-ip': '198.51.100.1', 'x-newbiegrader-staging-key': 'synthetic-private-test-key',
   } });
   assert.equal(h.calls[0].url, 'http://localhost/api/auth/me?q=1');
   assert.equal(h.calls[0].redirect, 'manual');
   assert.equal(h.calls[0].headers.get('x-newbiegrader-proxy-key'), null);
   assert.equal(h.calls[0].headers.get('cf-connecting-ip'), null);
+  assert.equal(h.calls[0].headers.get('x-newbiegrader-staging-key'), null);
   assert.equal(h.calls[0].headers.get('cookie'), 'ng_session=synthetic');
   assert.equal(h.calls[0].headers.get('x-forwarded-for'), '192.0.2.1');
   assert.equal(r.status, 302);

@@ -4,6 +4,55 @@ Verified on 2026-10-17 (Asia/Bangkok), macOS 27.0.1 / Apple Silicon.
 Initial setup branch: `chore/codex-mcp-setup`.
 Context7 was removed, including its local Codex OAuth credentials, at the user's request.
 
+## Cloudflare add-on — verified 2026-10-19
+
+Followed the Codex section of the official
+[Cloudflare agent setup instructions](https://developers.cloudflare.com/agent-setup/prompt.md).
+Existing MCP entries were preserved and the Codex configuration was backed up
+privately before adding one `cloudflare` entry; no duplicate was created.
+
+- Installed all **19 Cloudflare skills** under `~/.codex/skills/` using the
+  Codex skill installer from official `cloudflare/skills`, pinned to commit
+  `86505e44f87d801aa1864a3c4109e9a8ae5c409f`. No project AGENTS.md was changed
+  or tracked. Skills load automatically on a subsequent turn/session.
+- Registered `https://mcp.cloudflare.com/mcp` in `~/.codex/config.toml` and
+  completed Codex-managed OAuth. Actual CLI status: enabled / OAuth. Separate
+  Codex app-server verification: **connected**, four tools (`docs`, `search`,
+  `execute`, `whoami`). No model/agent turn was started by that protocol probe.
+- Safe integration calls actually succeeded: documentation search, authenticated
+  identity lookup, API schema search and a read-only account tunnel inventory
+  returning HTTP 200. Later staging-only resource changes are recorded in the
+  EC2 migration log; this authentication does not approve production cutover.
+- Requested OAuth scopes cover account/user read, Workers scripts read/write/
+  bind, Pages metadata/read/write, tunnel read/write and connectivity directory
+  read/bind/admin, plus offline refresh. Default broad authorization was stopped
+  before consent and replaced with this explicit scope request. No DNS, billing,
+  database, WAF or credential-rotation scope was requested.
+- Existing pinned Wrangler **4.151.1** also authenticated. `whoami` verified
+  account/user read, Workers scripts write, Pages write, connectivity admin and
+  offline refresh. Credentials are an encrypted file whose key is in macOS
+  Keychain. Missing-unrelated-scope warnings are intentional; do not broaden
+  permissions merely to silence them.
+
+The MCP connection is account-scoped, not repository-scoped. Resource ownership,
+specific VPC targets and the production approval gate constrain this work; the
+connection itself does not technically prevent every other account operation.
+No API token, tunnel token or OAuth credential was written to the repository.
+Cloudflare account dashboard confirmed Workers **Free / $0 current plan**; no
+upgrade was performed. VPC remains free during open beta, not a promise of
+permanent free pricing or uptime.
+
+The running conversation may retain its previous tool catalog. Open a new Codex
+session or refresh MCP connections to expose the new server directly; the
+installed app-server already loaded and exercised it successfully. Authentication
+does not need to be repeated merely because a conversation's tool list is stale.
+
+Removal: `codex mcp logout cloudflare`, then `codex mcp remove cloudflare`.
+Installed Cloudflare skills are separate; review and remove only the 19 named
+directories from this pinned installation if desired. Preserve `.system` and
+other skills. Private setup logs/backups remain outside Git under
+`~/.local/share/newbiegrader-private/` and must not be pasted into reports.
+
 ## Installed servers and authentication
 
 | Server | Official implementation | Authentication | Verified tools |
