@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bounded anonymous/synthetic probes of the isolated AWS staging route.
+"""Bounded anonymous/synthetic probes of AWS staging or approved production.
 
 Never follows OAuth redirects, signs in, sends email or executes a job. Keys,
 OAuth state and cookie values remain in private temporary files/memory.
@@ -26,13 +26,18 @@ def main():
                         '.local/share/newbiegrader-private/cloudflare-staging/access-secrets.json')
     parser.add_argument('--expected-samesite', choices=('lax', 'strict', 'none'), default='lax',
                         help='Explicit expected value of the existing API session setting')
+    parser.add_argument('--production', action='store_true',
+                        help='Probe the fixed production URL without any staging credential')
     args = parser.parse_args()
-    info = args.access_file.lstat()
-    if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077 or info.st_uid != os.geteuid():
-        raise SystemExit('Access file must be a private owner-controlled regular file')
-    access = json.loads(args.access_file.read_text())['STAGING_ACCESS_KEY']
-    if not isinstance(access, str) or len(access) < 32 or '\n' in access or '\r' in access:
-        raise SystemExit('Invalid staging access-key configuration')
+    base = CANONICAL if args.production else BASE
+    access = None
+    if not args.production:
+        info = args.access_file.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077 or info.st_uid != os.geteuid():
+            raise SystemExit('Access file must be a private owner-controlled regular file')
+        access = json.loads(args.access_file.read_text())['STAGING_ACCESS_KEY']
+        if not isinstance(access, str) or len(access) < 32 or '\n' in access or '\r' in access:
+            raise SystemExit('Invalid staging access-key configuration')
     os.umask(0o077)
     passed = []
 
@@ -65,7 +70,7 @@ def main():
                 body = root / 'request-body'
                 body.write_bytes(data)
                 command += ['--data-binary', '@' + str(body)]
-            result = subprocess.run(command + [BASE + path], capture_output=True, text=True)
+            result = subprocess.run(command + [base + path], capture_output=True, text=True)
             if result.returncode:
                 raise RuntimeError('Staging HTTPS transport failed; no response/credential details printed')
             raw = response_headers.read_text()
@@ -75,9 +80,10 @@ def main():
         status, _, body = request('/api/health?smoke=' + uuid.uuid4().hex, key=None)
         health = json.loads(body)
         check('public GET health', status == 200 and health.get('ok') is True and health.get('count') == 68)
-        for label, key in [('missing', None), ('wrong', 'synthetic-invalid-access-key')]:
-            status, _, _ = request('/api/auth/me', key=key)
-            check(label + ' staging key denied', status == 403)
+        if not args.production:
+            for label, key in [('missing', None), ('wrong', 'synthetic-invalid-access-key')]:
+                status, _, _ = request('/api/auth/me', key=key)
+                check(label + ' staging key denied', status == 403)
         status, _, body = request('/api/version?smoke=' + uuid.uuid4().hex)
         version = json.loads(body)
         check('AWS API/database role', status == 200 and version['system']['role'] == 'api'
@@ -124,7 +130,7 @@ def main():
               all(any(c.startswith(name + '=') and ('max-age=0' in c.lower()
                       or '01 jan 1970' in c.lower()) for c in cookies)
                   for name in ('ng_session', 'ng_remember')))
-    print(json.dumps({'base': BASE, 'vantage': 'operator host via curl, normal TLS validation',
+    print(json.dumps({'base': base, 'vantage': 'operator host via curl, normal TLS validation',
                       'passed': len(passed), 'checks': passed, 'real_login_verified': False,
                       'session_samesite': args.expected_samesite,
                       'authenticated_job_submitted': False}, indent=2))
