@@ -30,7 +30,8 @@ class EncryptedStateBackup(unittest.TestCase):
 
                 argv = ['backup_state.py', '--directory', tmp]
                 if include:
-                    argv.append('--include-tunnel')
+                    argv += ['--include-tunnel', '--include-problem-files-config',
+                             '--ssh-host-key-alias', 'synthetic-known-host']
                 with patch('sys.argv', argv), \
                         patch.object(backup_state.subprocess, 'check_output', return_value='synthetic-recipient'), \
                         patch.object(backup_state.subprocess, 'Popen', return_value=source) as popen, \
@@ -42,6 +43,9 @@ class EncryptedStateBackup(unittest.TestCase):
                 self.assertIn('etc/newbiegrader/api.env', remote)
                 self.assertEqual('etc/newbiegrader/tunnel-token' in remote, include)
                 self.assertEqual('etc/systemd/system/newbiegrader-tunnel.service' in remote, include)
+                self.assertEqual('etc/newbiegrader/problem-files.env' in remote, include)
+                self.assertEqual('30-problem-files.conf' in remote, include)
+                self.assertEqual('HostKeyAlias=synthetic-known-host' in popen.call_args.args[0], include)
                 self.assertIn('--decrypt', runner.call_args.args[0])
                 archive, = directory.glob('*.tar.age')
                 self.assertEqual(archive.stat().st_mode & 0o777, 0o600)

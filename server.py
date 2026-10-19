@@ -79,7 +79,7 @@ logging.getLogger("uvicorn.access").addFilter(AuthQueryLogFilter())
 
 STATIC_DIR = ROOT / "static"
 
-BUILD_SOURCE_FILES = ("grader.py", "server.py", "judge_runner.py", "job_resources.py", "problem_store.py",
+BUILD_SOURCE_FILES = ("grader.py", "server.py", "judge_runner.py", "job_resources.py", "problem_store.py", "backend_problem_files.py",
                       "container_entrypoint.py", "worker.py", "job_sandbox.py", "email_auth.py")
 
 
@@ -777,6 +777,7 @@ def _judge_isolation_posture(*, role: str, strict: bool, acknowledged: bool,
 
 
 async def validate_runtime() -> None:
+    await asyncio.to_thread(problem_store.backend_problem_files.validate, GRADER_ROLE)
     if GRADER_ROLE != "api" and JUDGE_WORKERS < 1:
         raise RuntimeError("host RAM cannot safely fit a judge, compiler and API reserve")
     if QUEUE_MODE not in ("local", "database"):
@@ -1186,7 +1187,8 @@ async def _run_job(job: dict) -> None:
             if job.get("tests_hash") and job["tests_hash"] != actual_hash:
                 await _finish_job(jid, error="problem version changed; resubmit required")
                 return
-            PROBLEMS[prob.pid] = prob
+            if problem_store.backend_problem_files.backend() != "local":
+                PROBLEMS[prob.pid] = prob
             _TESTS_HASH_CACHE[prob.pid] = actual_hash
         except problem_store.ProblemNotFound:
             await _finish_job(jid, error="unknown problem")
@@ -2596,6 +2598,7 @@ def _host_limits() -> dict:
             "compile_timeout_s": grader.COMPILE_TIMEOUT,
             "queue_mode": QUEUE_MODE, "role": GRADER_ROLE,
             "problem_source": PROBLEM_SOURCE,
+        "problem_file_storage": problem_store.backend_problem_files.backend(),
             "problems_count": len(PROBLEMS),
             "reserve_memory_mb": _capacity["reserve_mb"],
             "memory_per_job_mb": _capacity["per_job_mb"],
@@ -3178,7 +3181,13 @@ async def run_custom(
     await asyncio.to_thread(_ensure_problems_fresh)
     prob = None
     if problem:
-        prob = await asyncio.to_thread(lambda: _visible_problem_or_404(problem, user["email"]))
+        if PROBLEM_SOURCE == "supabase":
+            # A custom-input run needs limits/visibility, never private test bytes.
+            prob = await asyncio.to_thread(_meta_or_404, problem)
+            if not await asyncio.to_thread(_visible_to, prob.pid, user["email"]):
+                raise HTTPException(status_code=404, detail=f"unknown problem: {problem}")
+        else:
+            prob = await asyncio.to_thread(lambda: _visible_problem_or_404(problem, user["email"]))
     source, _filename = await _read_source(language, code, file)
     if len(input.encode("utf-8")) > RUN_INPUT_MAX:
         raise HTTPException(status_code=413,

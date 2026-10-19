@@ -33,6 +33,7 @@ ROOT = Path(__file__).parent
 sys.path.insert(0, str(ROOT))
 
 import grader  # noqa: E402
+import backend_problem_files  # noqa: E402
 
 
 class ProblemNotFound(Exception):
@@ -391,6 +392,11 @@ def _download(client, bucket: str, path: str) -> bytes:
     thread forever, which wedges the whole server (only 1 worker on small hosts).
     In tests (FakeSupabase), use the in-memory storage directly.
     """
+    try:
+        if backend_problem_files.backend() == "local":
+            return backend_problem_files.download(bucket, path)
+    except (backend_problem_files.FilesUnavailable, OSError, ValueError, KeyError, TypeError) as exc:
+        raise ProblemUnavailable("backend problem file unavailable; verify publication") from exc
     # FakeSupabase (tests): in-memory storage, no HTTP needed.
     if getattr(client, "tables", None) is not None:
         try:
@@ -448,7 +454,7 @@ def load_problem_supabase(slug: str, client=None) -> grader.Problem:
     bucket = problem_bucket()
     row = _fetch_row(client, slug)
     # TTL fast path: same version still cached.
-    cached = _cache_get(slug)
+    cached = _cache_get(slug) if backend_problem_files.backend() != "local" else None
     ttl = cache_ttl_s()
     if cached is not None:
         _prob, _hash, _updated, _at = cached
@@ -512,7 +518,8 @@ def load_problem_supabase(slug: str, client=None) -> grader.Problem:
             raise ProblemUnavailable(
                 f"problem {slug!r} hash mismatch (row {stored_hash} != assembled {actual}): "
                 "re-run tools/import_problems_supabase.py")
-    _cache_put(slug, (prob, stored_hash, str(row.get("updated_at") or ""), time.monotonic()))
+    if backend_problem_files.backend() != "local":
+        _cache_put(slug, (prob, stored_hash, str(row.get("updated_at") or ""), time.monotonic()))
     return prob
 
 
@@ -550,7 +557,7 @@ def get_problem(slug: str, source: Optional[str] = None, client=None) -> grader.
     # revalidation happens on TTL expiry via load_problem_supabase.
     ttl = cache_ttl_s()
     cached = _cache_get(slug)
-    if cached is not None and ttl > 0 and time.monotonic() - cached[3] < ttl:
+    if backend_problem_files.backend() != "local" and cached is not None and ttl > 0 and time.monotonic() - cached[3] < ttl:
         return cached[0]
     return load_problem_supabase(slug, client=client)
 

@@ -108,6 +108,9 @@ def _upload_many(client, bucket_name: str, jobs: list, dry: bool) -> None:
     """
     if dry or not jobs:
         return
+    if problem_store.backend_problem_files.backend() == "local":
+        problem_store.backend_problem_files.publish(bucket_name, jobs)
+        return
     from concurrent.futures import ThreadPoolExecutor
     with ThreadPoolExecutor(max_workers=min(16, len(jobs))) as ex:
         list(ex.map(lambda j: _upload_object(client, bucket_name, j[0], j[1], j[2]),
@@ -164,11 +167,7 @@ def import_one(client, bucket_name: str, slug: str, dry: bool) -> tuple[str, str
     if dry:
         detail = f"tests={len(prob.tests)} samples={len(samples_data)} hidden={len(hidden_manifest)} pdf={'yes' if has_pdf else 'no'}"
         return status, detail
-    # Write Postgres row first (upsert on slug PK), then Storage objects.
-    try:
-        client.table("problems").upsert(row, on_conflict="slug").execute()
-    except Exception as e:
-        return "failed", f"db upsert: {e}"
+    # Publish all file bytes before switching authoritative metadata.
     try:
         jobs = []
         for tc in prob.tests:
@@ -182,6 +181,11 @@ def import_one(client, bucket_name: str, slug: str, dry: bool) -> tuple[str, str
         _upload_many(client, bucket_name, jobs, dry)
     except Exception as e:
         return "failed", f"storage upload: {e}"
+    row["updated_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+    try:
+        client.table("problems").upsert(row, on_conflict="slug").execute()
+    except Exception as e:
+        return "failed", f"db upsert: {e}"
     problem_store.invalidate_cache(slug)
     return status, f"tests={len(prob.tests)} hash={tests_hash}"
 
@@ -300,6 +304,10 @@ def main(argv: list[str] | None = None) -> int:
                     help="also delete Storage test objects for this problem that no "
                          "longer exist locally (stale after a shrinking test set)")
     args = ap.parse_args(argv)
+    if not args.dry_run and problem_store.backend_problem_files.backend() != "local":
+        ap.error("production file publishing requires GRADER_FILE_STORAGE=local and private backend roots")
+    if args.prune and problem_store.backend_problem_files.backend() == "local":
+        ap.error("local immutable file versions cannot be pruned by this tool")
     if args.statements_only and (args.renumber or args.prune):
         ap.error("--statements-only cannot renumber or prune assets")
     slugs = _local_slugs(args.problems)

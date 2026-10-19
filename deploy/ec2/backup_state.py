@@ -20,6 +20,9 @@ def main():
                         default=Path.home()/'.local/share/newbiegrader-private/ec2-backups')
     parser.add_argument('--include-tunnel', action='store_true',
                         help='Also encrypt the installed named-tunnel token and systemd unit')
+    parser.add_argument('--ssh-host-key-alias', help='Existing verified known-host entry after an IP change')
+    parser.add_argument('--include-problem-files-config', action='store_true',
+                        help='Encrypt backend-file env and API/worker drop-ins; data backup is separate')
     args = parser.parse_args()
     os.umask(0o077)
     args.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -36,6 +39,8 @@ def main():
     target = args.directory/(datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')+'-'+uuid.uuid4().hex[:8]+'.tar.age')
     ssh = ['ssh', '-T', '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes',
            '-o', 'StrictHostKeyChecking=yes', '-i', str(args.ssh_key), args.host]
+    if args.ssh_host_key_alias:
+        ssh[1:1] = ['-o', 'HostKeyAlias=' + args.ssh_host_key_alias]
     # Fixed paths only. No SSH key, private backup identity or user data is sent.
     remote = ('sudo flock --shared /var/lib/newbiegrader/sandbox-identities '
               'tar -C / -cf - etc/newbiegrader/api.env etc/newbiegrader/worker.env '
@@ -45,6 +50,10 @@ def main():
     if args.include_tunnel:
         remote += (' etc/newbiegrader/tunnel-token '
                    'etc/systemd/system/newbiegrader-tunnel.service')
+    if args.include_problem_files_config:
+        remote += (' etc/newbiegrader/problem-files.env '
+                   'etc/systemd/system/newbiegrader-api.service.d/30-problem-files.conf '
+                   'etc/systemd/system/newbiegrader-worker.service.d/30-problem-files.conf')
     source = subprocess.Popen(ssh+[remote], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     try:
         fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
