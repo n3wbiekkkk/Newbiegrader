@@ -1,6 +1,125 @@
 # EC2 migration work log and runbook
 
-## Current checkpoint — logical DB recovery verified (2026-10-19)
+## Current checkpoint — AWS production cutover verified (2026-10-19)
+
+The operator explicitly authorized production cutover and then stopping
+JustRunMy, stating its queue was empty. **Production now uses AWS.** JustRunMy
+application 69356 is stopped, not deleted; persistent volume 65068 at
+`/var/lib/newbiegrader` remains for rollback. No credentials were rotated and no
+existing user data was deleted. The original HTTPS port mapping was preserved.
+
+Executed sequence and evidence:
+
+1. Tested the provider's advertised port-update behavior **without a restart**:
+   removing bindings still returned HTTP 200 on three old-origin probes. The
+   original mapping was restored. This did not fence admission and is not
+   counted as a successful drain. After the operator's explicit stop approval,
+   captured the locked old UID ledger (22 records), stopped the application,
+   and verified `isStarted=false`. The earlier real admin overview showed zero
+   queued/running/backlog; no atomic in-process drain control is claimed.
+2. Merged the final old UID reservations into the disabled AWS worker ledger:
+   zero additional records were needed, because its high-water mark was already
+   greater. No ledger reset. Installed production Nginx on **loopback 8081**.
+3. Deployed a separate **private production Worker**,
+   `newbiegrader-aws-production`, with public/preview URLs disabled and its own
+   server-only shared key. Existing Pages `newbiegrader` now uses
+   `BACKEND_TRANSPORT=service`, `BACKEND_SERVICE` pointing at that Worker and
+   the matching Pages secret. No custom domain or public EC2 app port.
+   The existing specific VPC Service now targets 127.0.0.1:8081 over the existing
+   named tunnel. Production deployment at verification was
+   `dded0f35-2665-4211-a016-d4825916f0ed` (later Git deployments may supersede it).
+   Cloudflare required equal `fail_open` settings in production and preview;
+   both were set false after the first rejected configuration request.
+4. Verified zero queued/running/live leases, passed the actual worker preflight
+   and **11/11 EC2 kernel canaries**, then enabled exactly one database worker
+   and API admission. Production `/api/version` reports 2.0.7, role `api`, queue
+   `database`, Supabase source and 68 problems; backend fingerprint is unchanged
+   from the staged release. Source release remains the root-owned `6cba18c…`.
+5. Used the operator's legitimate existing browser session, then completed a
+   **fresh real Google OAuth login** as that same account. No token/cookie was
+   extracted and no admin session was forged. Normal production forms executed
+   newly authored Python, C and C++/STL playground files with synthetic stdin.
+   Each finished `OK`, first attempt, with the expected output. Initial C++
+   output comparison failed because the native textarea submitted CRLF; the
+   recorded input proved it. A repeat without a final line ending matched
+   exactly. Do not count that first byte comparison as a pass.
+6. Submitted an intentional synthetic `#error` C++ file through the normal UI:
+   async queue/poll completed with CE, linked to **exactly one** persisted
+   submission and visible in owner history. It never executed hidden inputs.
+   No real user's program or existing reference solution was run. File uploads
+   were used so the operator's editor drafts were not overwritten.
+7. Paused AWS admission, restarted API, verified zero queued/running/live leases,
+   and **rebooted EC2 with the real worker enabled**. SSH recovered in **30.3 s**;
+   API, Nginx, tunnel and worker all restarted automatically; the UID ledger hash
+   was unchanged. With admission still paused, stopped the idle worker, ran all
+   **11 kernel canaries again**, restored its gate and reopened admission. A
+   fresh authenticated Python run then returned the expected canary output.
+   Actual worker private workspace and delegated cgroup checks found zero
+   leftover job directories/groups. Last queue readback: **45 done, zero queued,
+   running or live leases** (39 prior jobs plus six synthetic migration jobs).
+
+Production anonymous HTTPS checks **15/15** passed, including cookies, CSRF,
+body bounds, Google redirect/state rejection and unauthorized execution denial.
+The staging key gate still passed **17/17** after switching VPC to port 8081.
+Anonymous problems/languages JSON and a public statement PDF (valid `%PDF-`,
+103,068 bytes) also returned successfully. Vantage: operator Mac on its normal
+external internet connection via curl with ordinary TLS verification; real login
+and form checks used the existing native Chrome profile.
+
+Final local Linux arm64/root, network-disabled Docker suite: **269 run, 266
+passed, three private-problem modules skipped**; separate critical suite
+**189/189, zero skips**, Node **61/61, zero skips**. Two new smoke-CLI tests also
+passed on macOS and verify production never requires/sends the staging secret.
+An initial full and critical attempt each failed one compiler-deadline test:
+the new in-process CLI test had left `umask=077`, making later root-owned compiler
+fixtures unreadable. Its teardown now restores the original mask; both entire
+suites were rerun and passed. No sandbox control was disabled or engine changed.
+Python compilation, frontend guards and plagiarism self-test passed. The clean
+snapshot's validator returned zero with no private packages; this is **not** a
+new 68-problem/reference validation claim.
+
+Fresh post-cutover logical DB backup/recovery passed: snapshot archive
+`20261019T010725Z-postgres-snapshot.dump.age`, 792,423 encrypted bytes, dump 10.8 s,
+51 table/partition content comparisons, 58 relation/ACL/RLS definitions and 150
+constraints matched. The disposable recovery container/tmpfs was removed.
+Configuration/UID/tunnel backup `20261019T011231Z-0e5f224a.tar.age` was decrypted
+successfully. A separate nine-member encrypted Cloudflare recovery archive,
+`20261019T011501Z-cloudflare-production.tar.age`, preserves the new server-only
+key/config and before/after metadata; no OAuth/SSH/age private key is included.
+Earlier Storage file-byte recovery remains separate. See `EC2_BACKUP_RESTORE.md`.
+
+**Scope:** this establishes the executed migration and listed functionality,
+not a guarantee that every judge verdict, feature or security finding is correct.
+S04 now has hard aggregate **job-budget** containment; its fixed 640 MiB ceiling
+is not a dynamically enforced per-test memory verdict for descendants. See the
+updated audit note. Live OTP email delivery, in-flight production crash/lease
+recovery, sustained load, credit-exhaustion performance, external alert delivery
+and full hosted Auth/Storage restoration were not tested here. Cloudflare VPC
+remains open-beta/free-during-beta, not a permanent price/SLA guarantee. T3
+Unlimited and the estimated $24.84/month fixed AWS subtotal remain unchanged.
+
+### Current operational controls
+
+- Readiness: `python3 deploy/ec2/smoke_https.py --production --expected-samesite none`.
+  It performs anonymous/synthetic checks only, not real login or job execution.
+- API/worker: `systemctl status newbiegrader-api.service newbiegrader-worker.service`;
+  independent services, worker enabled and one concurrent job.
+- Maintenance: set only API `GRADER_ACCEPT_JOBS=0` privately, restart API, inspect
+  database diagnostics until queued/running/live leases are zero, then stop worker.
+  Keep the ledger and completed rows intact. Resume by restoring the worker gate,
+  starting worker and setting API admission to 1. Never print complete env files.
+- Rollback: fence/drain AWS first; reconcile durable jobs and append the **latest
+  AWS UID reservations to the old persistent volume** before any old judge
+  execution. The old image lacks cgroups, so read-only API rollback is the safe
+  default; do not silently reopen its less-contained judge. Restore the saved
+  Pages origin/transport only after the old API is healthy, using the preserved
+  provider image/env/ports. A Pages deployment rollback does not restore project
+  configuration, secrets, queue state or UID reservations. Do not run both workers.
+- Keep the stopped old application/volume during initial observation. No old
+  application, volume, database row or credential was deleted. Retiring that
+  retained rollback state is a separate destructive action.
+
+## Earlier checkpoint — logical DB recovery verified (2026-10-19)
 
 Operator-provided libpq files are regular 0600 files. Initial TLS verification
 failed because Supabase's CA was absent from system roots; the project's actual

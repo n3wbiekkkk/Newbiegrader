@@ -6,6 +6,23 @@ Auth/full Storage service recovery remains **UNVERIFIED**. No production restore
 DB permission change, credential reset,
 new paid project, user-account mutation or job execution was performed here.
 
+Post-cutover update: the same procedure was repeated with admission paused.
+`20261019T010725Z-postgres-snapshot.dump.age` is **792,423 encrypted bytes**,
+dump **10.8 s**, with 51 table/partition content checks, 58 relation/ACL/RLS
+definitions and 150 constraints matching the isolated restored database. Restore
+plus comparison took about 0.3 s; the same two local extension-view adjustments
+were required. The tmpfs recovery container was removed afterward. Its table
+manifest totals 3,107 rows including partition-parent counts. This supersedes
+the earlier archive as the latest rehearsed data snapshot; the historical
+procedure and limits below still apply.
+
+After reopening services, fresh configuration/UID/tunnel state was encrypted as
+`20261019T011231Z-0e5f224a.tar.age`. New Cloudflare production key/config and
+before/after metadata were separately encrypted in the nine-member
+`20261019T011501Z-cloudflare-production.tar.age`; authenticated decryption passed,
+0600 archive, no SSH/OAuth/age private key included. Keep both with the existing
+local age identity and maintain a separate protected offline identity copy.
+
 ## Verified PostgreSQL logical recovery
 
 The operator created `~/.pg_service.conf` and `~/.pgpass`: both regular files,

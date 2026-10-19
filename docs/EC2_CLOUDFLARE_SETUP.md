@@ -1,6 +1,55 @@
-# Cloudflare connection — verified isolated staging
+# Cloudflare connection — AWS production and isolated staging
 
-## Latest checkpoint — gated API rehearsal (2026-10-19)
+## Current production checkpoint (2026-10-19)
+
+The operator approved cutover and explicitly stopping JustRunMy. Production
+`https://newbiegrader.pages.dev` now follows:
+
+```text
+Pages /api Function (BACKEND_TRANSPORT=service)
+  → BACKEND_SERVICE: private newbiegrader-aws-production Worker
+  → PRIVATE_API: specific VPC Service
+  → named outbound tunnel → 127.0.0.1:8081 Nginx → 127.0.0.1:8000 API
+```
+
+The production Worker has its **own** server-only key, public/preview URLs
+disabled and `API_ENABLED=1`. The matching Pages secret is never frontend code.
+Existing project/account, frontend URL, session secret and canonical Google
+callback were preserved. No public EC2 FastAPI port, purchased domain, Elastic
+IP, load balancer or paid plan was added. Both Pages fail-open flags are false;
+Cloudflare rejected the initial attempt to set them unequally.
+
+The existing VPC Service ID remains `01a15026-522c-77e3-b439-a71579b4be67`; its
+HTTP port changed from 8082 to **8081**. The separate staging project/Worker and
+its missing/wrong-key gate remain in place; **17/17** staging checks passed
+against the new loopback destination. Never expose the staging key to browsers.
+
+```sh
+python3 deploy/ec2/smoke_https.py --production --expected-samesite none
+```
+
+Actual production run: **15/15** anonymous HTTPS checks passed, repeated after
+an actual EC2 reboot. Production mode does not open the staging access file or
+send that credential. Separate native-Chrome checks verified fresh Google OAuth
+login, Python/C/C++ synthetic playground runs, asynchronous synthetic CE
+submission/poll/history and a post-reboot authenticated run. No existing user's
+source was executed. See `EC2_MIGRATION.md` for exact scope and failed attempts.
+
+Production deployment at verification:
+`dded0f35-2665-4211-a016-d4825916f0ed`; subsequent reviewed Git deployments may
+replace it. The root-owned EC2 release and source fingerprint remain unchanged.
+JustRunMy is stopped, not deleted. For rollback, fence AWS admission/consumer
+and preserve durable jobs/UID reservations first; restore saved project config
+as well as the selected Pages deployment. Neither auto-fallback nor two
+simultaneous judge consumers is allowed.
+
+The new production key/config and before/after Cloudflare metadata have a
+verified encrypted local recovery archive. No secret value is included here.
+VPC free-during-beta and trial-credit limitations remain; see cost notes below.
+Historical approval and old-origin statements in the checkpoints below describe
+their original observation time, not the current production route.
+
+## Earlier checkpoint — gated API rehearsal (2026-10-19)
 
 The separate staging Pages project now uses `BACKEND_STAGING_ONLY=1`. Non-health
 API requests need `x-newbiegrader-staging-key`; missing/wrong keys return 403

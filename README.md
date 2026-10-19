@@ -92,7 +92,7 @@ Plain HTML, CSS and JavaScript. No bundler, no transpiler and no framework.
 | `problems/` | Local working copy of the problem set (configuration, statement, tests). Not versioned here — the source of truth is Supabase |
 | `supabase/` | Database schema with append-only, re-runnable migrations |
 
-Host capacity is read from the container at startup, and worker counts, memory ceilings, queue bounds and timeouts are derived from it automatically.
+Host capacity is read from the service or container at startup, and worker counts, memory ceilings, queue bounds and timeouts are derived from it automatically. Current production deployment and recovery procedures are in the [EC2 runbook](docs/EC2_MIGRATION.md).
 
 ## Design Principles
 
@@ -107,7 +107,8 @@ Host capacity is read from the container at startup, and worker counts, memory c
 | API | FastAPI |
 | Database | PostgreSQL via Supabase |
 | Frontend | HTML, CSS and JavaScript on Cloudflare Pages |
-| Backend runtime | Docker |
+| Production backend | AWS EC2 / Ubuntu, Python 3.11 and separate systemd API/worker services |
+| Local packaging | Docker |
 
 ## Contributing
 
