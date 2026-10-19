@@ -96,10 +96,12 @@ S04 and the two-worker verdict fairness finding are still open.
 
 The user confirmed **t3.small / 2 GiB**, matching the refreshed Console
 observation at 15.135.225.193. Services/health passed in the resize review;
-instance selection is resolved. Native judge qualification of the resized host
-remains pending; see [2-GiB readiness](TWO_GIB_HOST_READINESS.md). Treat the older
+instance selection is resolved. Subsequently approved bounded native synthetic
+qualification passed **17/17**, with matched-deadline replay **6/6**; production
+was restored to the original singleton and admission state. See
+[2-GiB readiness and limitations](TWO_GIB_HOST_READINESS.md). Treat the older
 host observations below as historical, not current hardware proof. No instance
-or service was changed by this review.
+or application release was changed.
 
 ## Production preparation: separate approval required
 
@@ -128,7 +130,8 @@ Approval must name the final reviewed commit/artifact and separately cover:
 4. Reopen admission only after acceptance checks; observe queue/errors/resources.
 
 No production approval is inferred from approval to review/prepare this release.
-No additional maintenance or rollout was performed in this review.
+The separately approved native qualification paused/restored services as
+recorded above. It did not authorize or perform an application rollout.
 
 ## Rollback
 
@@ -156,5 +159,6 @@ application source has not changed. The opt-in native harness requires a root-
 private approval gate, the exact delegated test unit, idle real workers and blank
 Supabase credentials. A local disposable systemd VM ran its **17/17** kernel,
 verdict/privacy and matched-deadline single-worker tests before EC2 maintenance.
-Native EC2 results must be recorded separately; these local results do not
-qualify the resized host or CPU-credit exhaustion behavior.
+Native EC2 **17/17** results and verified restoration are recorded separately in
+[the native evidence](t3-native-qualification.json). Neither the local nor bounded
+native run qualifies CPU-credit exhaustion or sustained throughput.

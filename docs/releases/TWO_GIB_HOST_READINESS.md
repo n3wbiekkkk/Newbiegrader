@@ -1,7 +1,9 @@
 # Two-GiB host: observed state and single-worker release gate
 
-2026-10-19. Documentation/read-only verification only. No instance, security
-rule, credit mode, service, route or application deployment was changed here.
+2026-10-19. The initial resize review was read-only. A subsequent explicitly
+approved bounded maintenance ran synthetic single-worker qualification and
+restored production. No instance, security rule, credit mode, route or
+application release was changed. See the qualification record below.
 
 ## Confirmed hardware
 
@@ -85,6 +87,52 @@ CPUSurplusCreditsCharged and CPUUtilization. No paid detailed monitoring or
 resource change is required for this read-only review. Local CLI credentials
 were unavailable in the earlier audit; Console/SSH supplied current evidence.
 
+## Completed native t3.small qualification
+
+The approved maintenance tested source commit
+`c206dd7faa5420866858082f161fc0a3c277387a`, staged separately at
+`/opt/newbiegrader/staging/t3-qualification-ba5d2f15c0e7`. The sanitized archive
+SHA-256 is `e9871ad1ddc1107cc5045fa0b2fdc5325c22246cd40ebd4d22b3c387fa2aa0f0`.
+Full measurements and before/after state are in
+[the sanitized native record](t3-native-qualification.json).
+
+Admission was paused and the queue drained before stopping the singleton. A
+separate systemd canary unit used the existing isolation engine and worker
+budget, blank Supabase credentials and synthetic fixtures only. Its command was
+`/usr/local/lib/newbiegrader/venv/bin/python -u <candidate>/tools/ec2_single_canary.py`.
+This command requires the explicitly approved delegated unit and protected gate;
+it refuses ordinary shells. An independent ten-minute restoration timer was
+armed before pausing production and stopped after verified recovery.
+
+Results on Ubuntu 24.04, native x86_64 t3.small:
+
+- **17 tests passed, zero failures/errors/skips**, observing 31 isolated jobs.
+  Includes kernel isolation/cleanup, normal C/C++ STL/Python, CE/WA/RE/TLE and
+  synthetic hidden-output redaction under REVEAL none.
+- Matched-deadline single-worker replay **6/6 passed**: fixed 0.89225-second
+  deadline, observed wall times 0.6549–0.7645 seconds after three calibration runs.
+  No real problem limits were changed.
+- Test wall time 43.657 seconds; sampled service CPU usage 41.017 CPU-seconds.
+  Peak observed job memory 256 MiB; the intentional aggregate-memory fixture
+  caused **seven contained child-job OOM kills**. Canary service-local and
+  production API/worker OOM counters remained zero.
+- Minimum sampled host MemAvailable 1275156 KiB. Twenty loopback API health
+  probes all returned 200, maximum 1.063 seconds. These sparse samples are not
+  an API latency benchmark or sustained-load safety proof.
+
+Restoration passed: original admission=1; original singleton, API and tunnel
+active; both template workers inactive; queue unchanged at done=48, error=0,
+queued=0, running=0. The production release stayed at
+`6cba18c68366993fed7fc7572c87368bbb773ea9`; service budgets stayed unchanged.
+Temporary approval gate, API overlay, canary cgroup and workspace were removed;
+the monotonic UID ledger was retained. A normal public curl from the macOS
+audit network outside AWS VPC through Pages returned **200 in 0.352941 seconds**.
+
+This qualifies the bounded fixtures in the observed credit state only. CPU
+credit balance/exhaustion, surplus charges, sustained capacity, all real problem
+deadlines and production OAuth/submit/poll/history were not verified. S04's
+declared-memory semantics remain open; this is not a two-worker qualification.
+
 ## Revised deployment prerequisites
 
 1. Use the confirmed t3.small target. Type selection is resolved; any further
@@ -94,8 +142,8 @@ were unavailable in the earlier audit; Console/SSH supplied current evidence.
    this 2-GiB burstable instance. Never increase problem limits to hide slower CPU.
 3. Before an approved application rollout, record current health, memory/events,
    disk reserve and CPU-credit state. Fresh drain and rollback record are still
-   required. Use only an explicitly approved maintenance window for native
-   single-worker C/C++/Python, memory/process/workspace and matched-deadline tests.
+   required. The bounded native tests above passed; further maintenance or
+   application rollout requires its own explicit approval.
 4. Observe total memory, API latency, queue completion and verdict parity with
    bounded synthetic workloads; preserve CPU/credit state alongside timings.
    No OOM outside the job, no leftover processes, no infrastructure SE mistaken
@@ -104,6 +152,6 @@ were unavailable in the earlier audit; Console/SSH supplied current evidence.
    release. A change back to a larger paid instance or another resize requires
    separate approval; do not perform it as an automatic rollback.
 
-The code-only artifact from 7691557 is still prepared and unpushed. The app code
-has not changed in this hardware documentation update. No deployment approval
-is inferred from the user's statement that the resize is already complete.
+The c206dd7 qualification artifact is staged and unpushed. The application code
+has not changed since 837366c; later changes add qualification tooling and docs.
+No application deployment approval is inferred from approval of this maintenance.
