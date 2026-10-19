@@ -5,6 +5,15 @@ now live on the backend EBS volume. Supabase still holds relational metadata,
 auth and the durable queue. No database migration, auth mutation, schema change,
 second worker or paid infrastructure increase was performed.
 
+> **Repository history note (2026-10-19):** `main` was rewritten to remove an
+> automated co-author trailer from one frontend commit. Trees are identical.
+> Pre-rewrite references are retained because the EC2 release directory and
+> deployment records use them. Mapping: `25523f7` → `e8b48cf`, `f883647` →
+> `e55fa71`, `609bbf1` → `cf306be`, `a529ee1` → `13664c3`, `ffbf59b` → `a87ff80`
+> (short hashes). The deployed backend directory remains
+> `/opt/newbiegrader/releases/609bbf1f49c510d914c440763bb2304a45db376e`; its build
+> content is unchanged.
+
 ## Current production
 
 | Component | Verified state |
