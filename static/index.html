@@ -18,7 +18,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anuphan:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600;700&display=swap">
-<link rel="stylesheet" href="/styles.css?v=25">
+<link rel="stylesheet" href="/styles.css?v=26">
 </head>
 <body>
 <a class="skip-link" href="#main">ข้ามไปเนื้อหา</a>
@@ -45,6 +45,10 @@
     <symbol id="i-back" viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></symbol>
     <symbol id="i-contest" viewBox="0 0 24 24"><path d="M7 2l5 7 5-7"/><circle cx="12" cy="15" r="6"/><path d="M12 12.2l.9 1.9 2.1.3-1.5 1.4.4 2.1-1.9-1-1.9 1 .4-2.1L9 14.4l2.1-.3z"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+    <symbol id="i-queue" viewBox="0 0 24 24"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="m2 12 10 5 10-5"/><path d="m2 17 10 5 10-5"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></symbol>
+    <symbol id="i-server" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><path d="M6 6h.01M6 18h.01"/></symbol>
   </defs>
 </svg>
 <header class="topbar">
@@ -380,92 +384,207 @@
 
   <!-- ADMIN (เฉพาะ admin) -->
   <section id="view-admin" class="view">
-    <div class="page-head"><h2>Admin</h2>
-      <p class="dim">เครื่องมือสำหรับผู้ดูแลระบบ (เห็นเฉพาะอีเมลใน ADMIN_EMAILS)</p>
+    <div class="page-head">
+      <div>
+        <p class="eyebrow">OPERATOR CONSOLE</p>
+        <h2>ผู้ดูแลระบบ<span class="heading-period">.</span></h2>
+        <p class="dim">จัดการแข่งขัน ตรวจงาน และดูสุขภาพระบบ — เห็นเฉพาะอีเมลใน ADMIN_EMAILS</p>
+      </div>
     </div>
-    <div class="card hidden" id="overview-card" style="margin-top:16px">
-      <h3 class="pane-h">ภาพรวมระบบ (admin)</h3>
-      <div id="overview-stats" class="stat-strip"></div>
-      <h3 class="pane-h">รายข้อ</h3>
-      <div id="overview-problems" class="dim">—</div>
-      <h3 class="pane-h">โจทย์ชุดคอนเทสต์ (ไม่โชว์ในหน้า Task)</h3>
-      <div id="overview-hidden" class="dim">—</div>
-      <h3 class="pane-h">ล่าสุด 10 รายการ</h3>
-      <div id="overview-recent" class="dim">—</div>
+
+    <div class="admin-tabs" role="tablist" aria-label="ส่วนของผู้ดูแล">
+      <button class="admin-tab" type="button" role="tab" data-admin-tab="overview" aria-selected="true">ภาพรวม</button>
+      <button class="admin-tab" type="button" role="tab" data-admin-tab="contests" aria-selected="false">คอนเทสต์ <span class="admin-tab-count" id="admin-tab-contest-count">—</span></button>
+      <button class="admin-tab" type="button" role="tab" data-admin-tab="reports" aria-selected="false">รีพอร์ต</button>
+      <button class="admin-tab" type="button" role="tab" data-admin-tab="tools" aria-selected="false">เครื่องมือ</button>
     </div>
-    <div class="card hidden" id="contest-card" style="margin-top:16px">
-      <h3 class="pane-h">จัดการคอนเทสต์ (admin)</h3>
-      <div class="settings-row">
-        <label for="ct-id">id (slug: a-z 0-9 _ -)</label>
-        <input id="ct-id" type="text" maxlength="40" placeholder="posn-2569-round1">
+
+    <div class="card hidden admin-panel" id="overview-card" data-admin-panel="overview">
+      <div class="card-head admin-section-head">
+        <div>
+          <h3 class="admin-section-title">ภาพรวมระบบ</h3>
+          <p class="admin-sub dim">สุขภาพคิวตรวจ จำนวนผู้ใช้ และรายการล่าสุด</p>
+        </div>
+        <button class="ghost-btn" type="button" id="admin-refresh"><svg class="ic"><use href="#i-refresh"/></svg><span>รีเฟรช</span></button>
       </div>
-      <div class="settings-row">
-        <label for="ct-title">ชื่อคอนเทสต์</label>
-        <input id="ct-title" type="text" maxlength="120">
+      <div id="overview-meta" class="admin-sub dim">กำลังโหลดข้อมูล…</div>
+      <div id="overview-health" class="dash-banners" aria-live="polite"></div>
+      <div id="overview-stats" class="dash-kpis"></div>
+      <div class="dash-grid">
+        <section class="dash-card dash-recent">
+          <header class="dash-card-head">
+            <div class="dash-card-title"><svg class="ic"><use href="#i-history"/></svg><h4>การส่งล่าสุด</h4></div>
+            <span class="dash-count" id="overview-recent-count">—</span>
+          </header>
+          <div class="dash-card-body" id="overview-recent">—</div>
+        </section>
+        <section class="dash-card dash-problems">
+          <header class="dash-card-head">
+            <div class="dash-card-title"><svg class="ic"><use href="#i-tasks"/></svg><h4>สถิติรายข้อ</h4></div>
+            <span class="dash-count" id="overview-problems-count">—</span>
+          </header>
+          <div class="dash-card-body" id="overview-problems">—</div>
+        </section>
+        <section class="dash-card dash-hidden">
+          <header class="dash-card-head">
+            <div class="dash-card-title"><svg class="ic"><use href="#i-eye"/></svg><h4>โจทย์ชุดคอนเทสต์</h4></div>
+            <span class="dash-count" id="overview-hidden-count">—</span>
+          </header>
+          <div class="dash-card-body" id="overview-hidden">—</div>
+        </section>
       </div>
-      <div class="settings-row">
-        <label for="ct-start">เริ่มแข่ง (เวลาท้องถิ่น)</label>
-        <input id="ct-start" type="datetime-local">
-      </div>
-      <div class="settings-row">
-        <label for="ct-end">จบแข่ง (เวลาท้องถิ่น)</label>
-        <input id="ct-end" type="datetime-local">
-      </div>
-      <div class="settings-row">
-        <label for="ct-freeze">แช่แข็งคะแนนช่วงท้าย (นาที)</label>
-        <input id="ct-freeze" type="number" min="0" max="1440" value="0">
-      </div>
-      <div class="settings-row">
-        <label class="check-row" for="ct-samples"><input id="ct-samples" type="checkbox" checked> เปิดตัวอย่างสาธารณะระหว่างแข่ง</label>
-      </div>
-      <div class="settings-row">
-        <label class="check-row" for="ct-hide"><input id="ct-hide" type="checkbox" checked>
-          ซ่อนโจทย์ชุดนี้จากหน้า Task (เห็นเฉพาะในคอนเทสต์นี้กับหน้า admin)</label>
-      </div>
-      <div class="settings-row">
-        <label for="ct-problems">โจทย์ในคอนเทสต์ (เลือกได้หลายข้อ) <span class="dim">— ข้อที่ขึ้นว่า "ซ่อนจาก Task" คือโจทย์ชุดคอนเทสต์</span></label>
-        <select id="ct-problems" multiple size="8"></select>
-      </div>
-      <div class="submit-row">
-        <button id="ct-save" type="button" class="submit-btn"><svg class="ic"><use href="#i-check"/></svg><span>บันทึกคอนเทสต์</span></button>
-      </div>
-      <div id="ct-status" class="status dim" role="status" aria-live="polite"></div>
-      <h3 class="pane-h">คอนเทสต์ทั้งหมด</h3>
-      <div id="ct-list" class="dim">—</div>
     </div>
-    <div class="card hidden" id="admin-card" style="margin-top:16px">
-      <h3 class="pane-h">Reports ทั้งหมด (admin)</h3>
+    <div class="card hidden admin-panel" id="contest-card" data-admin-panel="contests">
+      <div class="card-head admin-section-head">
+        <div>
+          <h3 class="admin-section-title">จัดการคอนเทสต์</h3>
+          <p class="admin-sub dim">สร้างรอบใหม่ แก้โจทย์กลางคัน หรือลบรอบที่ผ่านมา</p>
+        </div>
+        <button id="ct-new" type="button" class="submit-btn"><svg class="ic"><use href="#i-check"/></svg><span>สร้างคอนเทสต์</span></button>
+      </div>
+
+      <div id="ct-list" class="admin-contest-grid dim">—</div>
+
+      <div id="ct-editor" class="ct-editor hidden">
+        <div class="card-head admin-section-head">
+          <div>
+            <h3 id="ct-editor-title" class="admin-section-title">สร้างคอนเทสต์ใหม่</h3>
+            <p id="ct-editor-note" class="admin-sub dim">กรอกรหัสและช่วงเวลา แล้วเลือกโจทย์อย่างน้อย 1 ข้อ</p>
+          </div>
+          <button id="ct-cancel" type="button" class="ghost-btn">ปิด</button>
+        </div>
+
+        <div class="ct-form">
+          <div class="ct-field">
+            <label for="ct-id">รหัสคอนเทสต์ (slug)</label>
+            <input id="ct-id" type="text" maxlength="40" placeholder="posn-2569-round1" autocomplete="off" spellcheck="false">
+            <p class="ct-hint">a-z 0-9 _ - · เปลี่ยนภายหลังไม่ได้</p>
+          </div>
+          <div class="ct-field">
+            <label for="ct-title">ชื่อคอนเทสต์</label>
+            <input id="ct-title" type="text" maxlength="120" placeholder="POSN 2569 รอบที่ 1">
+          </div>
+          <div class="ct-field">
+            <label for="ct-start">เริ่มแข่ง (เวลาไทย)</label>
+            <input id="ct-start" type="datetime-local">
+          </div>
+          <div class="ct-field">
+            <label for="ct-end">จบแข่ง (เวลาไทย)</label>
+            <input id="ct-end" type="datetime-local">
+            <div class="ct-presets" role="group" aria-label="ตั้งระยะเวลาด่วน">
+              <button class="chip-btn" type="button" data-duration="60">1 ชม.</button>
+              <button class="chip-btn" type="button" data-duration="120">2 ชม.</button>
+              <button class="chip-btn" type="button" data-duration="180">3 ชม.</button>
+              <button class="chip-btn" type="button" data-duration="300">5 ชม.</button>
+            </div>
+          </div>
+          <div class="ct-field">
+            <label for="ct-freeze">แช่แข็งคะแนนช่วงท้าย (นาที)</label>
+            <input id="ct-freeze" type="number" min="0" max="1440" value="0">
+            <p class="ct-hint">0 = ไม่แช่แข็ง · คะแนนหยุดอัปเดตก่อนจบตามเวลานี้</p>
+          </div>
+          <div class="ct-field">
+            <span class="ct-label">ตัวเลือกการมองเห็น</span>
+            <div class="ct-toggle-grid">
+              <label class="ct-toggle" for="ct-samples">
+                <input id="ct-samples" type="checkbox" checked>
+                <span><strong>เปิดตัวอย่างระหว่างแข่ง</strong><small>ให้ผู้แข่งเห็นตัวอย่างสาธารณะของโจทย์</small></span>
+              </label>
+              <label class="ct-toggle" for="ct-hide">
+                <input id="ct-hide" type="checkbox" checked>
+                <span><strong>ซ่อนโจทย์จากหน้า Task</strong><small>เห็นเฉพาะในคอนเทสต์นี้กับหน้า admin</small></span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div class="ct-picker">
+          <div class="ct-picker-head">
+            <div>
+              <h4>โจทย์ในคอนเทสต์</h4>
+              <p class="ct-hint">กรอบเส้นประ = โจทย์ชุดคอนเทสต์ที่ซ่อนจากหน้า Task</p>
+            </div>
+            <div class="ct-picker-tools">
+              <input id="ct-problem-search" type="search" placeholder="ค้นหารหัสหรือชื่อโจทย์…" aria-label="ค้นหาโจทย์">
+              <span id="ct-problem-count" class="meta">เลือก 0 ข้อ</span>
+              <button id="ct-problem-clear" class="link-btn" type="button">ล้างที่เลือก</button>
+            </div>
+          </div>
+          <div id="ct-problems" class="ct-problem-list" role="group" aria-label="โจทย์ในคอนเทสต์"></div>
+        </div>
+
+        <div class="ct-savebar">
+          <div id="ct-preview" class="ct-preview meta" aria-live="polite">เลือกเวลาและโจทย์เพื่อดูตัวอย่าง</div>
+          <div class="submit-row">
+            <button id="ct-save" type="button" class="submit-btn"><svg class="ic"><use href="#i-check"/></svg><span>บันทึกคอนเทสต์</span></button>
+          </div>
+        </div>
+        <div id="ct-status" class="status dim" role="status" aria-live="polite"></div>
+      </div>
+    </div>
+
+    <div class="card hidden admin-panel" id="admin-card" data-admin-panel="reports">
+      <div class="card-head admin-section-head">
+        <div>
+          <h3 class="admin-section-title">Reports ทั้งหมด <span class="dash-count" id="admin-reports-count">—</span></h3>
+          <p class="admin-sub dim">รีพอร์ตจากผู้ใช้ — ปิดรายการเมื่อจัดการแล้ว</p>
+        </div>
+        <button class="ghost-btn" type="button" id="admin-reports-refresh"><svg class="ic"><use href="#i-refresh"/></svg><span>รีเฟรช</span></button>
+      </div>
       <div id="admin-reports" class="dim">—</div>
     </div>
-    <div class="card hidden" id="admin-tools-card" style="margin-top:16px">
-      <h3 class="pane-h">ตรวจซ้ำ (rejudge)</h3>
-      <div class="settings-row">
-        <label for="rejudge-problem">ข้อที่จะตรวจซ้ำ</label>
-        <select id="rejudge-problem"></select>
-      </div>
-      <div class="settings-row">
-        <label for="rejudge-limit">จำนวนการส่งล่าสุด</label>
-        <input id="rejudge-limit" type="number" min="1" max="200" value="10">
-      </div>
-      <div class="submit-row">
-        <button id="rejudge-btn" type="button" class="ghost-btn"><svg class="ic"><use href="#i-refresh"/></svg><span>ตรวจซ้ำล่าสุด</span></button>
-      </div>
-      <div id="rejudge-status" class="status dim" role="status" aria-live="polite"></div>
 
-      <h3 class="pane-h">จับโค้ดคล้ายกัน (plagiarism)</h3>
-      <div class="settings-row">
-        <label for="plag-problem">ข้อที่จะสแกน</label>
-        <select id="plag-problem"></select>
+    <div class="card hidden admin-panel" id="admin-tools-card" data-admin-panel="tools">
+      <div class="card-head admin-section-head">
+        <div>
+          <h3 class="admin-section-title">เครื่องมือตรวจงาน</h3>
+          <p class="admin-sub dim">ตรวจซ้ำและสแกนโค้ดคล้ายกันเป็นรายข้อ</p>
+        </div>
       </div>
-      <div class="settings-row">
-        <label for="plag-threshold">threshold ความคล้าย <span id="plag-threshold-val" class="mono-num">0.60</span></label>
-        <input id="plag-threshold" type="range" min="0.05" max="1" step="0.05" value="0.6">
+      <div class="tool-stack">
+        <section class="tool-card">
+          <div class="tool-card-head">
+            <span class="tool-icon"><svg class="ic"><use href="#i-refresh"/></svg></span>
+            <div><h4>ตรวจซ้ำ (rejudge)</h4><p class="ct-hint">ส่งการส่งล่าสุดของข้อที่เลือกกลับเข้าคิวตรวจใหม่</p></div>
+          </div>
+          <div class="tool-fields">
+            <div class="settings-row">
+              <label for="rejudge-problem">ข้อที่จะตรวจซ้ำ</label>
+              <select id="rejudge-problem"></select>
+            </div>
+            <div class="settings-row">
+              <label for="rejudge-limit">จำนวนการส่งล่าสุด</label>
+              <input id="rejudge-limit" type="number" min="1" max="200" value="10">
+            </div>
+          </div>
+          <div class="submit-row">
+            <button id="rejudge-btn" type="button" class="ghost-btn"><svg class="ic"><use href="#i-refresh"/></svg><span>ตรวจซ้ำล่าสุด</span></button>
+          </div>
+          <div id="rejudge-status" class="status dim" role="status" aria-live="polite"></div>
+        </section>
+
+        <section class="tool-card">
+          <div class="tool-card-head">
+            <span class="tool-icon"><svg class="ic"><use href="#i-search"/></svg></span>
+            <div><h4>จับโค้ดคล้ายกัน (plagiarism)</h4><p class="ct-hint">เทียบโค้ดที่ผ่านของทุกคนในข้อเดียว แล้วจัดอันดับคู่ที่คล้ายกัน</p></div>
+          </div>
+          <div class="tool-fields">
+            <div class="settings-row">
+              <label for="plag-problem">ข้อที่จะสแกน</label>
+              <select id="plag-problem"></select>
+            </div>
+            <div class="settings-row">
+              <label for="plag-threshold">threshold ความคล้าย <span id="plag-threshold-val" class="mono-num">0.60</span></label>
+              <input id="plag-threshold" type="range" min="0.05" max="1" step="0.05" value="0.6">
+            </div>
+          </div>
+          <div class="submit-row">
+            <button id="plag-btn" type="button" class="ghost-btn"><svg class="ic"><use href="#i-search"/></svg><span>สแกนหาคู่ที่คล้ายกัน</span></button>
+          </div>
+          <div id="plag-status" class="status dim" role="status" aria-live="polite"></div>
+          <div id="plag-body" class="dim">—</div>
+        </section>
       </div>
-      <div class="submit-row">
-        <button id="plag-btn" type="button" class="ghost-btn"><svg class="ic"><use href="#i-search"/></svg><span>สแกนหาคู่ที่คล้ายกัน</span></button>
-      </div>
-      <div id="plag-status" class="status dim" role="status" aria-live="polite"></div>
-      <div id="plag-body" class="dim">—</div>
 
     </div>
   </section>
@@ -525,6 +644,6 @@
 </div>
 
 <script src="/config.js?v=6"></script>
-<script src="/app.js?v=45"></script>
+<script src="/app.js?v=46"></script>
 </body>
 </html>
