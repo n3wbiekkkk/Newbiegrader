@@ -7,12 +7,13 @@ const { webcrypto, timingSafeEqual } = require('node:crypto');
 const code = fs.readFileSync(path.join(__dirname, '../functions/api/[[proxy]].js'), 'utf8')
   .replace('export async function onRequest', 'async function onRequest') + '\nthis.onRequest = onRequest;';
 
-function harness() {
+function harness(options = {}) {
   const calls = [];
   const crypto = { subtle: { digest: webcrypto.subtle.digest.bind(webcrypto.subtle),
     timingSafeEqual: (a, b) => timingSafeEqual(Buffer.from(a), Buffer.from(b)) } };
   const context = vm.createContext({ URL, Request, Response, Headers, Uint8Array, TextEncoder, crypto,
-    fetch: async (url, init) => { calls.push({ url, init }); return new Response('ok'); } });
+    caches: options.cache ? { default: options.cache } : undefined,
+    fetch: async (url, init) => { calls.push({ url, init }); return options.response ? options.response() : new Response('ok'); } });
   vm.runInContext(code, context);
   return { calls, run: (request, env = {}) => context.onRequest({ request, env, waitUntil() {} }) };
 }
@@ -155,4 +156,47 @@ test('staging exposes only GET and HEAD health without the test key', async () =
   assert.equal(h.calls.length, 2);
   assert.equal((await h.run(new Request('https://staging.invalid/api/health', { method: 'POST' }), env)).status, 403);
   assert.equal(h.calls.length, 2);
+});
+
+
+test('edge never looks up authenticated requests or contest listings', async () => {
+  for (const [path, headers] of [
+    ['/api/problems', {authorization: 'Bearer synthetic'}],
+    ['/api/problems', {cookie: 'ng_session=synthetic'}],
+    ['/api/problems', {cookie: 'another_auth=synthetic'}],
+    ['/api/contests', {}],
+  ]) {
+    let lookups = 0, writes = 0;
+    const h = harness({cache: {match() { lookups++; }, put() { writes++; }}});
+    await h.run(new Request('https://frontend.invalid' + path, {headers}));
+    assert.equal(lookups, 0); assert.equal(writes, 0); assert.equal(h.calls.length, 1);
+  }
+});
+
+test('edge respects origin privacy, Vary and Set-Cookie directives', async () => {
+  for (const headers of [ {'cache-control': 'private, max-age=20'},
+    {'cache-control': 'no-store'}, {'cache-control': 'public, no-cache'},
+    {'vary': 'Cookie'}, {'vary': 'Authorization'}, {'vary': '*'},
+    {'set-cookie': 'ng_session=synthetic; HttpOnly'} ]) {
+    let writes = 0;
+    const h = harness({cache: {match() {}, put() { writes++; }},
+      response: () => new Response('private synthetic', {headers})});
+    const r = await h.run(new Request('https://frontend.invalid/api/problems'));
+    assert.equal(writes, 0, JSON.stringify(headers));
+    assert.notEqual(r.headers.get('x-ng-cache'), 'MISS');
+  }
+});
+
+test('shareable edge keys retain query and origin and use new policy namespace', async () => {
+  const stored = [];
+  const h = harness({cache: {match() {}, async put(key, value) {stored.push({key, value});}},
+    response: () => new Response('public', {headers: {'cache-control': 'public, max-age=10'}})});
+  await h.run(new Request('https://frontend.invalid/api/languages?q=one'));
+  await h.run(new Request('https://frontend.invalid/api/languages?q=two'));
+  assert.equal(stored.length, 2);
+  const urls = stored.map(s => new URL(s.key.url));
+  assert.equal(urls[0].searchParams.get('q'), 'one');
+  assert.equal(urls[1].searchParams.get('q'), 'two');
+  assert.equal(urls[0].searchParams.get('__ng_policy'), '2');
+  assert.equal(urls[0].searchParams.get('__ng_origin'), 'https://grader.n.onjrnm.vip');
 });
