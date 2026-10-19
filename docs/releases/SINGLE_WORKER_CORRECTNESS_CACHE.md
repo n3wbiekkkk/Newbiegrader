@@ -144,3 +144,17 @@ This review did not execute a production deployment or application rollback.
 
 Local reviewed commits can be reverted on a separate review branch in reverse
 order with git revert; preserve the original dirty optimization worktree.
+
+## Native-qualification tooling extension
+
+A later synthetic-only qualification harness adds one refusal regression. The
+latest local rerun is **285 Python (282 pass, 3 private-fixture module skips),
+205 critical with zero skips, and 76 JavaScript with zero skips**. Linux ARM64
+Docker/root Python 3.11 was used; syntax/compile/DOM/style/plagiarism checks pass.
+The existing benchmark JSON remains the historical 837366c implementation record;
+application source has not changed. The opt-in native harness requires a root-
+private approval gate, the exact delegated test unit, idle real workers and blank
+Supabase credentials. A local disposable systemd VM ran its **17/17** kernel,
+verdict/privacy and matched-deadline single-worker tests before EC2 maintenance.
+Native EC2 results must be recorded separately; these local results do not
+qualify the resized host or CPU-credit exhaustion behavior.
