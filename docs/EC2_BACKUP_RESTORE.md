@@ -1,5 +1,15 @@
 # EC2 migration backup/restore gate
 
+## Latest application-rollout recovery check — 2026-10-19
+
+Read-only snapshot `20261019T105234Z-postgres-snapshot.dump.age` (795645 encrypted
+bytes, 11.1 s dump) was restored into network-disabled disposable PostgreSQL.
+All 51 table content comparisons, 58 relation/ACL/RLS definitions, 150 constraints
+and policies matched. This supersedes the earlier logical snapshot for this
+rollout; hosted Auth/Storage-service recovery remains unverified. Configuration,
+UID and Cloudflare recovery were encrypted and decryption verified. See
+[exact scope and recovery locations](releases/PRODUCTION_CORRECTNESS_RELEASE_2026-10-19.md).
+
 Status 2026-10-19: EC2 configuration recovery, PostgreSQL **logical database**
 recovery and private Storage **file-byte** recovery verified. Running managed
 Auth/full Storage service recovery remains **UNVERIFIED**. No production restore,

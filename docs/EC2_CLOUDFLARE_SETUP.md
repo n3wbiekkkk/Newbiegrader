@@ -1,5 +1,14 @@
 # Cloudflare connection — AWS production and isolated staging
 
+## Latest production publication — 2026-10-19
+
+Pages deployment `f826f65a-5f93-49f0-9ca5-4f2d286a2c85` serves app.js v52 and
+the cache-privacy proxy. Existing production/preview configuration, service
+bindings, keys, private AWS route and compatibility date were preserved. Actual
+post-publication smoke passed 15/15 and asset/privacy checks 7/7. No Vercel or
+JustRunMy route is used. See [deployment and rollback evidence](releases/PRODUCTION_CORRECTNESS_RELEASE_2026-10-19.md).
+Earlier deployment IDs below belong to their historical checkpoints.
+
 ## Current production checkpoint (2026-10-19)
 
 The operator approved cutover and explicitly stopping JustRunMy. Production

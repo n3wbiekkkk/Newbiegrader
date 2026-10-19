@@ -1,5 +1,14 @@
 # EC2 migration work log and runbook
 
+## Latest application deployment — 2026-10-19
+
+Production is **Cloudflare Pages + AWS t3.small / one worker**; Vercel and
+JustRunMy are not used. Correctness/cache backend `f883647` and Pages deployment
+`f826f65a-5f93-49f0-9ca5-4f2d286a2c85` passed the approved rollout. See
+[exact tests, backups and AWS-only rollback](releases/PRODUCTION_CORRECTNESS_RELEASE_2026-10-19.md).
+The older 6cba18c migration checkpoints below are historical. A subsequent
+backend file-storage migration is requested, not yet deployed at this checkpoint.
+
 ## Current checkpoint — AWS production cutover verified (2026-10-19)
 
 The operator explicitly authorized production cutover and then stopping
@@ -108,13 +117,12 @@ Unlimited and the estimated $24.84/month fixed AWS subtotal remain unchanged.
   database diagnostics until queued/running/live leases are zero, then stop worker.
   Keep the ledger and completed rows intact. Resume by restoring the worker gate,
   starting worker and setting API admission to 1. Never print complete env files.
-- Rollback: fence/drain AWS first; reconcile durable jobs and append the **latest
-  AWS UID reservations to the old persistent volume** before any old judge
-  execution. The old image lacks cgroups, so read-only API rollback is the safe
-  default; do not silently reopen its less-contained judge. Restore the saved
-  Pages origin/transport only after the old API is healthy, using the preserved
-  provider image/env/ports. A Pages deployment rollback does not restore project
-  configuration, secrets, queue state or UID reservations. Do not run both workers.
+- Current application rollback stays on AWS: pause/drain, restore the previous
+  verified AWS release and recorded Pages production deployment, then verify
+  one worker before reopening. Preserve current bindings, keys, DB and UID
+  reservations. Exact current/previous IDs and procedure are in the latest
+  release record above. Historical provider rollback notes below are not the
+  active deployment procedure.
 - Keep the stopped old application/volume during initial observation. No old
   application, volume, database row or credential was deleted. Retiring that
   retained rollback state is a separate destructive action.

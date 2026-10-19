@@ -1,5 +1,12 @@
 # Newbiegrader correctness and reliability audit — 2026-10-18
 
+## Later correctness/cache deployment — 2026-10-19
+
+The admitted-job diagnostics defect, problem-version/cache invalidation and
+contest-query/pagination corrections are deployed. A real synthetic CE job
+completed through normal polling and matched exactly one persisted submission.
+See [release review and runtime limits](../releases/PRODUCTION_CORRECTNESS_RELEASE_2026-10-19.md).
+
 Scope, baseline and trust boundaries are in [SECURITY_AUDIT.md](SECURITY_AUDIT.md).
 Line references refer to this branch, not the earlier audit's F1–F12 numbering.
 Corrections are local pending release. The subsequent authorized feedback branch
