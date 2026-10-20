@@ -1436,6 +1436,25 @@ def _effective_reveal(contest: Optional[dict], email: str, pid: str) -> str:
     return REVEAL_SAMPLES if protected else REVEAL_PRACTICE
 
 
+def _live_reveal(contest_id: object, owner: str, pid: str) -> str:
+    """Owner-facing feedback policy for a stored row, evaluated now.
+
+    Contest rows use their own row so an admin owner keeps the same ALL view
+    the submit/rejudge path used; everyone else follows the live window.
+    Practice rows follow the contest-aware practice policy. Unknown contests
+    and policy failures fail closed to REVEAL_NONE.
+    """
+    if not contest_id:
+        return _effective_reveal(None, owner, pid)
+    try:
+        for row in _contest_policy_rows(fresh=True):
+            if str(row.get("id")) == str(contest_id):
+                return _reveal_for(row, owner)
+    except Exception:
+        return REVEAL_NONE
+    return REVEAL_NONE
+
+
 # ---- contest registration (Codeforces style) ----
 # Missing registration storage must never turn a registration gate off.
 _reg_table_ok: Dict[str, bool] = {"value": True}
@@ -3248,7 +3267,8 @@ async def job_status(request: Request, jid: str) -> dict:
         # Use the job owner, never the requester, so an admin poll cannot
         # declassify another user's submission.
         reveal = await asyncio.to_thread(
-            _effective_reveal, None, job.get("user_email", ""), job.get("problem", ""))
+            _live_reveal, job.get("contest_id"), job.get("user_email", ""),
+            job.get("problem", ""))
         result = _result_with_reveal(job, result, reveal)
     return {
         "id": jid, "status": status, "problem": job.get("problem", ""),
@@ -3405,15 +3425,17 @@ async def history_detail(request: Request, sid: str) -> dict:
     row = dict(rows[0])
     # Your own submissions, or any submission if you are an admin. Nobody else:
     # a row carries the author's source code.
-    if row.get("user_email") != email and not _is_admin(email):
+    owner = row.get("user_email") or ""
+    if owner != email and not _is_admin(email):
         raise HTTPException(status_code=403, detail="not your submission")
     row.pop("user_email", None)  # never expose login emails publicly
     # Re-evaluate the live owner-facing policy: stored rows can predate the
     # current contest window (or an old rejudge), so trusting their bytes would
-    # serve samples during a show_samples=false contest. With no protected
-    # contest this returns PRACTICE, which is equivalent to SAMPLES for rows
-    # without practice feedback.
-    reveal = await asyncio.to_thread(_effective_reveal, None, email, row.get("problem", ""))
+    # serve samples during a show_samples=false contest. Use the submission
+    # owner, not the viewer, so an admin looking at someone else's row cannot
+    # declassify it.
+    reveal = await asyncio.to_thread(
+        _live_reveal, row.get("contest_id"), owner, row.get("problem", ""))
     row["results"] = _result_with_reveal(row, {"results": row.get("results", [])}, reveal)["results"]
     return row
 

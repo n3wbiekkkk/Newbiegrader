@@ -165,6 +165,40 @@ class ContestPolicyAudit(unittest.TestCase):
         out = asyncio.run(server.history_detail(self.request_with(owner, {}), "sid-stored"))
         self.assertIn("SAMPLE-IN", json.dumps(out))
 
+    def test_admin_owner_keeps_admin_feedback_policy_on_contest_reads(self):
+        """Contest rows use the submission owner's policy.
+
+        _reveal_for grants admins REVEAL_ALL. The generic contest-free
+        _effective_reveal does not, so re-checking a contest row without its
+        row would silently strip the admin owner's own feedback. Use the
+        owner's contest row, never the viewer's identity.
+        """
+        admin = "admin@example.invalid"
+        row = dict(self.submission("sid-admin", 0), user_email=admin, language="python",
+                   results=[{"test": "01", "verdict": "WA", "input": "SAMPLE-IN",
+                             "expected": "SAMPLE-OUT", "actual": "WRONG",
+                             "diff": "sample-diff"}])
+        self.fake.tables["contests"] = [self.contest]
+        self.fake.tables["submissions"] = [row]
+        with patch.object(server, "ADMIN_EMAILS", {admin}):
+            out = asyncio.run(server.history_detail(self.request_with(admin, {}), "sid-admin"))
+        self.assertIn("SAMPLE-IN", json.dumps(out))
+
+    def test_admin_viewing_another_users_contest_row_uses_owner_policy(self):
+        """An admin viewer must not declassify someone else's stored row."""
+        admin = "admin@example.invalid"
+        owner = "synthetic@example.invalid"
+        row = dict(self.submission("sid-other", 0), user_email=owner, language="python",
+                   results=[{"test": "01", "verdict": "WA", "input": "SAMPLE-IN",
+                             "expected": "SAMPLE-OUT", "actual": "WRONG",
+                             "diff": "sample-diff"}])
+        self.fake.tables["contests"] = [self.contest]
+        self.fake.tables["submissions"] = [row]
+        with patch.object(server, "ADMIN_EMAILS", {admin}):
+            out = asyncio.run(server.history_detail(self.request_with(admin, {}), "sid-other"))
+        self.assertNotIn("SAMPLE-IN", json.dumps(out))
+        self.assertTrue(all(item.get("hidden") for item in out["results"]))
+
     def test_live_contest_hides_practice_history_for_newly_hidden_problem(self):
         """A practice row has no contest_id; the problem can still be listed
         in a contest that starts later. Reading its stored samples must obey
@@ -209,6 +243,11 @@ class ContestPolicyAudit(unittest.TestCase):
             polled = asyncio.run(server.job_status(self.request_with(owner, {}), jid))
         self.assertNotIn("SAMPLE-IN", json.dumps(polled["result"]))
         self.assertNotIn("HIDDEN-IN", json.dumps(polled["result"]))
+        # An admin polling someone else's job must use the owner's policy too.
+        with patch.object(server, "ADMIN_EMAILS", {"admin@example.invalid"}):
+            admin_polled = asyncio.run(server.job_status(
+                self.request_with("admin@example.invalid", {}), jid))
+        self.assertNotIn("SAMPLE-IN", json.dumps(admin_polled["result"]))
 
         # Positive control: after the contest ends, permitted sample feedback
         # is visible again.
