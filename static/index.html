@@ -18,7 +18,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anuphan:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600;700&display=swap">
-<link rel="stylesheet" href="/styles.css?v=29">
+<link rel="stylesheet" href="/styles.css?v=27">
 </head>
 <body>
 <a class="skip-link" href="#main">ข้ามไปเนื้อหา</a>
@@ -330,6 +330,15 @@
     </div>
   </section>
 
+  <!-- SUBMISSION INSPECTION -->
+  <section id="view-submission" class="view" aria-labelledby="submission-title">
+    <a class="backlink" href="#/history"><svg class="ic" aria-hidden="true"><use href="#i-back"/></svg>ประวัติการส่งของฉัน</a>
+    <div class="page-head"><h1 id="submission-title">รายละเอียดการส่ง</h1></div>
+    <p class="inspection-policy dim">ดูโค้ดเพื่อนได้เมื่อส่งโจทย์เดียวกันตรวจเสร็จโดยไม่มี CE หรือ RE — ไม่จำเป็นต้องผ่าน (AC, WA, TLE, MLE, OLE ใช้ได้) การแข่งขันที่กำลังจะเริ่มหรือกำลังแข่งยังปิดการดูโค้ดเพื่อน</p>
+    <p id="submission-status" class="inspection-status dim" role="status" aria-live="polite"></p>
+    <div id="submission-body"></div>
+  </section>
+
   <!-- LOGIN -->
   <section id="view-login" class="view">
     <div class="page-head"><h2>เข้าสู่ระบบ</h2></div>
@@ -392,6 +401,8 @@
       </div>
     </div>
 
+    <div id="admin-session-status" class="card dim" role="status" aria-live="polite">กำลังตรวจสอบสิทธิ์ผู้ดูแล…</div>
+    <div id="admin-content" class="hidden">
     <div class="admin-tabs" role="tablist" aria-label="ส่วนของผู้ดูแล">
       <button class="admin-tab" type="button" role="tab" data-admin-tab="overview" aria-selected="true">ภาพรวม</button>
       <button class="admin-tab" type="button" role="tab" data-admin-tab="history" aria-selected="false">ประวัติการส่ง</button>
@@ -663,6 +674,7 @@
         </section>
       </div>
 
+    </div>
     </div>
   </section>
 

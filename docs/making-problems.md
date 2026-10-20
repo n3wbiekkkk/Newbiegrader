@@ -183,6 +183,17 @@ python tools/import_problems_supabase.py --problem new_problem --strict
 เห็น hash รุ่นใหม่ก่อนสรุปว่างานเสร็จ
 commit/push เฉพาะ code/docs/tools ที่เปลี่ยน ห้าม `git add -A` หรือ force-add ข้อมูลส่วนตัว
 
+### การเปลี่ยนเลขที่ได้รับอนุมัติเป็นกรณีพิเศษ
+
+รอบ 2026-10-20 ผู้ดูแลอนุมัติให้เปลี่ยนเลขทั้ง catalog ตามระดับความยาก
+ดู [แผนที่เลขเก่า/ใหม่](catalog/problem-numbers-2026-10-20.csv) และ
+[หลักฐานการเผยแพร่](releases/PROBLEM_EXPANSION_2026-10-20.md)
+เป็นข้อยกเว้นเฉพาะรอบนี้; งานถัดไปยังต้องรักษาเลขเดิมจนกว่าจะได้รับอนุมัติใหม่
+slug ID และประวัติการส่งไม่ถูกเปลี่ยนตามเลข
+ห้ามใช้ `--renumber` กับ production โดยสมมติว่าเป็น transaction ทั้งชุด:
+ต้องตรวจ reference, สำรอง, pause/drain และทดสอบ atomic SQL กับฐานจำลองก่อน
+ห้าม replay SQL/rollback ของ release ที่รับรองแล้วกับข้อมูลปัจจุบันโดยไม่ตรวจใหม่
+
 ## Prompt ย่อสำหรับ AI ตัวอื่น
 
 > อ่าน AGENTS.md และ docs/making-problems.md ใช้ tools/problem_authoring.py กับ

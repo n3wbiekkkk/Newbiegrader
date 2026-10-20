@@ -10,8 +10,8 @@ Strict limits · Undisclosed tests · Asynchronous judging · Contests · Teache
 
 [![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue)](LICENSE)
 ![Python](https://img.shields.io/badge/python-3.11-3776AB?logo=python&logoColor=white)
-![Problems](https://img.shields.io/badge/problems-68-brightgreen)
-![Test cases](https://img.shields.io/badge/test%20cases-1178-brightgreen)
+![Problems](https://img.shields.io/badge/problems-89-brightgreen)
+![Test cases](https://img.shields.io/badge/test%20cases-1594-brightgreen)
 ![Grader](https://img.shields.io/badge/grader-v2.0.7-informational)
 ![Frontend](https://img.shields.io/badge/frontend-no%20build%20step-orange)
 
@@ -41,11 +41,13 @@ Practice submissions show input, expected output and actual output for failed ca
 
 <div align="center">
 
-| 68 | 1,178 | v2.0.7 | 3 |
+| 89 | 1,594 | v2.0.7 | 3 |
 | :---: | :---: | :---: | :---: |
 | problems | test cases | grader engine | languages |
 
 </div>
+
+The [20-problem release](docs/catalog/NEW_PROBLEMS_2026-10-20.md) brings the catalog to 89 problems, numbered by difficulty under an explicit operator-approved migration. Stable slug IDs and submission history are preserved; the [number map](docs/catalog/problem-numbers-2026-10-20.csv) records previous numbers.
 
 Every problem ships with a reference solution, and every recorded verdict can be traced to the exact test set and grader version that produced it.
 
@@ -69,17 +71,17 @@ Submission history, per-problem statistics, plagiarism screening, one-click reju
 ### Lightweight frontend
 Plain HTML, CSS and JavaScript. No bundler, no transpiler and no framework.
 
-## ผลการตรวจ
+## Verdicts
 
-| ผลตรวจ | ความหมาย |
+| Verdict | Meaning |
 | :---: | --- |
-| `AC` | ผ่านทุกเทสต์ |
-| `WA` | คำตอบไม่ถูกต้อง |
-| `TLE` | ใช้เวลาเกินกำหนด |
-| `MLE` | ใช้หน่วยความจำเกินกำหนด |
-| `OLE` | แสดงผลลัพธ์เกินกำหนด |
-| `RE` | เกิดข้อผิดพลาดขณะรันโปรแกรม |
-| `CE` | คอมไพล์ไม่ผ่าน |
+| `AC` | Accepted. Every test passed. |
+| `WA` | Wrong answer. |
+| `TLE` | Time limit exceeded. |
+| `MLE` | Memory limit exceeded. |
+| `OLE` | Output limit exceeded. |
+| `RE` | Runtime error. |
+| `CE` | Compilation error. |
 
 ## Architecture
 

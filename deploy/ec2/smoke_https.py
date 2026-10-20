@@ -28,7 +28,11 @@ def main():
                         help='Explicit expected value of the existing API session setting')
     parser.add_argument('--production', action='store_true',
                         help='Probe the fixed production URL without any staging credential')
+    parser.add_argument('--expected-problems', type=int, default=68,
+                        help='Reviewed expected catalog size (default: %(default)s)')
     args = parser.parse_args()
+    if args.expected_problems < 1:
+        parser.error('--expected-problems must be positive')
     base = CANONICAL if args.production else BASE
     access = None
     if not args.production:
@@ -79,7 +83,7 @@ def main():
 
         status, _, body = request('/api/health?smoke=' + uuid.uuid4().hex, key=None)
         health = json.loads(body)
-        check('public GET health', status == 200 and health.get('ok') is True and health.get('count') == 68)
+        check('public GET health', status == 200 and health.get('ok') is True and health.get('count') == args.expected_problems)
         if not args.production:
             for label, key in [('missing', None), ('wrong', 'synthetic-invalid-access-key')]:
                 status, _, _ = request('/api/auth/me', key=key)
@@ -87,7 +91,7 @@ def main():
         status, _, body = request('/api/version?smoke=' + uuid.uuid4().hex)
         version = json.loads(body)
         check('AWS API/database role', status == 200 and version['system']['role'] == 'api'
-              and version['system']['queue_mode'] == 'database' and version['problems'] == 68)
+              and version['system']['queue_mode'] == 'database' and version['problems'] == args.expected_problems)
         status, headers, body = request('/api/auth/me')
         me = json.loads(body)
         check('anonymous identity and auth cache', status == 200 and me.get('user') is None
