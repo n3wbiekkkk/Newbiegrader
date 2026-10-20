@@ -10,7 +10,7 @@ begin
   ] loop
     foreach role_name in array array['anon','authenticated'] loop
       foreach privilege_name in array array[
-        'select','insert','update','delete','truncate','references','trigger'
+        'SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER'
       ] loop
         if has_table_privilege(role_name,'public.'||object_name,privilege_name)
            or has_any_column_privilege(role_name,'public.'||object_name,privilege_name) then
