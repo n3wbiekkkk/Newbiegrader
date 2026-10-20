@@ -11,13 +11,16 @@ graphify-out/
 agent.md
 problems/
 examples/
-output/
+# Local screenshots, previews and generated reports
+/output/
 tmp/pdfs/
 
 # Local agent instructions
 AGENTS.md
 
 # Local editor and agent artifacts
+.agent/
+.agents/
 .idea/
 .omp/
 .playwright-mcp/

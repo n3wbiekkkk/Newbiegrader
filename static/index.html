@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Newbiegrader — ฝึกเขียนโปรแกรมด้วยโจทย์ภาษาไทย</title>
 <meta name="description" content="สนามฝึกเขียนโปรแกรมภาษาไทย: ส่งโค้ด Python, C, C++ แล้วได้ผลตรวจทันที พร้อมตัวอย่างเทสต์และประวัติการส่งของตัวเอง">
-<meta name="theme-color" content="#f7f7f2" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#151a18" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#101010" media="(prefers-color-scheme: dark)">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Newbiegrader — ฝึกเขียนโปรแกรมด้วยโจทย์ภาษาไทย">
 <meta property="og:description" content="ส่งโค้ดแล้วรู้ผลทันที ตรวจทั้งเวลา หน่วยความจำ และความถูกต้อง">
@@ -18,7 +18,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anuphan:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600;700&display=swap">
-<link rel="stylesheet" href="/styles.css?v=27">
+<link rel="stylesheet" href="/styles.css?v=46">
 </head>
 <body>
 <a class="skip-link" href="#main">ข้ามไปเนื้อหา</a>
@@ -66,7 +66,7 @@
   <div id="health" class="health" title="สถานะเซิร์ฟเวอร์">...</div>
   <button id="theme-btn" type="button" class="ghost-btn" title="toggle dark mode" aria-label="สลับโหมดมืด/สว่าง">dark</button>
   <div id="auth" class="auth">
-    <button id="login-btn" type="button" class="ghost-btn">เข้าสู่ระบบ</button>
+    <button id="login-btn" type="button" class="ghost-btn" aria-label="เข้าสู่ระบบ"><svg class="ic" aria-hidden="true"><use href="#i-login"/></svg><span>เข้าสู่ระบบ</span></button>
     <button id="signup-btn" type="button" class="signup-btn">สมัครสมาชิก</button>
     <span id="user-chip" class="hidden"></span>
     <button id="logout-btn" type="button" class="ghost-btn hidden" title="ออกจากระบบ" aria-label="ออกจากระบบ"><svg class="ic"><use href="#i-logout"/></svg></button>
@@ -77,58 +77,67 @@
   <!-- HOME -->
   <section id="view-home" class="view">
     <div id="resume-card" class="hidden"></div>
-    <div class="hero">
-      <div class="hero-copy">
-        <p class="eyebrow"><span class="index-mark">N / G</span> สนามฝึกเขียนโปรแกรมภาษาไทย</p>
-        <h1>เก่งขึ้น<br><span class="hero-em">ทีละโจทย์.</span></h1>
-        <p class="lede">เริ่มจากข้อที่พอไหว ค่อย ๆ ไปให้ไกลขึ้น<br>เขียนโค้ด ส่งคำตอบ แล้วเรียนรู้จากทุกครั้งที่ลอง</p>
-        <div class="hero-btns">
-          <a class="btn-primary" href="#/tasks">เลือกโจทย์แรกของคุณ <span aria-hidden="true">↗</span></a>
-          <a class="hero-secondary" href="#/contests">ดูการแข่งขัน <span aria-hidden="true">→</span></a>
-        </div>
-        <p class="hero-languages"><span>เขียนด้วยภาษาที่ถนัด</span> Python <span aria-hidden="true">/</span> C <span aria-hidden="true">/</span> C++</p>
+    <div class="practice-stage">
+      <div class="practice-heading">
+        <h1>ฝึกคิด<br> เขียนโค้ด</h1>
+        <p class="practice-description">สนามฝึกเขียนโปรแกรมภาษาไทย<br>เลือกโจทย์ ส่งโค้ด แล้วดูผลตรวจได้ทันที</p>
+        <div class="practice-languages" aria-label="ภาษาที่รองรับ"><span>Python</span><span>C</span><span>C++</span></div>
+        <a class="practice-all" href="#/tasks"><span>ดูโจทย์ทั้งหมด</span><span class="practice-all-arrow" aria-hidden="true"><svg class="ic"><use href="#i-back"/></svg></span></a>
       </div>
-      <aside class="practice-note" aria-label="ตัวอย่างโจทย์อุ่นเครื่อง">
-        <div class="note-top"><span class="eyebrow">THE FIRST STEP</span><span class="note-index" aria-hidden="true">01</span></div>
-        <div class="note-content">
-          <span class="note-label">ลองคิดดูก่อน</span>
-          <h2>น้อยที่สุดเท่าไร<br>รวมกันได้เท่าไร?</h2>
-          <p>จากจำนวนทั้ง 5 จำนวนนี้</p>
-          <div class="number-study" aria-label="3, 1, 4, 1, 5"><span>3</span><span class="marked">1</span><span>4</span><span class="marked">1</span><span>5</span></div>
-          <div class="note-answer"><span>ค่าน้อยที่สุด <strong>1</strong></span><span>ผลรวม <strong>14</strong></span></div>
+    <section class="problem-explorer" aria-labelledby="explorer-title">
+      <div class="explorer-toolbar">
+        <h2 id="explorer-title">ลองสักข้อ</h2>
+        <div class="home-levels" role="group" aria-label="ระดับโจทย์แนะนำ">
+          <button type="button" data-home-level="easy" aria-pressed="true">เริ่มต้น</button>
+          <button type="button" data-home-level="medium" aria-pressed="false">ปานกลาง</button>
+          <button type="button" data-home-level="hard" aria-pressed="false">ท้าทาย</button>
         </div>
-        <a class="note-link" href="#/task/array_min_sum">ลองเขียนเป็นโปรแกรม <span aria-hidden="true">↗</span></a>
-      </aside>
+      </div>
+      <article id="home-featured" class="home-featured" aria-live="polite" aria-atomic="true"><p>กำลังโหลดโจทย์…</p></article>
+    </section>
     </div>
+    <section class="practice-selection" aria-label="โจทย์ที่แนะนำในระดับนี้">
+      <div class="explorer-foot">
+        <span>เลือกข้อเพื่อดูรายละเอียด</span>
+        <div class="selection-actions">
+          <button id="home-next" class="selection-next" type="button"><svg class="ic" aria-hidden="true"><use href="#i-refresh"/></svg> เปลี่ยนชุดโจทย์</button>
+          <a id="home-level-all" class="text-link" href="#/tasks">ดูระดับนี้ทั้งหมด <svg class="ic" aria-hidden="true"><use href="#i-back"/></svg></a>
+        </div>
+      </div>
+      <div id="home-problems" class="home-problems" role="group" aria-label="เลือกโจทย์เพื่อดูรายละเอียด"></div>
+    </section>
+    <section class="home-topics" aria-label="เลือกตามหมวดโจทย์">
+      <div class="topics-heading"><h2>ฝึกให้ตรงเรื่อง</h2><a class="text-link" href="#/archive">หมวดทั้งหมด <svg class="ic" aria-hidden="true"><use href="#i-back"/></svg></a></div>
+      <div class="topic-index">
+        <a href="#/tasks" data-home-tag="Math"><span>คณิตศาสตร์<small>Math</small></span><svg class="ic" aria-hidden="true"><use href="#i-back"/></svg></a>
+        <a href="#/tasks" data-home-tag="String"><span>สตริง<small>String</small></span><svg class="ic" aria-hidden="true"><use href="#i-back"/></svg></a>
+        <a href="#/tasks" data-home-tag="Graph"><span>กราฟ<small>Graph</small></span><svg class="ic" aria-hidden="true"><use href="#i-back"/></svg></a>
+        <a href="#/tasks" data-home-tag="DP"><span>Dynamic<small>Programming</small></span><svg class="ic" aria-hidden="true"><use href="#i-back"/></svg></a>
+      </div>
+    </section>
     <div class="home-ledger">
-      <div class="ledger-intro"><span class="eyebrow">KEEP PRACTICING</span><p>ทุกคำตอบที่ส่ง<br>คืออีกก้าวที่ได้ลอง</p></div>
+      <div class="ledger-intro"><svg class="ic" aria-hidden="true"><use href="#i-queue"/></svg><p>ผลการฝึก</p></div>
       <div class="stat"><div class="stat-num" id="stat-subs">—</div><div class="stat-label">คำตอบที่ส่งทั้งหมด</div></div>
       <div class="stat"><div class="stat-num" id="stat-accepted">—</div><div class="stat-label">คำตอบที่ผ่าน</div></div>
       <div class="stat"><div class="stat-num" id="stat-mine">—</div><div class="stat-label">ข้อที่คุณทำผ่าน</div></div>
     </div>
-    <section class="home-start" aria-labelledby="home-start-title">
-      <div class="section-heading"><div><p class="eyebrow">PICK A PROBLEM</p><h2 id="home-start-title">เริ่มจากตรงนี้ก็ได้</h2></div><a class="text-link" href="#/tasks">ดูโจทย์ทั้งหมด <span aria-hidden="true">↗</span></a></div>
-      <div id="home-problems" class="home-problems"><p class="dim">กำลังเตรียมโจทย์ให้คุณ…</p></div>
-    </section>
-    <div id="about" class="community-note">
-      <div><p class="eyebrow">A PLACE TO LEARN</p><h2>ฝึกด้วยกัน ไปได้ไกลกว่า</h2><p>ติดตรงไหน เจอข้อผิดพลาด หรืออยากคุยเรื่องโค้ด<br>แวะมาคุยกันในชุมชน Newbiegrader</p></div>
-      <a class="btn-ghost" href="https://discord.gg/7NQDHFBpf6" rel="noopener external">เข้าร่วม Discord <span aria-hidden="true">↗</span></a>
-    </div>
+    <div id="about" class="practice-community"><span>มีคำถามเรื่องโค้ด?</span><a href="https://discord.gg/7NQDHFBpf6" rel="noopener external">คุยกับชุมชนใน Discord</a></div>
   </section>
 
   <!-- TASKS -->
   <section id="view-tasks" class="view">
-    <div class="page-head">
-      <div><p class="eyebrow">THE PROBLEM SET</p><h2>โจทย์ฝึกฝน<span class="heading-period">.</span></h2><p class="dim">เลือกสักข้อ แล้วให้โค้ดของคุณเป็นคำตอบ</p></div>
+    <div class="page-head catalog-heading">
+      <div><a class="page-context" href="#/">หน้าแรก / โจทย์</a><h2>โจทย์ฝึกฝน</h2></div>
+      <p class="dim">หาเรื่องที่อยากฝึก<br>แล้วเริ่มจากข้อที่สนใจ</p>
     </div>
     <div class="filterbar">
       <label class="problem-search"><svg class="ic" aria-hidden="true"><use href="#i-search"/></svg><input id="q" type="search" placeholder="ค้นหาชื่อ รหัส หรือเลขโจทย์" aria-label="ค้นหาโจทย์"></label>
-      <select id="f-sort" aria-label="sort problems">
+      <select id="f-sort" aria-label="เรียงลำดับโจทย์">
         <option value="no">เรียงตามเลขโจทย์</option>
         <option value="difficulty">เรียงตามระดับ</option>
         <option value="title">เรียงตามชื่อ</option>
       </select>
-      <select id="f-diff" aria-label="filter by difficulty">
+      <select id="f-diff" aria-label="กรองระดับความยาก">
         <option value="">ทุกระดับ</option>
       </select>
       <label class="mine-check"><input type="checkbox" id="show-tag" checked> แสดงหมวด</label>
@@ -142,10 +151,12 @@
           <button class="side-btn" data-status="solved" type="button" aria-pressed="false">ทำผ่านแล้ว</button>
         </div>
         <hr class="sep">
-        <details id="tag-filters" class="tag-disclosure" open>
+        <details id="tag-filters" class="tag-disclosure">
           <summary><span id="tag-filter-label">หมวดโจทย์</span></summary>
+          <div class="tag-filter-content">
           <div class="side-head"><h3>เลือกหมวดโจทย์</h3><button id="tag-clear-side" type="button" class="link-btn">ล้าง</button></div>
           <div id="tag-list"></div>
+          </div>
         </details>
       </aside>
       <div class="tasks-main">
@@ -160,20 +171,21 @@
 
   <!-- ARCHIVE -->
   <section id="view-archive" class="view">
-    <div class="page-head"><div><p class="eyebrow">FIND YOUR FOCUS</p><h2>หมวดโจทย์.</h2><p class="dim">เลือกเรื่องที่อยากฝึกให้คล่องขึ้น</p></div></div>
-    <div class="card">
-      <h3 class="pane-h">Tags</h3>
+    <div class="page-head section-heading"><div><a class="page-context" href="#/">หน้าแรก / หมวดโจทย์</a><h2>ฝึกเป็นเรื่อง</h2></div><p class="dim">เลือกหัวข้อที่อยากฝึก<br>หรือเริ่มจากระดับที่คุ้นเคย</p></div>
+    <section class="archive-section" aria-labelledby="archive-topics-title">
+      <h3 id="archive-topics-title" class="section-title">เลือกตามหัวข้อ</h3>
       <div id="archive-tags" class="dim">—</div>
+    </section>
+    <section class="archive-section" aria-labelledby="archive-levels-title">
+      <h3 id="archive-levels-title" class="section-title">เลือกตามระดับ</h3>
       <div id="archive-groups"></div>
-    </div>
+    </section>
   </section>
 
   <!-- CONTESTS -->
   <section id="view-contests" class="view">
-    <div class="page-head"><div><p class="eyebrow">TEST YOURSELF</p><h2>สนามแข่งขัน.</h2><p class="dim">ลองแก้โจทย์ภายใต้เวลา แล้ววัดฝีมือไปด้วยกัน</p></div></div>
-    <div class="card table-card">
-      <div id="contests-body" class="dim" style="padding:16px">Loading...</div>
-    </div>
+    <div class="page-head section-heading"><div><a class="page-context" href="#/">หน้าแรก / การแข่งขัน</a><h2>สนามแข่งขัน</h2></div><p class="dim">เลือกการแข่งขัน<br>ดูเวลา โจทย์ และผลคะแนน</p></div>
+    <div id="contests-body" class="dim">กำลังโหลดการแข่งขัน…</div>
   </section>
 
   <!-- CONTEST DETAIL -->
@@ -188,11 +200,11 @@
       </div>
       <div id="contest-status-chip"></div>
     </div>
-    <div class="card">
+    <div class="card contest-section">
       <h3 class="pane-h">โจทย์ในคอนเทสต์</h3>
       <div id="contest-problems" class="dim">—</div>
     </div>
-    <div class="card" style="margin-top:16px">
+    <div class="card contest-section">
       <h3 class="pane-h">ประกาศจากผู้จัด</h3>
       <div id="contest-annc" class="dim">—</div>
       <div id="contest-annc-form" class="hidden" style="margin-top:8px">
@@ -203,9 +215,9 @@
         </div>
       </div>
     </div>
-    <div class="card table-card" style="margin-top:16px">
-      <h3 class="pane-h" style="padding:16px 16px 0;margin:0">Scoreboard</h3>
-      <div id="contest-scoreboard" class="dim" style="padding:16px">—</div>
+    <div class="card table-card contest-section contest-board">
+      <h3 class="pane-h">ตารางคะแนน</h3>
+      <div id="contest-scoreboard" class="dim">—</div>
     </div>
   </section>
 
@@ -223,7 +235,7 @@
         <span class="dim">คะแนนที่ดีที่สุด</span><strong id="your-score-num">—</strong>
       </div>
     </div>
-    <div class="tabbar" role="tablist" aria-label="ส่วนของโจทย์">
+    <div class="tabbar task-tabs" role="tablist" aria-label="ส่วนของโจทย์">
       <button class="tab-btn active" id="tab-statement" data-tab="statement" type="button" role="tab" aria-selected="true" aria-controls="pane-statement">เนื้อโจทย์</button>
       <button class="tab-btn" id="tab-submit" data-tab="submit" type="button" role="tab" aria-selected="false" aria-controls="pane-submit">ส่งโค้ด</button>
       <button class="tab-btn" id="tab-run" data-tab="run" type="button" role="tab" aria-selected="false" aria-controls="pane-run">ทดลองรัน</button>
@@ -253,12 +265,13 @@
           <button data-lang="cpp" class="lang-btn" role="radio" aria-checked="false">C++</button>
         </div>
       </div>
+      <div class="judge-workbench">
+      <div class="code-panel">
       <div id="submit-editor-slot">
         <div id="code-shared">
           <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="แนบไฟล์โค้ด กด Enter เพื่อเลือกไฟล์">
-            <p><svg class="ic ic-lg"><use href="#i-upload"/></svg></p>
-            <p><strong>แนบไฟล์</strong> (.py / .c / .cpp) — คลิกหรือลากไฟล์มาวาง</p>
-            <p class="dim">หรือวางโค้ดในช่องด้านล่าง</p>
+            <svg class="ic ic-lg" aria-hidden="true"><use href="#i-upload"/></svg>
+            <div><strong>แนบไฟล์โค้ด</strong><span>ลากไฟล์ .py, .c หรือ .cpp มาวาง หรือคลิกเลือกไฟล์</span></div>
             <input type="file" id="file-input" accept=".py,.c,.cpp,.cc,.cxx" hidden>
           </div>
           <div id="file-chip" class="file-chip hidden">
@@ -266,7 +279,8 @@
             <button id="file-load" type="button" title="load file text into editor">ใส่ใน editor</button>
             <button id="file-clear" type="button" title="remove attached file">ลบออก</button>
           </div>
-          <textarea id="editor" spellcheck="false" aria-label="โค้ดที่จะส่ง" placeholder="// วางโค้ดที่นี่ หรือแนบไฟล์ด้านบน"></textarea>
+          <label class="editor-label" for="editor">โค้ดของคุณ</label>
+          <textarea id="editor" spellcheck="false" aria-label="โค้ดที่จะส่ง" placeholder="วางโค้ดที่นี่ หรือแนบไฟล์ด้านบน"></textarea>
         </div>
       </div>
       <div class="submit-row submit-bar">
@@ -275,9 +289,12 @@
         <span id="draft-hint" class="dim"></span>
       </div>
       <div id="submit-status" class="status dim" role="status" aria-live="polite"></div>
-      <hr class="sep">
-      <div class="card-head"><h2>ผลการตรวจ</h2><div id="score-line" class="meta"></div></div>
-      <div id="result-body" class="dim" role="status" aria-live="polite">ส่งโค้ดแล้วผลจะขึ้นตรงนี้</div>
+      </div>
+      <aside class="judge-feedback" aria-labelledby="judge-feedback-title">
+        <div class="card-head"><h2 id="judge-feedback-title">ผลการตรวจ</h2><div id="score-line" class="meta"></div></div>
+        <div id="result-body" class="dim" role="status" aria-live="polite"><div class="feedback-empty"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg><h3>พร้อมตรวจคำตอบ</h3><p>ส่งโค้ดแล้วดูคะแนน เวลา และผลรายเทสต์ได้ตรงนี้</p></div></div>
+      </aside>
+      </div>
     </div>
     <div class="card tab-pane" id="pane-run" role="tabpanel" aria-labelledby="tab-run">
       <div class="card-head">
@@ -288,8 +305,10 @@
           <button data-lang="cpp" class="lang-btn" role="radio" aria-checked="false">C++</button>
         </div>
       </div>
-      <p class="dim">โค้ดที่รันคือเนื้อหาใน editor ด้านล่าง (ใช้ editor ตัวเดียวกับแท็บส่งโค้ด) — ผลรันนี้<strong>ไม่ถูกบันทึก</strong> ไม่นับคะแนน และไม่ปรากฏในประวัติ</p>
+      <p class="pane-intro dim">ใช้โค้ดเดียวกับแท็บส่งโค้ด ผลการทดลองรันไม่บันทึกคะแนนหรือประวัติ</p>
+      <div class="run-workbench">
       <div id="run-editor-slot"></div>
+      <div class="run-console">
       <h3 class="pane-h">ข้อมูลนำเข้า (stdin)</h3>
       <textarea id="run-input" spellcheck="false" aria-label="ข้อมูลนำเข้า" placeholder="พิมพ์ข้อมูลที่ป้อนให้โปรแกรม (เว้นว่างได้)"></textarea>
       <div class="submit-row">
@@ -297,30 +316,32 @@
       </div>
       <div id="run-status" class="status dim" role="status" aria-live="polite"></div>
       <hr class="sep">
-      <div class="card-head"><h2>ผลการรัน</h2><span class="meta">playground — ไม่บันทึก</span></div>
-      <div id="run-result" class="dim" role="status" aria-live="polite">กด Run แล้วผลจะขึ้นตรงนี้</div>
+      <div class="card-head"><h2>ผลการรัน</h2><span class="meta">ไม่บันทึกคะแนน</span></div>
+      <div id="run-result" class="dim" role="status" aria-live="polite"><div class="feedback-empty"><svg class="ic" aria-hidden="true"><use href="#i-send"/></svg><h3>ลองด้วยข้อมูลของคุณ</h3><p>ใส่ข้อมูลนำเข้าแล้วกดรัน เพื่อดูสิ่งที่โปรแกรมพิมพ์ออกมา</p></div></div>
+      </div>
+      </div>
     </div>
     <div class="card tab-pane" id="pane-subs">
-      <p class="dim">ทุกคนที่ส่งข้อนี้ — login แล้วกดดูโค้ดของเพื่อนได้ทุกคน เพื่อการเรียนรู้</p>
-      <h3 class="pane-h">Top scores</h3>
+      <p class="pane-intro dim">เข้าสู่ระบบเพื่อเปิดดูโค้ดและผลตรวจของเพื่อนในโจทย์ที่เปิดให้ดู</p>
+      <h3 class="pane-h">คะแนนสูงสุด</h3>
       <div id="task-top-body" class="dim">—</div>
-      <h3 class="pane-h">All submissions</h3>
+      <h3 class="pane-h">การส่งทั้งหมด</h3>
       <div id="task-all-body" class="dim">—</div>
     </div>
     <div class="card tab-pane" id="pane-mine">
-      <p class="dim">เฉพาะของฉัน (ต้อง login)</p>
+      <p class="pane-intro dim">ประวัติการส่งของคุณสำหรับโจทย์ข้อนี้</p>
       <div id="task-mine-body" class="dim">—</div>
     </div>
     <div class="card tab-pane" id="pane-report">
-      <p class="dim">แจ้งโจทย์ผิด / test ผิด / อื่น ๆ (ต้อง login)</p>
+      <p class="pane-intro dim">พบข้อความหรือข้อมูลทดสอบผิดพลาด? เข้าสู่ระบบแล้วแจ้งรายละเอียดให้ผู้ดูแลตรวจสอบได้</p>
       <div id="report-box">
         <div class="report-row">
-          <select id="report-kind" aria-label="report kind">
+          <select id="report-kind" aria-label="ประเภทปัญหา">
             <option value="statement">โจทย์ผิด/ไม่ชัด</option>
             <option value="tests">test ผิด</option>
             <option value="other">อื่น ๆ</option>
           </select>
-          <input id="report-msg" type="text" maxlength="1000" placeholder="อธิบายสั้น ๆ">
+          <input id="report-msg" type="text" maxlength="1000" placeholder="อธิบายปัญหาที่พบ" aria-label="รายละเอียดปัญหา">
           <button id="report-send" type="button" class="ghost-btn"><svg class="ic"><use href="#i-flag"/></svg><span>ส่งรีพอร์ต</span></button>
         </div>
         <div id="report-status" class="status dim"></div>
@@ -334,22 +355,24 @@
   <section id="view-submission" class="view" aria-labelledby="submission-title">
     <a class="backlink" href="#/history"><svg class="ic" aria-hidden="true"><use href="#i-back"/></svg>ประวัติการส่งของฉัน</a>
     <div class="page-head"><h1 id="submission-title">รายละเอียดการส่ง</h1></div>
-    <p class="inspection-policy dim">ดูโค้ดเพื่อนได้เมื่อส่งโจทย์เดียวกันตรวจเสร็จโดยไม่มี CE หรือ RE — ไม่จำเป็นต้องผ่าน (AC, WA, TLE, MLE, OLE ใช้ได้) การแข่งขันที่กำลังจะเริ่มหรือกำลังแข่งยังปิดการดูโค้ดเพื่อน</p>
+    <p class="inspection-policy dim">เข้าสู่ระบบเพื่อดูโค้ดและผลตรวจของเพื่อน การเข้าถึงโจทย์ที่ซ่อนและโจทย์แข่งขันขึ้นอยู่กับสิทธิ์และช่วงการแข่งขัน ข้อมูลทดสอบลับยังไม่เปิดเผย</p>
     <p id="submission-status" class="inspection-status dim" role="status" aria-live="polite"></p>
     <div id="submission-body"></div>
   </section>
 
   <!-- LOGIN -->
   <section id="view-login" class="view">
-    <div class="page-head"><h2>เข้าสู่ระบบ</h2></div>
+    <div class="auth-layout">
+    <div class="auth-intro"><a class="backlink" href="#/tasks"><svg class="ic" aria-hidden="true"><use href="#i-back"/></svg> กลับไปเลือกโจทย์</a><h2 id="auth-heading">เข้าสู่ระบบ</h2><p id="auth-description" class="dim">ดูประวัติการส่ง บันทึกคะแนน<br>และเปิดดูโค้ดของเพื่อน</p><p class="auth-note">ใช้บัญชีอีเมลหรือ Google ของคุณ</p></div>
     <div class="card auth-card">
-      <div class="tabbar" role="tablist">
-        <button class="tab-btn active" data-authtab="login" type="button">เข้าสู่ระบบ</button>
-        <button class="tab-btn" data-authtab="register" type="button">สมัครสมาชิก</button>
+      <div class="tabbar" role="tablist" aria-label="เลือกการเข้าสู่ระบบหรือสมัครสมาชิก">
+        <button class="tab-btn active" id="auth-tab-login" data-authtab="login" type="button" role="tab" aria-selected="true" aria-controls="auth-fields">เข้าสู่ระบบ</button>
+        <button class="tab-btn" id="auth-tab-register" data-authtab="register" type="button" role="tab" aria-selected="false" aria-controls="auth-fields" tabindex="-1">สมัครสมาชิก</button>
       </div>
+      <div id="auth-fields" role="tabpanel" aria-labelledby="auth-tab-login">
       <div id="auth-err" class="status bad hidden" role="status" aria-live="polite"></div>
       <div class="settings-row" id="row-name" style="display:none">
-        <label for="auth-name">ชื่อที่โชว์</label>
+        <label for="auth-name">ชื่อที่แสดง</label>
         <input id="auth-name" type="text" maxlength="50" autocomplete="nickname">
       </div>
       <div class="settings-row">
@@ -373,30 +396,39 @@
         <button id="auth-resend" type="button" class="ghost-btn hidden">ส่งรหัสอีกครั้ง</button>
       </div>
       <button id="auth-recover" type="button" class="ghost-btn">ลืมรหัสผ่าน / ยืนยันอีเมลบัญชีเดิม</button>
-      <hr class="sep">
       <div class="or-divider"><span>หรือ</span></div>
       <button id="google-btn" type="button" class="google-btn"><img class="google-logo" src="/google-g.png" width="20" height="20" alt="" aria-hidden="true"><span>Continue with Google</span></button>
+      </div>
+    </div>
     </div>
   </section>
 
   <!-- SETTINGS -->
   <section id="view-settings" class="view">
-    <div class="page-head"><div><p class="eyebrow">MAKE IT YOURS</p><h2>ตั้งค่าของคุณ.</h2></div></div>
-    <div class="card">
+    <div class="page-head section-heading"><div><a class="page-context" href="#/">หน้าแรก / ตั้งค่า</a><h2>ตั้งค่าของคุณ</h2></div><p class="dim">ข้อมูลบัญชี ภาษาที่ใช้<br>และหน้าตาเว็บที่คุ้นเคย</p></div>
+    <section class="settings-section" aria-labelledby="settings-account-title">
+      <div class="settings-section-heading"><h3 id="settings-account-title">ข้อมูลบัญชี</h3><p>ชื่อที่แสดงในประวัติและการแข่งขัน<br>พร้อมภาษาที่ใช้ส่งคำตอบเป็นค่าเริ่มต้น</p></div>
       <div id="settings-body" class="dim">Loading...</div>
-    </div>
-    <div class="privacy-settings">
-      <div><h3>คุกกี้และข้อมูลในเบราว์เซอร์</h3><p>เราใช้คุกกี้สำหรับการเข้าสู่ระบบ ส่วนธีม ตัวกรอง และร่างโค้ดเก็บไว้ในเบราว์เซอร์นี้</p><p>หากใช้เครื่องร่วมกับผู้อื่น ให้ออกจากระบบเมื่อใช้งานเสร็จ</p></div>
-      <button id="cookie-settings" type="button" class="btn-ghost">อ่านรายละเอียด</button>
-    </div>
+    </section>
+    <section class="settings-section" aria-labelledby="settings-theme-title">
+      <div class="settings-section-heading"><h3 id="settings-theme-title">หน้าตาเว็บ</h3><p>เลือกธีมที่อ่านสบาย<br>เว็บจะจำไว้ในเบราว์เซอร์นี้</p></div>
+      <div class="theme-choices" role="group" aria-label="เลือกธีม">
+        <button class="theme-choice" data-setting-theme="light" type="button" aria-pressed="true"><span class="theme-preview theme-preview-light" aria-hidden="true"><i></i><i></i><i></i></span><span>สว่าง <span class="theme-choice-mark" aria-hidden="true"></span></span></button>
+        <button class="theme-choice" data-setting-theme="dark" type="button" aria-pressed="false"><span class="theme-preview theme-preview-dark" aria-hidden="true"><i></i><i></i><i></i></span><span>มืด <span class="theme-choice-mark" aria-hidden="true"></span></span></button>
+      </div>
+    </section>
+    <section class="settings-section privacy-settings" aria-labelledby="settings-privacy-title">
+      <div class="settings-section-heading"><h3 id="settings-privacy-title">ข้อมูลในเบราว์เซอร์</h3><p>คุกกี้และข้อมูลที่เก็บไว้ในเครื่อง</p></div>
+      <div><p>เราใช้คุกกี้สำหรับการเข้าสู่ระบบ ส่วนธีม ตัวกรอง และร่างโค้ดเก็บไว้ในเบราว์เซอร์นี้</p><p>หากใช้เครื่องร่วมกับผู้อื่น ให้ออกจากระบบเมื่อใช้งานเสร็จ</p><button id="cookie-settings" type="button" class="btn-ghost">อ่านรายละเอียด</button></div>
+    </section>
   </section>
 
   <!-- ADMIN (เฉพาะ admin) -->
   <section id="view-admin" class="view">
     <div class="page-head">
       <div>
-        <p class="eyebrow">OPERATOR CONSOLE</p>
-        <h2>ผู้ดูแลระบบ<span class="heading-period">.</span></h2>
+        <a class="page-context" href="#/">หน้าแรก / ผู้ดูแล</a>
+        <h2>ผู้ดูแลระบบ</h2>
         <p class="dim">จัดการแข่งขัน ตรวจงาน และดูสุขภาพระบบ — เห็นเฉพาะอีเมลที่ได้รับสิทธิ์ผู้ดูแล</p>
       </div>
     </div>
@@ -679,9 +711,9 @@
   </section>
 
   <!-- HISTORY -->
-  <section id="view-history" class="view">    <div class="page-head">
-      <h2>ประวัติการส่งของฉัน</h2>
-      <div class="history-tools">
+  <section id="view-history" class="view">
+    <div class="page-head section-heading"><div><a class="page-context" href="#/">หน้าแรก / ประวัติ</a><h2>ประวัติการส่ง</h2></div><p class="dim">ย้อนดูโค้ด คะแนน<br>และผลตรวจของคุณ</p></div>
+    <div class="history-tools">
         <select id="hist-filter" aria-label="กรองตามโจทย์">
           <option value="">ทุกข้อ</option>
         </select>
@@ -692,23 +724,21 @@
         </select>
         <label class="mine-check" for="hist-group"><input type="checkbox" id="hist-group"> จัดกลุ่มตามโจทย์</label>
         <button id="hist-refresh" type="button" class="icon-btn" title="โหลดใหม่" aria-label="โหลดประวัติใหม่"><svg class="ic"><use href="#i-refresh"/></svg></button>
-      </div>
     </div>
     <div id="hist-stats" class="meta"></div>
     <div class="card table-card">
-      <div id="hist-body" class="dim" style="padding:16px">กำลังโหลดประวัติ...</div>
+      <div id="hist-body" class="dim">กำลังโหลดประวัติ...</div>
     </div>
   </section>
 </main>
 
 <footer class="foot">
   <div class="foot-brand"><img src="/logo-icon.png?v=2" class="brand-logo logo-light" alt=""><img src="/logo-icon-dark.png?v=2" class="brand-logo logo-dark" alt=""><span class="brand-name">newbie<span class="brand-acc">grader</span></span></div>
-  <p class="dim">พื้นที่เล็ก ๆ สำหรับการฝึกฝนทุกวัน</p>
+  <p class="dim">สนามฝึกเขียนโปรแกรมภาษาไทย</p>
   <p class="dim"><a class="tlink" href="https://github.com/n3wbiekkkk/Newbiegrader" rel="noopener external">ซอร์สโค้ด (AGPL-3.0)</a></p>
 </footer>
 
 <aside id="cookie-banner" class="cookie-notice hidden" aria-labelledby="cookie-title">
-  <p class="eyebrow">YOUR PRIVACY</p>
   <h2 id="cookie-title">คุกกี้เท่าที่จำเป็น</h2>
   <p>เราใช้คุกกี้เพื่อให้คุณเข้าสู่ระบบได้ ไม่มีคุกกี้โฆษณาหรือวิเคราะห์พฤติกรรม</p>
   <div id="cookie-details" class="cookie-details hidden">
@@ -733,6 +763,6 @@
 </div>
 
 <script src="/config.js?v=6"></script>
-<script src="/app.js?v=57"></script>
+<script src="/app.js?v=71"></script>
 </body>
 </html>
