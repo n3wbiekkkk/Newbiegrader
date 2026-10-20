@@ -1,5 +1,10 @@
 # Release validation report — 2026-10-20
 
+> Historical snapshot. For the current branch, origin/main compatibility and
+> release blocker status, see `RELEASE_BLOCKER_REPORT.md`. The 64/68 package
+> result below was the pre-repair baseline; the four private references now pass
+> the default validator locally (68/68). Production gates remain unresolved.
+
 ## Verdict
 
 **Code-level integration: PASS for A01–A07 on the tested environments.** The

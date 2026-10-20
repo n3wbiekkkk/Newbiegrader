@@ -1,5 +1,10 @@
 # Release validation progress — 2026-10-20
 
+> Historical snapshot. See `RELEASE_BLOCKER_PROGRESS.md` for the current release
+> ledger and `RELEASE_BLOCKER_REPORT.md` for the final evidence and gate matrix.
+> In particular, `origin/main` has advanced since this snapshot and is no longer
+> tree-identical.
+
 ## Baseline
 
 - Repository: `/Users/phetpitaksukprasert/Developer/grader`
