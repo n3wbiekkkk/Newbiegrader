@@ -25,6 +25,8 @@ const state = {
   taskTab: "statement",
   file: null,
   user: null,
+  authReady: false,      // initial /me + remember-me restoration have completed
+  authError: false,
   is_admin: false,
   isAdmin: false,        // alias of is_admin (same value)
   filter: { q: "", diff: "", tag: "", status: "all", sort: "no" },
@@ -884,7 +886,6 @@ function router() {
   if (h === "#/history") { show("history"); setTitle("history"); loadHistory(); return; }
   if (h === "#/settings") { show("settings"); setTitle("settings"); renderSettings(); return; }
   if (h === "#/admin") {
-    if (!state.is_admin) { location.hash = "#/"; return; }
     show("admin");
     setTitle("admin");
     renderAdmin();
@@ -1586,11 +1587,13 @@ async function refreshMe() {
   try {
     const me = await apiGet("/api/auth/me");
     if (seq !== state.meSeq) return;
+    state.authError = false;
     state.user = (me && me.user) || null;
     state.is_admin = state.isAdmin = !!(me && me.is_admin);
     embedded = me && me.profile ? me : null;
   } catch (e) {
     if (seq !== state.meSeq) return;
+    state.authError = true;
     state.user = null;
     state.is_admin = state.isAdmin = false;
   }
@@ -1607,7 +1610,7 @@ async function refreshMe() {
   $("logout-btn").classList.toggle("hidden", !state.user);
   const navAdmin = $("nav-admin");
   if (navAdmin) navAdmin.classList.toggle("hidden", !state.is_admin);
-  if (!state.is_admin && (location.hash || "") === "#/admin") location.hash = "#/";
+  if (state.authReady && !state.is_admin && (location.hash || "") === "#/admin") renderAdmin();
   const chip = $("user-chip");
   chip.classList.toggle("hidden", !state.user);
   if (state.user) {
@@ -1629,6 +1632,18 @@ async function refreshMe() {
     chip.textContent = display;
     chip.title = state.user.email || "";
   }
+}
+
+async function restoreInitialSession() {
+  await refreshMe();
+  // A missing session cookie is not a final denial until remember-me is checked.
+  if (!state.user) {
+    try {
+      const r = await apiGet("/api/auth/restore");
+      if (r && r.restored) await refreshMe();
+    } catch (e) { state.authError = true; }
+  }
+  state.authReady = true;
 }
 
 $("login-btn").onclick = () => {
@@ -3297,8 +3312,17 @@ function showAdminTab(name) {
 }
 
 function renderAdmin() {
+  const pending = !state.authReady || state.authError;
+  $("admin-session-status").classList.toggle("hidden", !pending);
+  $("admin-content").classList.toggle("hidden", pending || !state.is_admin);
+  if (pending) {
+    $("admin-session-status").textContent = state.authError
+      ? "ตรวจสอบสิทธิ์ไม่สำเร็จ กรุณาโหลดหน้าใหม่อีกครั้ง"
+      : "กำลังตรวจสอบสิทธิ์ผู้ดูแล…";
+    return;
+  }
   if (!state.is_admin) {
-    location.hash = "#/";
+    _nav("#/", "replace");
     return;
   }
   ["overview-card", "admin-history-card", "contest-card", "admin-card", "admins-card", "admin-tools-card"].forEach((id) => {
@@ -4197,22 +4221,14 @@ async function init() {
   // round trip on every navigation/reload.
   const [data] = await Promise.all([
     problemsFresh ? Promise.resolve(null) : apiGet("/api/problems").catch(() => null),
-    refreshMe(),
+    restoreInitialSession(),
     healthP,
   ]);
-  if (healthErr && !state.problems.length) {
+  if (healthErr && !state.problems.length && location.hash !== "#/admin") {
     show("home");
     document.querySelector("#view-home .hero .lede").textContent =
       "เชื่อมต่อระบบไม่ได้ในขณะนี้ ลองโหลดหน้าอีกครั้งในอีกสักครู่";
     return;
-  }
-  // Session cookie gone but remember-me alive (browser cleanup, expiry):
-  // silently restore the login before the first route render.
-  if (!state.user) {
-    try {
-      const r = await apiGet("/api/auth/restore");
-      if (r && r.restored) await refreshMe();
-    } catch (e) { /* stay logged out */ }
   }
   maybeShowCookieBanner();
   // The identity arrives after the first route render, so a view opened
