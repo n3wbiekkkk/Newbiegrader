@@ -1,5 +1,8 @@
 """Offline regressions for submission provenance and input boundaries."""
 import asyncio
+import io
+from pathlib import Path
+import tempfile
 from unittest.mock import patch
 import unittest
 
@@ -129,3 +132,58 @@ class SpawnFailureIsNeverAVerdict(unittest.TestCase):
         with patch.object(grader, "run_one", return_value=res):
             with self.assertRaises(grader.SandboxUnavailable):
                 grader.judge_test([], prob.tests[0], prob, False, True)
+
+    class _FakeProcess:
+        pid = 12345
+
+        def poll(self):
+            return 0
+
+        def kill(self):
+            pass
+
+        def wait(self):
+            return 0
+
+    def test_supervisor_setup_failure_reports_the_marker(self):
+        """A pid-file write failure happens after Popen but before any user
+        code. It must be an environment error, not exit code 1 scored as RE."""
+        stderr = io.StringIO()
+        with patch.object(judge_runner.os, "read", return_value=b"\0"), \
+                patch.object(judge_runner.sys, "platform", "darwin"), \
+                patch.object(judge_runner.signal, "signal"), \
+                patch.object(judge_runner.subprocess, "Popen",
+                             return_value=self._FakeProcess()), \
+                patch.object(judge_runner.Path, "write_text",
+                             side_effect=OSError("synthetic disk full")), \
+                patch("sys.stderr", stderr):
+            rc = judge_runner._supervise(["synthetic"], "/tmp/synthetic-pid",
+                                         judge_runner.os.getpid())
+        self.assertEqual(rc, judge_runner.SPAWN_FAILED_RC)
+        self.assertIn(judge_runner.SPAWN_FAILED_MARKER, stderr.getvalue())
+
+    def test_supervisor_handshake_failure_reports_the_marker(self):
+        stderr = io.StringIO()
+        with patch.object(judge_runner.os, "read", return_value=b""), \
+                patch("sys.stderr", stderr):
+            rc = judge_runner._supervise(["synthetic"], "/tmp/synthetic-pid",
+                                         judge_runner.os.getpid())
+        self.assertEqual(rc, judge_runner.SPAWN_FAILED_RC)
+        self.assertIn(judge_runner.SPAWN_FAILED_MARKER, stderr.getvalue())
+
+    def test_compile_spawn_failure_is_not_a_compile_error(self):
+        """A host that cannot start the compiler must not mark the source CE."""
+        fake = judge_runner.BoundedResult(
+            "", f"[judge_runner] {grader.SPAWN_FAILED_MARKER}: synthetic",
+            grader.SPAWN_FAILED_RC, "")
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch.object(judge_runner, "run_bounded", return_value=fake):
+            with self.assertRaises(grader.SandboxUnavailable):
+                grader._compile(["/nonexistent/newbiegrader-synthetic-binary"], Path(tmp))
+
+    def test_compile_spawn_oserror_is_not_a_compile_error(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch.object(judge_runner, "run_bounded",
+                             side_effect=OSError("synthetic EAGAIN")):
+            with self.assertRaises(grader.SandboxUnavailable):
+                grader._compile(["/nonexistent/newbiegrader-synthetic-binary"], Path(tmp))

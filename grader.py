@@ -526,17 +526,26 @@ def prepare_workspace(workdir: Path, src: Optional[Path] = None) -> None:
 
 def _compile(command: list[str], workdir: Path):
     try:
-        from judge_runner import run_bounded
+        from judge_runner import run_bounded, SPAWN_FAILED_RC, SPAWN_FAILED_MARKER
     except ImportError as e:
-        raise CompileError(f"judge runner unavailable: {e}")
+        # The runner is infrastructure, not the student's source: never CE.
+        raise SandboxUnavailable("compiler runner unavailable (not a verdict)") from e
     prepare_workspace(workdir)
     # Linux/root must drop privileges even when compile memory limits are off.
     if os.name == "posix" and (COMPILE_MEMORY_MB or (
             sys.platform.startswith("linux") and os.geteuid() == 0)):
         command = [sys.executable, str(Path(__file__).resolve()), "--compile-sandbox",
                    str(COMPILE_MEMORY_MB), str(COMPILE_TIMEOUT), "--", *command]
-    result = run_bounded(command, "", COMPILE_TIMEOUT, output_limit=OUTPUT_LIMIT_BYTES,
-                         env=judge_env(str(workdir)), cwd=str(workdir))
+    try:
+        result = run_bounded(command, "", COMPILE_TIMEOUT, output_limit=OUTPUT_LIMIT_BYTES,
+                             env=judge_env(str(workdir)), cwd=str(workdir))
+    except OSError as exc:
+        # Host resource failure before the compiler started: not a CE.
+        raise SandboxUnavailable("compiler could not be started (not a verdict)") from exc
+    if result.returncode == SPAWN_FAILED_RC and SPAWN_FAILED_MARKER in (result.stderr or ""):
+        # The supervisor could not start the compiler at all. No student code
+        # was compiled, so this must never be recorded as CE.
+        raise SandboxUnavailable("compiler could not be started (not a verdict)")
     if result.returncode == PRIVILEGE_REFUSED_RC and PRIVILEGE_REFUSED_MARKER in result.stderr:
         raise SandboxUnavailable("compiler privilege drop failed (not a verdict)")
     if result.reason == "timeout":
