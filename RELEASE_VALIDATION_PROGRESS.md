@@ -5,7 +5,7 @@
 - Repository: `/Users/phetpitaksukprasert/Developer/grader`
 - Validation worktree: `/Users/phetpitaksukprasert/Developer/grader-security-integration`
 - Branch: `security/integrate-audit-fixes`
-- Final tested code HEAD: `06ad8a4`; validation documentation tip: `1ec0a38`
+- Final tested code HEAD: `06ad8a4`; this report and its evidence were committed locally after it
 - Local commits only; no push, merge, deploy, force-push, or shared-history rewrite
 - `origin/main` base: `4a88796`; fetched again during validation and unchanged
 - Shared worktree: has unrelated uncommitted WIP; not modified

@@ -25,7 +25,7 @@ shared worktree.
   `/Users/phetpitaksukprasert/Developer/grader-security-integration`
 - Branch: `security/integrate-audit-fixes`
 - Base: `origin/main` `4a88796` (fetched again during validation; unchanged)
-- Final tested code HEAD: `06ad8a4` (the validation docs are a later local commit)
+- Final tested code HEAD: `06ad8a4` (this report and its evidence were committed locally after it)
 - Base comparison archive: disposable `origin/main` checkout at `4a88796`
 - Local commits only, no push, merge, force-push, or shared-history rewrite.
 - The shared main worktree and older audit worktree were left untouched.
