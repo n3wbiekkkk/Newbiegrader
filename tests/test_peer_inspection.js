@@ -20,7 +20,8 @@ function harness() {
     show() {}, setTaskTab() {}, setJudgeStatus() {},
     openTask: (pid) => { context.state.current = pid; }, selectProblem: async () => {},
     icon: () => '', scoreCls: () => '', badgeVerdict: (v) => `<b>${v}</b>`,
-    verdictSummary: () => '', limitsMeta: () => '', detailHtml: () => '', highlightCode: (code) => context.esc(code),
+    verdictSummary: () => '', verdictLegend: () => '', limitsMeta: () => '',
+    detailHtml: () => '', highlightCode: (code) => context.esc(code),
     bindCopyButtons() {}, renderTopScores() {}, skel: () => '',
     apiGetCached: async () => ({ configured: true, submissions: [], peer_access: { allowed: false, reason: 'attempt' } }),
   });
