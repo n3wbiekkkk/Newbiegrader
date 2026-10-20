@@ -113,7 +113,8 @@ class OutputCollectionTests(unittest.TestCase):
             self.assertTrue(marker.exists(), "compiler did not reach its subprocess")
             self.assertFalse(process_alive(int(marker.read_text())))
 
-    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux RLIMIT semantics")
+    @unittest.skipUnless(sys.platform.startswith("linux") and os.geteuid() == 0,
+                         "needs Linux + root for the identity-drop process ceiling")
     def test_sandbox_preserves_memory_and_process_limits(self):
         result = grader.run_one([sys.executable, "-c",
                                 "import json, resource; print(json.dumps(["
@@ -123,6 +124,25 @@ class OutputCollectionTests(unittest.TestCase):
                                 "resource.getrlimit(resource.RLIMIT_NOFILE)[0]]))"], "", 3, 128)
         self.assertEqual(result["reason"], "")
         self.assertEqual(result["stdout"].strip(), "[134217728, 64, 67108864, 64]")
+
+    @unittest.skipUnless(sys.platform.startswith("linux") and os.geteuid() != 0,
+                         "needs non-root Linux to model a shared service UID")
+    def test_non_root_linux_does_not_impose_a_shared_uid_process_ceiling(self):
+        root = Path(__file__).resolve().parent.parent
+        script = (
+            f"import sys; sys.path.insert(0, {str(root)!r})\n"
+            "import json, resource\n"
+            "import grader\n"
+            "before = resource.getrlimit(resource.RLIMIT_NPROC)[0]\n"
+            "grader.build_limits(512, 3, network=False)()\n"
+            "after = resource.getrlimit(resource.RLIMIT_NPROC)[0]\n"
+            "print(json.dumps([before, after]))\n")
+        out = subprocess.run([sys.executable, "-c", script], capture_output=True,
+                             text=True, cwd=str(root), env=grader.judge_env())
+        self.assertEqual(out.returncode, 0, out.stderr)
+        before, after = json.loads(out.stdout.strip().splitlines()[-1])
+        self.assertEqual(after, before,
+                         "a shared service UID must keep its host process ceiling")
 
     def test_shared_uid_keeps_its_host_process_ceiling_off_linux(self):
         """RLIMIT_NPROC counts every process of the real UID, not just this

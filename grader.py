@@ -844,13 +844,14 @@ def build_limits(memory_mb: int, time_limit: float, sandbox: bool = True, *,
                 set_limit(lim, val)
             # RLIMIT_NPROC caps every process of the real UID, not just this
             # job's children. It only holds as intended where the sandbox owns
-            # the UID (production Linux drops to nobody before exec). On
-            # macOS/Windows there is no identity drop, so a 64-process ceiling
-            # sits below the developer's own login session and every spawn
-            # (clang++ -> cc1 -> ld) fails EAGAIN: no C/C++ compile can finish.
-            # Keep the ceiling on Linux (pinned by test_judge_runner) and leave
-            # the host limit elsewhere; the rlimit-only warning above stays.
-            if sys.platform.startswith("linux"):
+            # the UID (production Linux root drops to a unique job UID before
+            # exec). On macOS/Windows, and on non-root Linux where every job
+            # shares the service UID, a 64-process ceiling sits below the
+            # developer's own session: clang++ -> cc1 -> ld can fail EAGAIN,
+            # turning valid C/C++ sources into bogus CE. Keep the ceiling only
+            # for the Linux root identity-drop model; the warning above remains
+            # for all rlimit-only runs.
+            if sys.platform.startswith("linux") and os.geteuid() == 0:
                 set_limit("RLIMIT_NPROC", 64)  # กัน fork bomb
         except (ImportError, AttributeError, ValueError, OSError, TypeError):
             if strict_limits:
