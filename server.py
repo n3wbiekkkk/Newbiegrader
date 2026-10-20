@@ -555,6 +555,46 @@ def _db_err(e: Exception) -> HTTPException:
     return HTTPException(status_code=500, detail="database error")
 
 
+def _missing_submission_column(error: Exception) -> bool:
+    """True only for an explicit PostgREST/PostgreSQL missing-column signal.
+
+    A generic error containing the word "column" can be an integrity failure;
+    retrying that would silently drop provenance fields.
+    """
+    msg = str(error)
+    low = msg.lower()
+    return ("42703" in msg or "pgrst204" in low
+            or "undefined_column" in low
+            or ("column" in low and ("does not exist" in low
+                                     or "could not find" in low)))
+
+
+def _legacy_submission_row(row: dict, error: Exception, *, operation: str) -> dict:
+    """Strip only the 2026-10 traceability columns for an old schema.
+
+    A contest row may never lose contest_id. A practice row has no provenance
+    to lose, so it may also use the old schema when contest_id itself is absent.
+    Raises the original error for any non-missing-column failure.
+    """
+    if not _missing_submission_column(error):
+        raise error
+    low = str(error).lower()
+    if "contest_id" in low and row.get("contest_id"):
+        print("[web] refusing to drop contest_id from a contest submission; "
+              "run supabase/schema.sql", file=sys.stderr)
+        raise error
+    if row.get("contest_id"):
+        traceability = tuple(c for c in _NEW_SUB_COLS if c != "contest_id")
+    else:
+        traceability = _NEW_SUB_COLS
+    slim = {k: v for k, v in row.items() if k not in traceability}
+    if len(slim) == len(row):
+        raise error
+    print(f"[web] submissions {operation} retried without {traceability[0]}.. "
+          f"({error}); run supabase/schema.sql to add them", file=sys.stderr)
+    return slim
+
+
 async def _store_submission(row: dict, target_id: Optional[str] = None) -> Optional[str]:
     """Persist one submission (insert, or update when rejudging).
 
@@ -566,7 +606,14 @@ async def _store_submission(row: dict, target_id: Optional[str] = None) -> Optio
 
     def _write():
         if target_id:
-            return _sb.table("submissions").update(row).eq("id", target_id).execute()
+            try:
+                return _sb.table("submissions").update(row).eq("id", target_id).execute()
+            except Exception as first:
+                # Keep rejudge compatible with a pre-2026-10 schema too, under
+                # the same no-provenance-downgrade rule as inserts.
+                slim = _legacy_submission_row(row, first, operation="update")
+                return (_sb.table("submissions").update(slim)
+                        .eq("id", target_id).execute())
         try:
             return _sb.table("submissions").insert(row).execute()
         except Exception as first:
@@ -574,34 +621,7 @@ async def _store_submission(row: dict, target_id: Optional[str] = None) -> Optio
             # yet. Drop them rather than losing the submission. Retry ONLY for
             # missing-column errors; network/timeouts must not double-insert and
             # integrity errors must not silently drop provenance columns.
-            msg = str(first)
-            low = msg.lower()
-            missing_column = ("42703" in msg or "pgrst204" in low
-                              or "undefined_column" in low
-                              or ("column" in low and ("does not exist" in low
-                                                       or "could not find" in low)))
-            if not missing_column:
-                raise
-            if "contest_id" in low and row.get("contest_id"):
-                # Never downgrade a contest submission to practice history by
-                # dropping its provenance. This is a schema incompatibility,
-                # not an excuse to silently change the feedback policy.
-                print("[web] refusing to drop contest_id from a contest "
-                      "submission; run supabase/schema.sql", file=sys.stderr)
-                raise
-            # Preserve contest_id when it carries provenance, even if another
-            # traceability column is the one reported missing. A practice row
-            # has no provenance to lose, so the legacy fallback may also drop
-            # contest_id when that column itself is absent.
-            if row.get("contest_id"):
-                traceability = tuple(c for c in _NEW_SUB_COLS if c != "contest_id")
-            else:
-                traceability = _NEW_SUB_COLS
-            slim = {k: v for k, v in row.items() if k not in traceability}
-            if len(slim) == len(row):
-                raise
-            print(f"[web] submissions insert retried without {traceability[0]}.. "
-                  f"({first}); run supabase/schema.sql to add them", file=sys.stderr)
+            slim = _legacy_submission_row(row, first, operation="insert")
             return _sb.table("submissions").insert(slim).execute()
 
     try:

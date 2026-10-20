@@ -62,6 +62,37 @@ class _RetryClient:
         return _Query()
 
 
+class _RetryUpdateClient:
+    """Supabase stand-in that fails the first rejudge update, then succeeds."""
+
+    def __init__(self, error: str):
+        self.error = error
+        self.updates: list[dict] = []
+
+    def table(self, _name):
+        client = self
+
+        class _Builder:
+            def __init__(self, row):
+                self.row = row
+
+            def eq(self, _column, _value):
+                return self
+
+            def execute(self):
+                if len(client.updates) == 1:
+                    raise Exception(client.error)
+                return type("_Resp", (), {"data": [{"id": "rejudged"}]})()
+
+        class _Query:
+            def update(self, row):
+                client.updates.append(dict(row))
+                return _Builder(row)
+
+        return _Query()
+
+
+
 class SubmissionStoreRetry(unittest.TestCase):
     """Schema fallback must never downgrade contest provenance.
 
@@ -119,6 +150,50 @@ class SubmissionStoreRetry(unittest.TestCase):
             sid = asyncio.run(server._store_submission({"problem": "p"}))
         self.assertIsNone(sid)
         self.assertEqual(len(client.inserts), 1)
+
+    def test_missing_traceability_column_on_rejudge_preserves_contest_id(self):
+        client = _RetryUpdateClient("Could not find the 'tests_hash' column of "
+                                    "'submissions' in the schema cache")
+        with patch.object(server, "_sb", client):
+            sid = asyncio.run(server._store_submission(
+                {"problem": "p", "contest_id": "c1", "kind": "rejudge",
+                 "tests_hash": "h", "job_id": "j1"}, target_id="sub-1"))
+        self.assertEqual(sid, "rejudged")
+        self.assertEqual(len(client.updates), 2)
+        self.assertEqual(client.updates[1]["contest_id"], "c1")
+        self.assertNotIn("tests_hash", client.updates[1])
+        self.assertNotIn("job_id", client.updates[1])
+
+    def test_missing_contest_id_on_contest_rejudge_fails_closed(self):
+        client = _RetryUpdateClient("Could not find the 'contest_id' column of "
+                                    "'submissions' in the schema cache")
+        with patch.object(server, "_sb", client):
+            sid = asyncio.run(server._store_submission(
+                {"problem": "p", "contest_id": "c1", "kind": "rejudge"},
+                target_id="sub-1"))
+        self.assertIsNone(sid)
+        self.assertEqual(len(client.updates), 1)
+
+    def test_missing_contest_id_on_practice_rejudge_retries(self):
+        client = _RetryUpdateClient("Could not find the 'contest_id' column of "
+                                    "'submissions' in the schema cache")
+        with patch.object(server, "_sb", client):
+            sid = asyncio.run(server._store_submission(
+                {"problem": "p", "contest_id": None, "kind": "rejudge"},
+                target_id="sub-1"))
+        self.assertEqual(sid, "rejudged")
+        self.assertEqual(len(client.updates), 2)
+        self.assertNotIn("contest_id", client.updates[1])
+
+    def test_integrity_error_on_rejudge_is_not_retried(self):
+        client = _RetryUpdateClient('null value in column "contest_id" of '
+                                    'relation "submissions" violates not-null constraint')
+        with patch.object(server, "_sb", client):
+            sid = asyncio.run(server._store_submission(
+                {"problem": "p", "contest_id": "c1", "kind": "rejudge"},
+                target_id="sub-1"))
+        self.assertIsNone(sid)
+        self.assertEqual(len(client.updates), 1)
 
 
 class SpawnFailureIsNeverAVerdict(unittest.TestCase):
