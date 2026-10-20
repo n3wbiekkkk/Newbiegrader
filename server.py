@@ -3975,7 +3975,7 @@ async def admin_overview(request: Request) -> dict:
         n_users = (_sb.table("users").select("email", count="exact").limit(1)
                    .execute().count) or 0
         subs = _sb.table("submissions").select(
-            "id,created_at,problem,name,language,verdict,accepted,score").order(
+            "id,created_at,problem,name,language,verdict,accepted,score,counts").order(
             "created_at", desc=True).limit(500).execute().data or []
         reps = _sb.table("reports").select("status", count="exact").limit(1).execute()
         rep_open = _sb.table("reports").select("id", count="exact").eq(
@@ -4034,7 +4034,8 @@ async def admin_overview(request: Request) -> dict:
         "per_problem": per_problem,
         "recent": [{k: r.get(k) for k in
                     ("id", "created_at", "problem", "name", "language",
-                     "verdict", "score")} for r in subs[:10]],
+                     "verdict", "accepted", "score", "counts")}
+                   for r in subs[:10]],
         "system": {"uptime_s": int(time.monotonic() - _boot_time),
                    "problems_loaded": sorted(PROBLEMS.keys()), **_host_limits()},
     }
