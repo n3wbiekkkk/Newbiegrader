@@ -572,10 +572,15 @@ async def _store_submission(row: dict, target_id: Optional[str] = None) -> Optio
         except Exception as first:
             # Pre-2026-10 database: the extra traceability columns do not exist
             # yet. Drop them rather than losing the submission. Retry ONLY for
-            # missing-column errors; network/timeouts must not double-insert.
+            # missing-column errors; network/timeouts must not double-insert and
+            # integrity errors must not silently drop provenance columns.
             msg = str(first)
-            if "42703" not in msg and "undefined_column" not in msg.lower() and \
-               "could not find" not in msg.lower() and "column" not in msg.lower():
+            low = msg.lower()
+            missing_column = ("42703" in msg or "pgrst204" in low
+                              or "undefined_column" in low
+                              or ("column" in low and ("does not exist" in low
+                                                       or "could not find" in low)))
+            if not missing_column:
                 raise
             slim = {k: v for k, v in row.items() if k not in _NEW_SUB_COLS}
             if len(slim) == len(row):

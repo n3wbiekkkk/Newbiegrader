@@ -38,6 +38,63 @@ class SubmissionIntegrity(unittest.TestCase):
         self.assertEqual(result["tests_hash"], grader.tests_hash(prob))
 
 
+class _RetryClient:
+    """Supabase stand-in that fails the first insert, then succeeds."""
+
+    def __init__(self, error: str):
+        self.error = error
+        self.inserts: list[dict] = []
+
+    def table(self, _name):
+        client = self
+
+        class _Query:
+            def insert(self, row):
+                client.inserts.append(dict(row))
+                if len(client.inserts) == 1:
+                    raise Exception(client.error)
+                return type("_Builder", (), {
+                    "execute": lambda _self: type("_Resp", (), {"data": [{"id": "retried"}]})()})()
+
+        return _Query()
+
+
+class SubmissionStoreRetry(unittest.TestCase):
+    """Only a missing column may drop the traceability columns on retry.
+
+    The retry exists for pre-2026-10 databases. It must not fire for integrity
+    errors that merely mention a column: dropping contest_id/job_id/kind there
+    would persist a contest submission as practice data (visible to the
+    all-time leaderboard and later reads with practice-level feedback).
+    """
+
+    def test_integrity_error_mentioning_a_column_is_not_retried(self):
+        client = _RetryClient('null value in column "contest_id" of relation '
+                              '"submissions" violates not-null constraint')
+        with patch.object(server, "_sb", client):
+            sid = asyncio.run(server._store_submission(
+                {"problem": "p", "contest_id": "c1", "kind": "submit"}))
+        self.assertIsNone(sid)
+        self.assertEqual(len(client.inserts), 1, "integrity error must not be retried")
+
+    def test_missing_column_error_retries_without_traceability_columns(self):
+        client = _RetryClient("Could not find the 'tests_hash' column of "
+                              "'submissions' in the schema cache")
+        with patch.object(server, "_sb", client):
+            sid = asyncio.run(server._store_submission(
+                {"problem": "p", "contest_id": "c1", "kind": "submit"}))
+        self.assertEqual(sid, "retried")
+        self.assertEqual(len(client.inserts), 2)
+        self.assertNotIn("contest_id", client.inserts[1])
+
+    def test_missing_relation_is_not_retried_as_a_missing_column(self):
+        client = _RetryClient('relation "public.submissions" does not exist')
+        with patch.object(server, "_sb", client):
+            sid = asyncio.run(server._store_submission({"problem": "p"}))
+        self.assertIsNone(sid)
+        self.assertEqual(len(client.inserts), 1)
+
+
 class SpawnFailureIsNeverAVerdict(unittest.TestCase):
     """Host exhaustion must end a job as an environment error, never a RE.
 
