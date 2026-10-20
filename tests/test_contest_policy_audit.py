@@ -165,6 +165,60 @@ class ContestPolicyAudit(unittest.TestCase):
         out = asyncio.run(server.history_detail(self.request_with(owner, {}), "sid-stored"))
         self.assertIn("SAMPLE-IN", json.dumps(out))
 
+    def test_admin_rejudge_practice_in_live_hidden_contest_uses_none(self):
+        """A practice row has no contest_id, but the problem can be in a live
+        show_samples=false contest. Rejudge storage must use the same live
+        practice policy as submit, not a blanket REVEAL_SAMPLES."""
+        admin = "admin@example.invalid"
+        self.fake.tables["contests"] = [self.contest]
+        self.fake.tables.setdefault("judge_jobs", [])
+        row = dict(self.submission("sid-practice-rejudge", 0), contest_id=None,
+                   language="python", code="print(1)")
+        self.fake.tables["submissions"] = [row]
+        with patch.object(server, "ADMIN_EMAILS", {admin}), \
+                patch.object(server, "_ensure_problems_fresh"):
+            out = asyncio.run(server.admin_rejudge(
+                self.request_with(admin, {"ids": ["sid-practice-rejudge"]})))
+        self.assertEqual(out["queued"], 1, out)
+        jid = out["jobs"][0]
+        self.addCleanup(server._jobs.pop, jid, None)
+        self.assertEqual(server._jobs[jid]["reveal"], server.REVEAL_NONE)
+
+    def test_admin_rejudge_unknown_contest_fails_closed(self):
+        """A deleted/unavailable contest must not fall back to samples."""
+        admin = "admin@example.invalid"
+        self.fake.tables["contests"] = []
+        self.fake.tables.setdefault("judge_jobs", [])
+        row = dict(self.submission("sid-missing-contest", 0),
+                   contest_id="missing-contest", language="python", code="print(1)")
+        self.fake.tables["submissions"] = [row]
+        with patch.object(server, "ADMIN_EMAILS", {admin}), \
+                patch.object(server, "_ensure_problems_fresh"):
+            out = asyncio.run(server.admin_rejudge(
+                self.request_with(admin, {"ids": ["sid-missing-contest"]})))
+        self.assertEqual(out["queued"], 1, out)
+        jid = out["jobs"][0]
+        self.addCleanup(server._jobs.pop, jid, None)
+        self.assertEqual(server._jobs[jid]["reveal"], server.REVEAL_NONE)
+
+    def test_admin_rejudge_practice_outside_contest_keeps_practice_feedback(self):
+        """Fail closed only where the policy is hidden; normal practice
+        rejudges keep the owner's practice-level feedback."""
+        admin = "admin@example.invalid"
+        self.fake.tables["contests"] = []
+        self.fake.tables.setdefault("judge_jobs", [])
+        row = dict(self.submission("sid-practice-plain", 0), contest_id=None,
+                   language="python", code="print(1)")
+        self.fake.tables["submissions"] = [row]
+        with patch.object(server, "ADMIN_EMAILS", {admin}), \
+                patch.object(server, "_ensure_problems_fresh"):
+            out = asyncio.run(server.admin_rejudge(
+                self.request_with(admin, {"ids": ["sid-practice-plain"]})))
+        self.assertEqual(out["queued"], 1, out)
+        jid = out["jobs"][0]
+        self.addCleanup(server._jobs.pop, jid, None)
+        self.assertEqual(server._jobs[jid]["reveal"], server.REVEAL_PRACTICE)
+
     def test_admin_owner_keeps_admin_feedback_policy_on_contest_reads(self):
         """Contest rows use the submission owner's policy.
 

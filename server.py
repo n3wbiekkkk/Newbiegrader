@@ -4160,16 +4160,23 @@ async def admin_rejudge(request: Request) -> dict:
     # Cache contests once: rejudged rows keep their original contest's policy,
     # so a live show_samples=false contest stays REVEAL_NONE.
     _contest_cache: Dict[str, Optional[dict]] = {}
-    def _reveal_for_row(cid: object, requester: str) -> str:
+    _practice_reveal: Dict[str, str] = {}
+    def _reveal_for_row(cid: object, owner: str, pid: str) -> str:
         if not cid:
-            return REVEAL_SAMPLES
+            # Practice feedback follows the same live policy as submit: hidden
+            # during any running show_samples=false contest, PRACTICE otherwise.
+            if pid not in _practice_reveal:
+                _practice_reveal[pid] = _effective_reveal(None, owner, pid)
+            return _practice_reveal[pid]
         ckey = str(cid)
         if ckey not in _contest_cache:
             try:
                 _contest_cache[ckey] = _contest_or_404(ckey)
             except HTTPException:
+                # Unknown/unavailable contest: fail closed, never samples.
                 _contest_cache[ckey] = None
-        return _reveal_for(_contest_cache[ckey], requester)
+        contest = _contest_cache[ckey]
+        return _reveal_for(contest, owner) if contest is not None else REVEAL_NONE
     for row in res.data or []:
         pid = row.get("problem", "")
         lang = row.get("language", "")
@@ -4186,7 +4193,8 @@ async def admin_rejudge(request: Request) -> dict:
                 "target_id": row.get("id"),
                 # Owner-facing storage policy, never the requester's: an admin
                 # rejudge must not declassify a live show_samples=false contest.
-                "reveal": _reveal_for_row(row.get("contest_id"), row.get("user_email") or ""),
+                "reveal": _reveal_for_row(
+                    row.get("contest_id"), row.get("user_email") or "", pid),
                 "tests_hash": _tests_hash(pid),
                 "grader_version": grader.GRADER_VERSION,
             }, track_active=False)
