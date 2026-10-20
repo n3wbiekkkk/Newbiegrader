@@ -1763,7 +1763,7 @@ async function loadOverview() {
         <th>เวลา</th><th>ข้อ</th><th>ผู้ส่ง</th><th>ผล</th><th class="num">คะแนน</th>
       </tr></thead><tbody>` + rows.map((r) =>
       `<tr><td class="dim">${esc(shortTime(r.created_at))}</td><td>${problemCell(r.problem)}</td>` +
-      `<td>${esc(r.name || "—")}</td><td>${badge(r.accepted ? "AC" : (r.verdict || "?"))}</td>` +
+      `<td>${esc(r.name || "—")}</td><td>${badgeVerdict(rowVerdictCode(r))}</td>` +
       `<td class="num"><span class="${scoreCls(r.score)}">${esc(String(r.score ?? ""))}</span></td></tr>`
     ).join("") + `</tbody></table>` : `<p class="dash-empty">ยังไม่มีการส่ง</p>`;
 
@@ -2305,16 +2305,40 @@ async function doSubmit() {
   }
 }
 
-/* Verdicts read in Thai first, with the acronym kept as a tooltip for anyone
- * who has seen a judge before. */
+/* Verdicts read in Thai first, with the acronym and full Thai meaning kept as
+ * a tooltip for anyone who has seen a judge before. */
 const VERDICT_TH = {
   AC: "ผ่าน", WA: "คำตอบไม่ตรง", TLE: "ช้าเกินเวลา", MLE: "แรมเกิน",
   OLE: "พิมพ์ผลเกิน", RE: "โปรแกรมพังตอนรัน", CE: "คอมไพล์ไม่ผ่าน",
   OK: "รันผ่าน", SKIP: "ข้าม", "": "—",
 };
 
+const VERDICT_MEANING_TH = {
+  AC: "ผ่านทุกเทสต์",
+  WA: "คำตอบไม่ถูกต้อง",
+  TLE: "ใช้เวลาเกินกำหนด",
+  MLE: "ใช้หน่วยความจำเกินกำหนด",
+  OLE: "แสดงผลลัพธ์เกินกำหนด",
+  RE: "เกิดข้อผิดพลาดขณะรันโปรแกรม",
+  CE: "คอมไพล์ไม่ผ่าน",
+  OK: "รันจบโดยไม่มีข้อผิดพลาด",
+};
+
 function badgeVerdict(v) {
-  return `<span class="badge b-${esc(v)}" title="${esc(v)}">${esc(VERDICT_TH[v] || v)}</span>`;
+  const meaning = VERDICT_MEANING_TH[v];
+  const title = meaning ? `${v} — ${meaning}` : v;
+  return `<span class="badge b-${esc(v)}" title="${esc(title)}">${esc(VERDICT_TH[v] || v)}</span>`;
+}
+
+/* A compact, always-current legend under the result table. The user asked for
+ * verdicts in Thai; keeping the acronym visible next to the meaning helps
+ * anyone comparing with another judge. */
+function verdictLegend() {
+  const keys = ["AC", "WA", "TLE", "MLE", "OLE", "RE", "CE"];
+  return `<details class="verdict-legend"><summary>ความหมายของผลตรวจ</summary>
+    <table class="tests"><thead><tr><th>ผลตรวจ</th><th>ความหมาย</th></tr></thead><tbody>` +
+    keys.map((k) => `<tr><td>${badgeVerdict(k)}</td><td>${esc(VERDICT_MEANING_TH[k])}</td></tr>`).join("") +
+    `</tbody></table></details>`;
 }
 
 /* Colour the unified diff ourselves: the server strips ANSI now, and a student
@@ -2388,6 +2412,7 @@ function renderResults(d, secs) {
     html += `</tbody></table>`;
     html += `<p class="dim">คลิกแถวเพื่อดูรายละเอียดของเทสต์นั้น</p>`;
   }
+  html += verdictLegend();
   if (d.code) {
     html += `<details class="code-view"><summary>ดูโค้ดที่ส่ง (${esc(String(d.code).split("\n").length)} บรรทัด)</summary><pre>${highlightCode(d.code, d.language)}</pre></details>`;
   }

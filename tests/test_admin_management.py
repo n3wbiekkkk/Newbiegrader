@@ -246,6 +246,15 @@ class AdminManagement(unittest.TestCase):
             "/api/admin/submissions?problem=no-such-problem").json()
         self.assertEqual(unknown["total"], 0)
 
+    def test_admin_overview_recent_carries_thai_verdict_fields(self):
+        self.login(ADMIN, "Admin")
+        self._seed_submissions(2)
+        body = self.client.get("/api/admin/overview").json()
+        recent = body.get("recent") or []
+        self.assertEqual([r["name"] for r in recent], ["User 1", "User 0"])
+        self.assertTrue(recent[0]["accepted"])
+        self.assertEqual(recent[1]["counts"], {"WA": 1})
+
     def test_admin_submissions_requires_admin(self):
         self._seed_submissions(2)
         self.assertIn(self.client.get("/api/admin/submissions").status_code,
