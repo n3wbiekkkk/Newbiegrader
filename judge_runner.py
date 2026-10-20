@@ -22,6 +22,11 @@ from dataclasses import dataclass
 
 ROOT = Path(__file__).resolve().parent
 
+# Mirrors grader.SPAWN_FAILED_* (tests assert they stay equal) so the supervisor
+# can report "the wrapper never started" without importing the engine.
+SPAWN_FAILED_RC = 127
+SPAWN_FAILED_MARKER = "GRADER_SPAWN_FAILED"
+
 
 class _WindowsJob:
     def __init__(self, process):
@@ -159,7 +164,14 @@ def _supervise(command: list[str], pid_file: str, expected_parent: int) -> int:
         return 124
     process = None
     try:
-        process = subprocess.Popen(command)
+        try:
+            process = subprocess.Popen(command)
+        except OSError as exc:
+            # Nothing started: report an environment failure. run_one maps this
+            # marker to "spawn-fail" and judge_test refuses to score it, so host
+            # exhaustion can never be recorded as the submission's RE.
+            print(f"[judge_runner] {SPAWN_FAILED_MARKER}: {exc}", file=sys.stderr)
+            return SPAWN_FAILED_RC
         Path(pid_file).write_text(str(process.pid), encoding="ascii")
         while process.poll() is None and not stopped:
             time.sleep(.01)

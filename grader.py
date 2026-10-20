@@ -160,6 +160,13 @@ SANDBOX_REFUSED_RC = 126
 SANDBOX_REFUSED_MARKER = "GRADER_REQUIRE_NETNS"
 PRIVILEGE_REFUSED_RC = 125
 PRIVILEGE_REFUSED_MARKER = "GRADER_PRIVILEGE_DROP_FAILED"
+# Exit code + marker used when the supervisor cannot start the sandbox wrapper
+# at all (host resource failure such as EAGAIN). run_one maps it to reason
+# "spawn-fail", which judge_test turns into SandboxUnavailable: no submission
+# code ran, so the job must end as an environment error, never a verdict.
+# judge_runner.SPAWN_FAILED_* mirrors these values (asserted by tests).
+SPAWN_FAILED_RC = 127
+SPAWN_FAILED_MARKER = "GRADER_SPAWN_FAILED"
 
 
 SAMPLE_INTERVAL = _env_float("GRADER_SAMPLE_INTERVAL",
@@ -1048,6 +1055,11 @@ def run_one(cmd: list[str], stdin_data: str, time_limit: float, memory_mb: int,
         # Strict-mode refusal: the wrapper exited before exec, so NO user
         # code ran. (A user program exiting 126 would lack the marker.)
         reason = "sandbox-unavailable"
+    if rc == SPAWN_FAILED_RC and SPAWN_FAILED_MARKER in (err or ""):
+        # The supervisor could not start the sandbox wrapper: host resource
+        # failure, not the submission. (A user program exiting 127 would lack
+        # the marker.) judge_test refuses to score it.
+        reason = "spawn-fail"
     if not reason and rc is not None and rc < 0:
         try:
             sig = -rc
@@ -1131,8 +1143,10 @@ def judge_test(cmd, tc: TestCase, prob: Problem, strict: bool,
         detail = hint + (f"\n{tail}" if tail.strip() else "")
         return "RE", wall, cpu, mem, detail, actual
     if reason == "spawn-fail":
-        detail = (res["stderr"] or "spawn failed") if diagnostics else "execution failed"
-        return "RE", wall, cpu, mem, detail, actual
+        # The sandbox wrapper never started (host resource failure): no
+        # submission code ran, so this is an environment error, never a
+        # verdict — the same contract as the strict-mode refusal above.
+        raise SandboxUnavailable("execution environment unavailable (not a verdict)")
     rc = res["returncode"]
     if rc is not None and rc != 0:
         err = res["stderr"] or ""
