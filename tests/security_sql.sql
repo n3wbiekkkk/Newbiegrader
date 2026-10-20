@@ -6,7 +6,7 @@ begin
   foreach object_name in array array[
     'submissions','profiles','reports','users','judge_jobs','contests',
     'contest_registrations','contest_announcements','judge_quota_events','problems',
-    'leaderboard_scores','problem_stats'
+    'admins','leaderboard_scores','problem_stats'
   ] loop
     foreach role_name in array array['anon','authenticated'] loop
       if has_table_privilege(role_name,'public.'||object_name,'select,insert,update,delete')

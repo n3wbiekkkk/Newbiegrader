@@ -11,7 +11,7 @@
 with required(table_name) as (
   values ('submissions'), ('profiles'), ('reports'), ('users'), ('judge_jobs'),
          ('contests'), ('contest_registrations'), ('contest_announcements'),
-         ('judge_quota_events'), ('problems'), ('auth_rate_buckets')
+         ('judge_quota_events'), ('problems'), ('auth_rate_buckets'), ('admins')
 )
 select r.table_name as missing_table
 from required r
@@ -76,7 +76,7 @@ join pg_namespace n on n.oid = c.relnamespace
 where n.nspname = 'public' and c.relkind = 'r'
   and c.relname in ('submissions','profiles','reports','users','judge_jobs',
                     'contests','contest_registrations','contest_announcements',
-                    'judge_quota_events','problems','auth_rate_buckets')
+                    'judge_quota_events','problems','auth_rate_buckets','admins')
   and not c.relrowsecurity
 order by c.relname;
 
@@ -87,7 +87,7 @@ where table_schema = 'public'
   and grantee in ('anon','authenticated')
   and table_name in ('submissions','profiles','reports','users','judge_jobs',
                      'contests','contest_registrations','contest_announcements',
-                     'judge_quota_events','problems','auth_rate_buckets',
+                     'judge_quota_events','problems','auth_rate_buckets','admins',
                      'leaderboard_scores','problem_stats')
 order by grantee, table_name, privilege_type;
 

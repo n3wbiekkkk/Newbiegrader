@@ -28,7 +28,7 @@ begin
   foreach app_table in array array[
     'submissions','profiles','reports','users','judge_jobs','contests',
     'contest_registrations','contest_announcements','judge_quota_events',
-    'problems','auth_rate_buckets'
+    'problems','auth_rate_buckets','admins'
   ] loop
     if not exists (
       select 1 from pg_class c
@@ -60,7 +60,7 @@ begin
       where g.table_schema = 'public' and g.grantee = bad_grantee
         and g.table_name in ('submissions','profiles','reports','users',
           'judge_jobs','contests','contest_registrations','contest_announcements',
-          'judge_quota_events','problems','auth_rate_buckets',
+          'judge_quota_events','problems','auth_rate_buckets','admins',
           'leaderboard_scores','problem_stats')
         and g.privilege_type in ('SELECT','INSERT','UPDATE','DELETE')
     ) then

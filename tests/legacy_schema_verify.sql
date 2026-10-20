@@ -39,4 +39,20 @@ begin
      or not exists (select 1 from pg_proc where proname = 'judge_queue_finish') then
     raise exception 'queue RPCs missing after migration';
   end if;
+
+  if not exists (
+    select 1 from pg_class c
+    join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'public' and c.relname = 'admins'
+      and c.relkind = 'r' and c.relrowsecurity
+  ) then
+    raise exception 'database admins table is missing or has RLS disabled';
+  end if;
+  if has_table_privilege('anon', 'public.admins', 'select,insert,update,delete')
+     or has_table_privilege('authenticated', 'public.admins', 'select,insert,update,delete') then
+    raise exception 'a browser role has direct access to database admins';
+  end if;
+  if not has_table_privilege('service_role', 'public.admins', 'select,insert,update,delete') then
+    raise exception 'service_role cannot manage database admins';
+  end if;
 end $$;
