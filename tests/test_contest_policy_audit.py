@@ -3,10 +3,11 @@ from contextlib import ExitStack
 import asyncio
 import datetime as dt
 import json
+import time
 from unittest.mock import patch
 import unittest
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.testclient import TestClient
 from critical_helpers import synthetic_problem, test_server
 from fake_supabase import FakeSupabase
@@ -31,7 +32,8 @@ class ContestPolicyAudit(unittest.TestCase):
             self.stack.enter_context(patch.object(server, key, value))
 
     def test_policy_outage_does_not_open_problem_or_sample_access(self):
-        with patch.object(server, "_cached_contest_rows", side_effect=RuntimeError("synthetic outage")):
+        with patch.object(server, "_cached_contest_rows", side_effect=RuntimeError("synthetic outage")), \
+                patch.object(server, "_all_contest_rows", side_effect=RuntimeError("synthetic outage")):
             for lookup in (lambda: server._visible_to(self.prob.pid, ""), server._live_hidden_pids):
                 with self.subTest(lookup=lookup):
                     with self.assertRaises(HTTPException) as exc:
@@ -108,6 +110,25 @@ class ContestPolicyAudit(unittest.TestCase):
              "expected": "SAMPLE-OUT", "actual": "WRONG", "diff": "sample-diff"},
             {"test": "1001", "verdict": "WA", "public": False, "input": "HIDDEN-IN",
              "expected": "HIDDEN-OUT", "actual": "WRONG", "diff": "hidden-diff"}]}
+
+    def test_sample_route_does_not_trust_a_stale_contest_cache(self):
+        """A different API process may have cached the old policy.
+
+        show_samples=false is a live disclosure rule. Serving sample bytes from
+        the 20s cached contest row would keep them public after an admin turns
+        samples off (or after another process performs the update).
+        """
+        stale = dict(self.contest, show_samples=True)
+        server._contest_pid_cache.update({
+            "at": time.monotonic(), "all": {self.prob.pid},
+            "hide": set(), "rows": [stale]})
+        self.fake.tables["contests"] = [self.contest]
+        with patch.object(server, "_ensure_problems_fresh"):
+            with self.assertRaises(HTTPException) as exc:
+                server.problem_sample(
+                    Request({"type": "http", "session": {}}), self.prob.pid,
+                    "01", Response())
+        self.assertEqual(exc.exception.status_code, 404)
 
     def test_admin_rejudge_keeps_the_submission_owner_feedback_policy(self):
         """A rejudge stores the submission's policy, never the admin's view.

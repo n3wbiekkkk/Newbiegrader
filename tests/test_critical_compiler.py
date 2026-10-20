@@ -59,6 +59,16 @@ class CriticalCompilerPlumbing(unittest.TestCase):
             self.assertEqual(src.stat().st_mode & 0o777, 0o600)
             self.assertEqual(workdir.stat().st_mode & 0o777, 0o700)
 
+    def test_playground_spawn_failure_is_an_environment_error_not_re(self):
+        """No user code ran: host exhaustion must not become a playground RE."""
+        server = test_server()
+        failed = {"stdout": "", "stderr": "synthetic host failure", "wall": 0.0,
+                  "cpu": 0.0, "peak_mb": 0.0, "returncode": -1,
+                  "killed": False, "reason": "spawn-fail"}
+        with patch.object(server.grader, "run_one", return_value=failed):
+            result = server._run_playground(None, ".py", "print('synthetic')", "", 3, 128)
+        self.assertEqual(result, {"error": "execution environment unavailable"})
+
     def test_critical_standard_c_and_cpp_stl_compile_and_judge(self):
         self.assertTrue(shutil.which("gcc") and shutil.which("g++"),
                         "[CRITICAL-FAIL] gcc and g++ must be installed")

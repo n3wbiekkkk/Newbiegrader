@@ -1391,7 +1391,10 @@ def _live_hidden_pids(exclude_cid: str = "") -> set:
     if _sb is None:
         return hidden
     try:
-        for row in _contest_policy_rows():
+        # Sample bytes are a live disclosure boundary: never let the 20s
+        # visibility cache keep serving them after another process turns
+        # show_samples off. Policy failures still raise (fail closed).
+        for row in _contest_policy_rows(fresh=True):
             if exclude_cid and row.get("id") == exclude_cid:
                 continue
             if _contest_window(row) != "running":
@@ -2902,7 +2905,9 @@ def _run_playground(prob: Optional[grader.Problem], ext: str, source: str,
         res = grader.run_one(cmd, stdin_data, time_limit, eff_mem,
                              grader.detect_language(src))
         reason = res.get("reason", "")
-        if reason == "sandbox-unavailable":
+        if reason in ("sandbox-unavailable", "spawn-fail"):
+            # No user code ran (or mandatory isolation was unavailable): this
+            # is an environment failure, never a user-visible RE/CE verdict.
             return {"error": "execution environment unavailable"}
         if reason == "timeout":
             verdict = "TLE"
@@ -2910,7 +2915,7 @@ def _run_playground(prob: Optional[grader.Problem], ext: str, source: str,
             verdict = "OLE"
         elif reason in ("oom", "sigkill"):
             verdict = "MLE"
-        elif reason.startswith("signal:") or reason == "spawn-fail":
+        elif reason.startswith("signal:"):
             verdict = "RE"
         elif res.get("returncode"):
             verdict = "RE"
