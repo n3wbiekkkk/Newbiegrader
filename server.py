@@ -582,10 +582,21 @@ async def _store_submission(row: dict, target_id: Optional[str] = None) -> Optio
                                                        or "could not find" in low)))
             if not missing_column:
                 raise
-            slim = {k: v for k, v in row.items() if k not in _NEW_SUB_COLS}
+            if "contest_id" in low:
+                # Never downgrade a contest submission to practice history by
+                # dropping its provenance. This is a schema incompatibility,
+                # not an excuse to silently change the feedback policy.
+                print("[web] refusing to drop contest_id from a submission; "
+                      "run supabase/schema.sql", file=sys.stderr)
+                raise
+            # Preserve contest_id even when another traceability column is the
+            # one missing. If contest_id is also absent, the retry fails and
+            # the write is reported as failed rather than downgraded.
+            traceability = tuple(c for c in _NEW_SUB_COLS if c != "contest_id")
+            slim = {k: v for k, v in row.items() if k not in traceability}
             if len(slim) == len(row):
                 raise
-            print(f"[web] submissions insert retried without {_NEW_SUB_COLS[0]}.. "
+            print(f"[web] submissions insert retried without {traceability[0]}.. "
                   f"({first}); run supabase/schema.sql to add them", file=sys.stderr)
             return _sb.table("submissions").insert(slim).execute()
 

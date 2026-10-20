@@ -63,12 +63,12 @@ class _RetryClient:
 
 
 class SubmissionStoreRetry(unittest.TestCase):
-    """Only a missing column may drop the traceability columns on retry.
+    """Schema fallback must never downgrade contest provenance.
 
     The retry exists for pre-2026-10 databases. It must not fire for integrity
-    errors that merely mention a column: dropping contest_id/job_id/kind there
-    would persist a contest submission as practice data (visible to the
-    all-time leaderboard and later reads with practice-level feedback).
+    errors that merely mention a column. If contest_id itself is unavailable,
+    fail closed rather than persisting a contest submission as practice data
+    (visible to the all-time leaderboard and later practice feedback).
     """
 
     def test_integrity_error_mentioning_a_column_is_not_retried(self):
@@ -80,15 +80,27 @@ class SubmissionStoreRetry(unittest.TestCase):
         self.assertIsNone(sid)
         self.assertEqual(len(client.inserts), 1, "integrity error must not be retried")
 
-    def test_missing_column_error_retries_without_traceability_columns(self):
+    def test_missing_column_error_retries_but_preserves_contest_id(self):
         client = _RetryClient("Could not find the 'tests_hash' column of "
                               "'submissions' in the schema cache")
         with patch.object(server, "_sb", client):
             sid = asyncio.run(server._store_submission(
-                {"problem": "p", "contest_id": "c1", "kind": "submit"}))
+                {"problem": "p", "contest_id": "c1", "kind": "submit",
+                 "job_id": "j1"}))
         self.assertEqual(sid, "retried")
         self.assertEqual(len(client.inserts), 2)
-        self.assertNotIn("contest_id", client.inserts[1])
+        self.assertEqual(client.inserts[1]["contest_id"], "c1")
+        self.assertNotIn("tests_hash", client.inserts[1])
+        self.assertNotIn("job_id", client.inserts[1])
+
+    def test_missing_contest_id_column_is_not_downgraded_to_practice(self):
+        client = _RetryClient("Could not find the 'contest_id' column of "
+                              "'submissions' in the schema cache")
+        with patch.object(server, "_sb", client):
+            sid = asyncio.run(server._store_submission(
+                {"problem": "p", "contest_id": "c1", "kind": "submit"}))
+        self.assertIsNone(sid)
+        self.assertEqual(len(client.inserts), 1, "must not retry a contest row without contest_id")
 
     def test_missing_relation_is_not_retried_as_a_missing_column(self):
         client = _RetryClient('relation "public.submissions" does not exist')
