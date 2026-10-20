@@ -20,10 +20,11 @@ create temp table remediation_targets (
   id uuid primary key
 ) on commit drop;
 
--- OPERATOR: replace this placeholder with IDs copied from the read-only
--- inspection report. The placeholder matches no real row and is safe to run.
-insert into remediation_targets (id) values
-  ('00000000-0000-0000-0000-000000000000');
+-- OPERATOR: replace this no-op SELECT with an explicit VALUES list copied from
+-- the read-only inspection report. The predicate is deliberately false so the
+-- template cannot mutate a row before review.
+insert into remediation_targets (id)
+select id from public.submissions where false;
 
 -- Durable before-image when this transaction is committed. Review it before
 -- changing the final ROLLBACK to COMMIT; drop it only under the retention
