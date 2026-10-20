@@ -23,7 +23,7 @@ function harness() {
     verdictSummary: () => '', verdictLegend: () => '', limitsMeta: () => '',
     detailHtml: () => '', highlightCode: (code) => context.esc(code),
     bindCopyButtons() {}, renderTopScores() {}, skel: () => '',
-    apiGetCached: async () => ({ configured: true, submissions: [], peer_access: { allowed: false, reason: 'attempt' } }),
+    apiGetCached: async () => ({ configured: true, submissions: [], peer_access: { allowed: true, reason: '' } }),
   });
   vm.runInContext(source.slice(source.indexOf('function renderResults('), source.indexOf('function detailHtml(')), context);
   vm.runInContext(source.slice(source.indexOf('function rowVerdictCode('), source.indexOf('/* ---------------- contests')), context);
@@ -96,9 +96,10 @@ test('latest inspection wins when responses arrive out of order', async () => {
   assert.doesNotMatch(c.$('result-body').innerHTML, /FIRST_SOURCE/);
 });
 
-test('per-problem submissions explain login, qualifying attempt and contest locks', async () => {
+test('per-problem submissions explain login, contest and hidden locks', async () => {
   const { context: c } = harness();
-  for (const [reason, expected] of [['login', /เข้าสู่ระบบ/], ['attempt', /CE.*RE/], ['contest', /การแข่งขัน/]]) {
+  for (const [reason, expected] of [['login', /เข้าสู่ระบบ/], ['contest', /การแข่งขัน/],
+    ['hidden', /ยังไม่เปิด/], ['unavailable', /ลองอีกครั้ง/]]) {
     c.apiGetCached = async () => ({ configured: true, submissions: [{ id: 'peer', name: 'Peer',
       verdict: 'AC', created_at: '', passed: 1, total: 1, score: 100 }], peer_access: { allowed: false, reason } });
     await c.loadTaskSubs();
@@ -106,14 +107,14 @@ test('per-problem submissions explain login, qualifying attempt and contest lock
   }
 });
 
-test('403 detail lock explains qualifying attempts and contest protection', async () => {
+test('403 detail lock explains contest protection and incomplete submissions', async () => {
   const { context: c } = harness();
-  c.apiGet = async () => { throw Object.assign(new Error('peer inspection locked: qualifying attempt required'), { status: 403 }); };
-  await c.viewSubmission('peer');
-  assert.match(c.$('result-body').innerHTML, /CE.*RE/);
   c.apiGet = async () => { throw Object.assign(new Error('peer inspection locked: contest protection'), { status: 403 }); };
   await c.viewSubmission('peer');
   assert.match(c.$('result-body').innerHTML, /การแข่งขัน/);
+  c.apiGet = async () => { throw Object.assign(new Error('peer inspection locked: incomplete submission'), { status: 403 }); };
+  await c.viewSubmission('peer');
+  assert.match(c.$('result-body').innerHTML, /ตรวจไม่เสร็จ/);
 });
 
 test('identity invalidation clears a previously displayed peer source', () => {
