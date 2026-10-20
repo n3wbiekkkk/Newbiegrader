@@ -301,7 +301,7 @@
       <div id="run-result" class="dim" role="status" aria-live="polite">กด Run แล้วผลจะขึ้นตรงนี้</div>
     </div>
     <div class="card tab-pane" id="pane-subs">
-      <p class="dim">ทุกคนที่ส่งข้อนี้ (ต้อง login เพื่อกดดูโค้ด)</p>
+      <p class="dim">ทุกคนที่ส่งข้อนี้ — login แล้วกดดูโค้ดของเพื่อนได้ทุกคน เพื่อการเรียนรู้</p>
       <h3 class="pane-h">Top scores</h3>
       <div id="task-top-body" class="dim">—</div>
       <h3 class="pane-h">All submissions</h3>
@@ -397,14 +397,16 @@
       <div>
         <p class="eyebrow">OPERATOR CONSOLE</p>
         <h2>ผู้ดูแลระบบ<span class="heading-period">.</span></h2>
-        <p class="dim">จัดการแข่งขัน ตรวจงาน และดูสุขภาพระบบ — เห็นเฉพาะอีเมลใน ADMIN_EMAILS</p>
+        <p class="dim">จัดการแข่งขัน ตรวจงาน และดูสุขภาพระบบ — เห็นเฉพาะอีเมลที่ได้รับสิทธิ์ผู้ดูแล</p>
       </div>
     </div>
 
     <div class="admin-tabs" role="tablist" aria-label="ส่วนของผู้ดูแล">
       <button class="admin-tab" type="button" role="tab" data-admin-tab="overview" aria-selected="true">ภาพรวม</button>
+      <button class="admin-tab" type="button" role="tab" data-admin-tab="history" aria-selected="false">ประวัติการส่ง</button>
       <button class="admin-tab" type="button" role="tab" data-admin-tab="contests" aria-selected="false">คอนเทสต์ <span class="admin-tab-count" id="admin-tab-contest-count">—</span></button>
       <button class="admin-tab" type="button" role="tab" data-admin-tab="reports" aria-selected="false">รีพอร์ต</button>
+      <button class="admin-tab" type="button" role="tab" data-admin-tab="admins" aria-selected="false">ผู้ดูแล</button>
       <button class="admin-tab" type="button" role="tab" data-admin-tab="tools" aria-selected="false">เครื่องมือ</button>
     </div>
 
@@ -442,6 +444,34 @@
           <div class="dash-card-body" id="overview-hidden">—</div>
         </section>
       </div>
+    </div>
+    <div class="card hidden admin-panel" id="admin-history-card" data-admin-panel="history">
+      <div class="card-head admin-section-head">
+        <div>
+          <h3 class="admin-section-title">ประวัติการส่งทั้งหมด <span class="dash-count" id="admin-history-count">—</span></h3>
+          <p class="admin-sub dim">ทุกบัญชี ทุกข้อ — เปิดดูทีละหน้า เลือกได้ 20 / 50 / 100 รายการต่อหน้า</p>
+        </div>
+        <button class="ghost-btn" type="button" id="admin-history-refresh"><svg class="ic"><use href="#i-refresh"/></svg><span>รีเฟรช</span></button>
+      </div>
+      <div class="admin-history-toolbar">
+        <div class="settings-row">
+          <label for="admin-history-problem">กรองตามข้อ</label>
+          <select id="admin-history-problem"><option value="">ทุกข้อ</option></select>
+        </div>
+        <div class="settings-row">
+          <label for="admin-history-size">รายการต่อหน้า</label>
+          <select id="admin-history-size">
+            <option value="20" selected>20</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+          </select>
+        </div>
+      </div>
+      <div id="admin-history-meta" class="meta" aria-live="polite"></div>
+      <div class="card table-card admin-history-table">
+        <div id="admin-history-body" class="dim" style="padding:16px">กำลังโหลด…</div>
+      </div>
+      <div id="admin-history-pager" class="admin-pager" role="navigation" aria-label="แบ่งหน้าประวัติการส่ง"></div>
     </div>
     <div class="card hidden admin-panel" id="contest-card" data-admin-panel="contests">
       <div class="card-head admin-section-head">
@@ -541,6 +571,53 @@
         <button class="ghost-btn" type="button" id="admin-reports-refresh"><svg class="ic"><use href="#i-refresh"/></svg><span>รีเฟรช</span></button>
       </div>
       <div id="admin-reports" class="dim">—</div>
+    </div>
+
+    <div class="card hidden admin-panel" id="admins-card" data-admin-panel="admins">
+      <div class="card-head admin-section-head">
+        <div>
+          <h3 class="admin-section-title">ผู้ดูแลระบบ <span class="dash-count" id="admins-count">—</span></h3>
+          <p class="admin-sub dim">เพิ่มหรือถอดสิทธิ์ได้ทันทีโดยไม่ต้องรีสตาร์ท · อีเมลใน ADMIN_EMAILS เป็นชุดถาวรที่ถอดจากหน้าเว็บไม่ได้</p>
+        </div>
+        <button class="ghost-btn" type="button" id="admins-refresh"><svg class="ic"><use href="#i-refresh"/></svg><span>รีเฟรช</span></button>
+      </div>
+      <div class="tool-stack">
+        <section class="tool-card">
+          <div class="tool-card-head">
+            <span class="tool-icon"><svg class="ic"><use href="#i-users"/></svg></span>
+            <div>
+              <h4>เพิ่มผู้ดูแล</h4>
+              <p class="ct-hint">พิมพ์อีเมลบัญชี Google ที่ต้องการให้เห็นเมนูผู้ดูแลและการส่งของทุกคน</p>
+            </div>
+          </div>
+          <form id="admin-add-form" autocomplete="off">
+            <div class="tool-fields">
+              <div class="settings-row">
+                <label for="admin-add-email">อีเมลผู้ดูแลใหม่</label>
+                <input id="admin-add-email" type="email" maxlength="254" list="admin-candidates"
+                       placeholder="name@gmail.com" spellcheck="false" required>
+                <datalist id="admin-candidates"></datalist>
+              </div>
+            </div>
+            <div class="submit-row">
+              <button id="admin-add-btn" class="submit-btn" type="submit">
+                <svg class="ic"><use href="#i-check"/></svg><span>เพิ่มผู้ดูแล</span>
+              </button>
+            </div>
+          </form>
+          <div id="admins-status" class="status dim" role="status" aria-live="polite"></div>
+        </section>
+        <section class="tool-card">
+          <div class="tool-card-head">
+            <span class="tool-icon"><svg class="ic"><use href="#i-users"/></svg></span>
+            <div>
+              <h4>รายชื่อผู้ดูแล</h4>
+              <p class="ct-hint">ADMIN_EMAILS = ถอดไม่ได้ · ฐานข้อมูล = เพิ่ม/ถอดได้ทันที</p>
+            </div>
+          </div>
+          <div id="admins-list" class="dim">—</div>
+        </section>
+      </div>
     </div>
 
     <div class="card hidden admin-panel" id="admin-tools-card" data-admin-panel="tools">

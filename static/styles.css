@@ -920,6 +920,16 @@ table.tests td.detail-cell:last-child { text-align: left; }
   .dash-banner .ghost-btn { margin-left: 26px; }
 }
 
+/* ---- admin: all submissions ---- */
+.admin-history-toolbar { display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; }
+.admin-history-toolbar .settings-row { margin: 0 0 8px; min-width: 180px; }
+.admin-history-table { margin-top: 10px; }
+.admin-history-table table { min-width: 720px; }
+.admin-user-email { font: 400 var(--fs-2xs) var(--mono); color: var(--dim); overflow-wrap: anywhere; }
+.admin-pager { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
+.admin-pager .pager-info { font: 400 var(--fs-sm) var(--mono); color: var(--dim); margin: 0 6px; }
+.admin-pager .ghost-btn[disabled] { opacity: .4; cursor: default; }
+
 /* ---- admin tools ---- */
 .tool-stack { display: grid; gap: 12px; }
 .tool-card {
