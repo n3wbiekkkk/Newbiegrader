@@ -648,6 +648,11 @@ function apiGetCached(path, ttlMs, force = false) {
 
 function clearGetCache() {
   _getGen++;
+  if (state.inspectedSubmission) {
+    $("result-body").innerHTML = "";
+    $("score-line").textContent = "";
+    state.inspectedSubmission = false;
+  }
   _getCache.clear();
   _getInflight.clear();
   state.detailCache = {};
@@ -1491,12 +1496,13 @@ async function loadTaskSubs() {
     }
     const rows = h.submissions || [];
     renderTopScores(rows);
+    const accessNote = `<p class="dim">${esc(peerAccessMessage(h.peer_access))}</p>`;
     if (!rows.length) {
-      body.innerHTML = `<span class="dim">ข้อนี้ยังไม่มีใครส่ง — เป็นคนแรกเลย</span>`;
+      body.innerHTML = accessNote + `<span class="dim">ข้อนี้ยังไม่มีใครส่ง — เป็นคนแรกเลย</span>`;
       return;
     }
     body.classList.remove("dim");
-    body.innerHTML = historyTable(rows, false);
+    body.innerHTML = accessNote + historyTable(rows, false);
     bindViewButtons(body);
   } catch (e) {
     if (gen !== _getGen || pid !== state.current) return;
@@ -2347,15 +2353,15 @@ function renderResults(d, secs) {
   $("score-line").textContent = `${d.passed}/${d.total} — ${d.score}/100` +
     (secs == null ? "" : ` — ${secs.toFixed(2)}s`);
   let html = "";
+  if (d.author || d.language) {
+    html += `<div class="meta">โดย ${esc(d.author || "—")} · ${esc(d.language || "")}${d.filename ? ` · ${esc(d.filename)}` : ""}</div>`;
+  }
   if (d.verdict === "CE") {
     html += `<div class="score-big bad">คอมไพล์ไม่ผ่าน</div>`;
     html += `<div class="detail-cell"><pre>${esc(d.compile_error || "(ไม่มีข้อความ)")}</pre></div>`;
   } else {
     const ok = d.accepted;
     html += `<div class="score-big ${ok ? "ok" : "bad"}">${ok ? "ผ่านทั้งหมด" : "ยังไม่ผ่าน"}</div>`;
-    if (d.author || d.language) {
-      html += `<div class="meta">โดย ${esc(d.author || "—")} · ${esc(d.language || "")}${d.filename ? ` · ${esc(d.filename)}` : ""}</div>`;
-    }
     html += verdictSummary(d);
     const counts = Object.entries(d.counts || {})
       .map(([k, n]) => `${VERDICT_TH[k] || k}:${n}`).join("  ");
@@ -2539,6 +2545,16 @@ function rowVerdictCode(r) {
   return ["CE", "RE", "MLE", "TLE", "OLE", "WA"].find((k) => counts[k]) || "WA";
 }
 
+function peerAccessMessage(access) {
+  if (access && access.allowed) return "เปิดดูโค้ดและผลรายเทสต์ของเพื่อนได้แล้ว โดยไม่เปิดเผยข้อมูลทดสอบ";
+  const reason = access && access.reason;
+  if (reason === "login") return "เข้าสู่ระบบก่อนดูโค้ดของเพื่อน";
+  if (reason === "contest") return "ยังดูโค้ดของเพื่อนไม่ได้: ข้อนี้อยู่ในการแข่งขันที่กำลังจะเริ่มหรือกำลังแข่ง";
+  if (reason === "unavailable") return "ยังตรวจสอบสิทธิ์ดูโค้ดของเพื่อนไม่ได้ กรุณาลองอีกครั้ง";
+  if (reason === "hidden") return "ข้อนี้ยังไม่เปิดให้ดูโค้ดของเพื่อน";
+  return "ส่งข้อนี้ให้ตรวจเสร็จอย่างน้อยหนึ่งครั้งโดยไม่มี CE หรือ RE ก่อนดูโค้ดของเพื่อน (AC, WA, TLE, MLE, OLE ใช้ได้) — ยังดูการส่งของตัวเองได้เสมอ";
+}
+
 const SHORT_TIME_OPTS = { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" };
 const _shortTimeFmt = new Intl.DateTimeFormat("th-TH", SHORT_TIME_OPTS);
 const _shortTimeFmtYear = new Intl.DateTimeFormat("th-TH", { ...SHORT_TIME_OPTS, year: "2-digit" });
@@ -2638,14 +2654,20 @@ async function loadHistory(force) {
   }
 }
 async function viewSubmission(sid) {
+  const gen = _getGen, seq = state.inspectionSeq = (state.inspectionSeq || 0) + 1;
+  const originalProblem = state.current;
+  const current = () => gen === _getGen && seq === state.inspectionSeq;
   try {
     const r = await apiGet(`/api/history/${encodeURIComponent(sid)}`);
+    if (!current() || state.current !== originalProblem) return;
     if (r.problem !== state.current) {
       openTask(r.problem);
       await selectProblem(r.problem);
     }
+    if (!current() || state.current !== r.problem) return;
     show("task");
     setTaskTab("submit");
+    state.inspectedSubmission = true;
     renderResults({
       verdict: r.verdict, accepted: r.accepted,
       passed: r.passed, total: r.total, score: r.score,
@@ -2658,11 +2680,10 @@ async function viewSubmission(sid) {
     }, null);
     document.querySelector("#pane-submit").scrollIntoView({ behavior: "smooth" });
   } catch (e) {
-    // 403 = someone else's submission: the payload never reaches the DOM, so no
-    // foreign code can be rendered. 401 = not logged in.
+    if (!current()) return;
     const msg = e.status === 403
-      ? "ไม่ใช่การส่งของคุณ — ดูได้เฉพาะการส่งของตัวเอง (admin ดูได้ทุกอัน)"
-      : (e.status === 401 ? "ต้อง login ก่อนดูผลการส่ง" : e.message);
+      ? peerAccessMessage({ reason: /contest/.test(e.message) ? "contest" : /hidden/.test(e.message) ? "hidden" : "attempt" })
+      : (e.status === 401 ? peerAccessMessage({ reason: "login" }) : e.status === 503 ? peerAccessMessage({ reason: "unavailable" }) : e.message);
     show("task");
     setTaskTab("submit");
     $("result-body").innerHTML = `<span class="dim">${esc(msg)}</span>`;
