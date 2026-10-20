@@ -91,6 +91,13 @@ have a separate allowlist and never contain source or per-test results. Legacy
 display names that fall back to an email address are replaced with a neutral
 label. Source is student-authored text and may itself contain whatever the
 author wrote. Source inspection does not copy code into the student's editor.
+The dedicated `#/submission/<id>` page keeps source and per-test results separate
+from the Submit/Run workspace and the viewer's latest judging result. It names
+the author and submission, displays source immediately with numbered lines, and
+offers copy and line wrapping. Background judging cannot replace that page.
+Direct links, reloads and history navigation authorize the requested ID again;
+leaving the route rejects delayed responses. Owners retain their already
+authorized detailed feedback on this page; peers see only allowed measurements.
 
 History responses are private and not stored by HTTP caches. The frontend
 invalidates identity-specific cached answers and rendered inspected source on
