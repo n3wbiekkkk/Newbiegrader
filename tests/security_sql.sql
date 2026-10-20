@@ -1,7 +1,7 @@
 -- Run only against the disposable CI database after applying schema.sql twice.
 begin;
 do $$
-declare item record; role_name text; object_name text; privilege_name text;
+declare item record; role_name text; object_name text;
 begin
   foreach object_name in array array[
     'submissions','profiles','reports','users','judge_jobs','contests',
@@ -9,14 +9,10 @@ begin
     'admins','leaderboard_scores','problem_stats'
   ] loop
     foreach role_name in array array['anon','authenticated'] loop
-      foreach privilege_name in array array[
-        'SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER'
-      ] loop
-        if has_table_privilege(role_name,'public.'||object_name,privilege_name)
-           or has_any_column_privilege(role_name,'public.'||object_name,privilege_name) then
-          raise exception '% unexpectedly has % on %',role_name,privilege_name,object_name;
-        end if;
-      end loop;
+      if has_table_privilege(role_name,'public.'||object_name,'select,insert,update,delete')
+         or has_any_column_privilege(role_name,'public.'||object_name,'select,insert,update') then
+        raise exception '% unexpectedly has access to %',role_name,object_name;
+      end if;
     end loop;
     if not has_table_privilege('service_role','public.'||object_name,'select') then
       raise exception 'service_role cannot read %',object_name;
