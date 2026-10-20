@@ -268,12 +268,21 @@ async def _lifespan(_app: "FastAPI"):
         print(f"[web] local job recovery failed: {e}", file=sys.stderr)
     workers = ([] if GRADER_ROLE == "api" else
                [asyncio.create_task(_judge_worker(i)) for i in range(JUDGE_WORKERS)])
+    # Realtime admins live in Postgres; keep a small in-process snapshot so the
+    # many synchronous _is_admin() checks never wait on the network.
+    admin_task = None
+    if _sb is not None:
+        await asyncio.to_thread(_load_db_admins_sync)
+        admin_task = asyncio.create_task(_admin_cache_loop())
     try:
         yield
     finally:
         for w in workers:
             w.cancel()
         await asyncio.gather(*workers, return_exceptions=True)
+        if admin_task is not None:
+            admin_task.cancel()
+            await asyncio.gather(admin_task, return_exceptions=True)
 
 
 class RequestBodyLimit:
@@ -1569,12 +1578,62 @@ GOOGLE_REDIRECT_URI = os.environ.get(
 FRONTEND_URL = os.environ.get(
     "FRONTEND_URL", "https://newbiegrader.pages.dev").rstrip("/")
 
+# ADMIN_EMAILS is the immutable bootstrap set: those accounts always keep
+# admin access, even if the database is down or a row is deleted by mistake.
 ADMIN_EMAILS = {e.strip().lower() for e in os.environ.get(
     "ADMIN_EMAILS", "sphetpitak@gmail.com").split(",") if e.strip()}
 
+# Additional admins are managed from the admin page and stored in public.admins.
+# _is_admin() stays synchronous and network-free: this snapshot is refreshed by
+# a background task (and updated immediately after an add/remove).
+_ADMIN_CACHE_TTL = max(2.0, float(os.environ.get("GRADER_ADMIN_CACHE_TTL", "5") or 5))
+_db_admin_emails: frozenset = frozenset()
+_admin_cache_error = False
+
+
+def _norm_email(value: object) -> str:
+    return str(value or "").strip().lower()
+
+
+def _admin_email_valid(email: str) -> bool:
+    return (0 < len(email) <= 254
+            and re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email) is not None)
+
+
+def _load_db_admins_sync() -> bool:
+    """Refresh the DB-backed admin snapshot; env bootstrap is always kept."""
+    global _db_admin_emails, _admin_cache_error
+    if _sb is None:
+        _db_admin_emails = frozenset()
+        return False
+    try:
+        res = _sb.table("admins").select("email").execute()
+        _db_admin_emails = frozenset(
+            _norm_email(row.get("email")) for row in (res.data or [])
+            if _norm_email(row.get("email")))
+        _admin_cache_error = False
+        return True
+    except Exception as e:
+        # Fail closed for DB-backed admins: never keep stale grants when the
+        # list cannot be verified. Env bootstrap accounts stay active, and the
+        # error is logged once per outage instead of every few seconds.
+        _db_admin_emails = frozenset()
+        if not _admin_cache_error:
+            print(f"[web] admin list unavailable (env admins still active): {e}",
+                  file=sys.stderr)
+            _admin_cache_error = True
+        return False
+
+
+async def _admin_cache_loop() -> None:
+    while True:
+        await asyncio.sleep(_ADMIN_CACHE_TTL)
+        await asyncio.to_thread(_load_db_admins_sync)
+
 
 def _is_admin(email: str) -> bool:
-    return bool(email) and email.lower() in ADMIN_EMAILS
+    value = _norm_email(email)
+    return bool(value) and (value in ADMIN_EMAILS or value in _db_admin_emails)
 
 
 REPORT_KINDS = ("statement", "tests", "other")
@@ -3481,6 +3540,167 @@ async def set_report_status(request: Request, rid: str) -> dict:
 
 
 _boot_time = time.monotonic()
+
+
+# ---- admin: realtime admin management ----
+def _admin_rows_sync() -> list:
+    res = _sb.table("admins").select(
+        "email,created_at,created_by").order("created_at").execute()
+    rows = []
+    for row in res.data or []:
+        email = _norm_email(row.get("email"))
+        if email:
+            rows.append({"email": email,
+                         "created_at": row.get("created_at"),
+                         "created_by": row.get("created_by") or ""})
+    return rows
+
+
+@app.get("/api/admin/admins")
+async def admin_list_admins(request: Request) -> dict:
+    global _db_admin_emails
+    user = request.session.get("user") or {}
+    if not _is_admin(user.get("email", "")):
+        raise HTTPException(status_code=403, detail="admin only")
+    you = _norm_email(user.get("email"))
+    configured = _sb is not None
+    db_rows: list = []
+    if configured:
+        try:
+            db_rows = await asyncio.to_thread(_admin_rows_sync)
+        except Exception as e:
+            raise _db_err(e)
+        _db_admin_emails = frozenset(row["email"] for row in db_rows)
+    seen = set()
+    admins = []
+    for email in sorted(ADMIN_EMAILS):
+        admins.append({"email": email, "source": "env", "removable": False,
+                       "created_at": None, "created_by": "ADMIN_EMAILS"})
+        seen.add(email)
+    for row in db_rows:
+        if row["email"] in seen:
+            continue
+        admins.append({"email": row["email"], "source": "database",
+                       "removable": row["email"] != you,
+                       "created_at": row.get("created_at"),
+                       "created_by": row.get("created_by") or ""})
+        seen.add(row["email"])
+    candidates = []
+    if configured:
+        try:
+            res = await asyncio.to_thread(
+                lambda: _sb.table("users").select("email,name").order(
+                    "created_at", desc=True).limit(100).execute())
+            for row in res.data or []:
+                email = _norm_email(row.get("email"))
+                if email and email not in seen:
+                    candidates.append({"email": email,
+                                       "name": row.get("name") or ""})
+        except Exception:
+            candidates = []
+    return {"configured": configured, "you": you, "admins": admins,
+            "candidates": candidates}
+
+
+@app.post("/api/admin/admins")
+async def admin_add_admin(request: Request) -> dict:
+    global _db_admin_emails
+    user = request.session.get("user") or {}
+    actor = _norm_email(user.get("email"))
+    if not _is_admin(actor):
+        raise HTTPException(status_code=403, detail="admin only")
+    if _sb is None:
+        raise HTTPException(status_code=404, detail="supabase not configured")
+    body = await _json_object(request)
+    email = _norm_email(body.get("email"))
+    if not _admin_email_valid(email):
+        raise HTTPException(status_code=400, detail="invalid email")
+    if email in ADMIN_EMAILS:
+        raise HTTPException(status_code=409,
+                            detail="this email is a bootstrap admin (ADMIN_EMAILS)")
+    if email in _db_admin_emails:
+        raise HTTPException(status_code=409, detail="already an admin")
+    try:
+        await asyncio.to_thread(
+            lambda: _sb.table("admins").insert(
+                {"email": email, "created_by": actor}).execute())
+    except Exception as e:
+        low = str(e).lower()
+        if "23505" in low or "duplicate" in low or "unique" in low:
+            raise HTTPException(status_code=409, detail="already an admin")
+        raise _db_err(e)
+    _db_admin_emails = _db_admin_emails | frozenset({email})
+    return {"ok": True, "email": email, "source": "database"}
+
+
+@app.delete("/api/admin/admins/{email}")
+async def admin_remove_admin(request: Request, email: str) -> dict:
+    global _db_admin_emails
+    user = request.session.get("user") or {}
+    actor = _norm_email(user.get("email"))
+    if not _is_admin(actor):
+        raise HTTPException(status_code=403, detail="admin only")
+    target = _norm_email(email)
+    if not _admin_email_valid(target):
+        raise HTTPException(status_code=400, detail="invalid email")
+    if target in ADMIN_EMAILS:
+        raise HTTPException(
+            status_code=409,
+            detail="bootstrap admins are fixed in ADMIN_EMAILS on the server")
+    if target == actor:
+        raise HTTPException(status_code=400,
+                            detail="cannot remove your own admin access")
+    if _sb is None:
+        raise HTTPException(status_code=404, detail="supabase not configured")
+    if target not in _db_admin_emails:
+        await asyncio.to_thread(_load_db_admins_sync)
+    if target not in _db_admin_emails:
+        raise HTTPException(status_code=404, detail="admin not found")
+    try:
+        await asyncio.to_thread(
+            lambda: _sb.table("admins").delete().eq("email", target).execute())
+    except Exception as e:
+        raise _db_err(e)
+    _db_admin_emails = frozenset(e for e in _db_admin_emails if e != target)
+    return {"ok": True, "email": target}
+
+
+@app.get("/api/admin/submissions")
+async def admin_submissions(request: Request, page: int = 1, per_page: int = 20,
+                            problem: Optional[str] = None) -> dict:
+    """Paginated all-user submission history (metadata only, never source)."""
+    user = request.session.get("user") or {}
+    if not _is_admin(user.get("email", "")):
+        raise HTTPException(status_code=403, detail="admin only")
+    if _sb is None:
+        raise HTTPException(status_code=404, detail="supabase not configured")
+    if per_page not in (20, 50, 100):
+        per_page = 20
+    page = max(1, page)
+    wanted_problem = _resolve_pid(problem) if problem else ""
+
+    def _fetch():
+        q = _sb.table("submissions").select(
+            "id,created_at,user_email,name,problem,language,verdict,accepted,"
+            "passed,total,score,counts,contest_id", count="exact")
+        if wanted_problem:
+            q = q.eq("problem", wanted_problem)
+        return q.order("created_at", desc=True).order("id", desc=True).range(
+            (page - 1) * per_page, page * per_page - 1).execute()
+
+    try:
+        res = await asyncio.to_thread(_fetch)
+    except Exception as e:
+        raise _db_err(e)
+    total = res.count or 0
+    return {
+        "configured": True,
+        "page": page,
+        "per_page": per_page,
+        "total": total,
+        "pages": max(1, (total + per_page - 1) // per_page),
+        "submissions": res.data or [],
+    }
 
 
 @app.get("/api/admin/overview")
