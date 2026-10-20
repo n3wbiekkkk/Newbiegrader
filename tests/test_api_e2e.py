@@ -414,15 +414,26 @@ class ApiE2E(unittest.TestCase):
         db.table("submissions").delete().eq("problem", "p1").execute()
         self.assertEqual(len(db.tables["submissions"]), 0)
 
-    def test_history_detail_is_owner_or_admin_only(self):
+    def test_history_detail_allows_logged_in_peer_and_keeps_owner_admin_access(self):
         self.login(STUDENT_A)
         job = self.judged("thai_time", THAI_REF)
         sid = job["result"]["id"]
         self.assertTrue(sid)
 
+        # Learning access: a signed-in student may read a peer's completed
+        # source without first qualifying on the problem.
         self.login(STUDENT_B)
         r = self.client.get(f"/api/history/{sid}")
-        self.assertEqual(r.status_code, 403, r.text)
+        self.assertEqual(r.status_code, 200, r.text)
+        peer = r.json()
+        self.assertTrue(peer["peer_inspection"])
+        self.assertIn("code", peer)
+        self.assertIn("THAI", peer["code"].upper() + "THAI")
+        for test in peer["results"]:
+            self.assertTrue(test["hidden"])
+            self.assertNotIn("input", test)
+            self.assertNotIn("expected", test)
+            self.assertNotIn("actual", test)
 
         self.login(STUDENT_A)
         r = self.client.get(f"/api/history/{sid}")

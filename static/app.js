@@ -25,6 +25,8 @@ const state = {
   taskTab: "statement",
   file: null,
   user: null,
+  authReady: false,      // initial /me + remember-me restoration have completed
+  authError: false,
   is_admin: false,
   isAdmin: false,        // alias of is_admin (same value)
   filter: { q: "", diff: "", tag: "", status: "all", sort: "no" },
@@ -647,6 +649,14 @@ function apiGetCached(path, ttlMs, force = false) {
 }
 
 function clearGetCache() {
+  // Identity invalidation must also remove source already displayed on a
+  // shared computer. Ordinary submission completion only expires GET caches.
+  state.inspectionIdentityGen = (state.inspectionIdentityGen || 0) + 1;
+  if (state.inspectionSeq || state.inspectedSubmission) clearSubmissionInspection();
+  invalidateGetCache();
+}
+
+function invalidateGetCache() {
   _getGen++;
   _getCache.clear();
   _getInflight.clear();
@@ -688,6 +698,7 @@ async function fetchStats() {
 /* ---------------- router ---------------- */
 function show(view) {
   if (view !== "contest") state.contestSeq = (state.contestSeq || 0) + 1;
+  if (view !== "submission" && (state.inspectionSeq || state.inspectedSubmission)) clearSubmissionInspection();
   // Leaving the task list remembers where you were: coming back from a
   // problem restores the scroll instead of dumping you at the top.
   try {
@@ -723,6 +734,7 @@ const TITLES = {
   contests: "การแข่ง · Newbiegrader",
   contest: "การแข่ง · Newbiegrader",
   history: "ประวัติการส่ง · Newbiegrader",
+  submission: "รายละเอียดการส่ง · Newbiegrader",
   settings: "ตั้งค่า · Newbiegrader",
   admin: "ผู้ดูแล · Newbiegrader",
   login: "เข้าสู่ระบบ · Newbiegrader",
@@ -805,17 +817,24 @@ document.addEventListener("click", (e) => {
 });
 
 async function openTaskByToken(token) {
+  const route = location.hash, gen = state.inspectionIdentityGen || 0;
+  const current = () => route === location.hash && gen === (state.inspectionIdentityGen || 0);
   const pid = resolveTaskToken(token);
   if (pid) { show("task"); selectProblem(pid); return; }
   try {   // contest-only problems are absent from the public list: ask the API
     const d = await apiGet(`/api/problems/${encodeURIComponent(token)}`);
+    if (!current()) return;
     if (d && d.id) { show("task"); selectProblem(d.id); return; }
   } catch (e) { /* fall through */ }
-  _nav("#/tasks", "push");
+  if (current()) _nav("#/tasks", "push");
 }
 
 function currentRouteRender() {
   const h = location.hash || "#/";
+  if (h.startsWith("#/submission/")) {
+    const sid = decodeURIComponent(h.slice("#/submission/".length));
+    return () => loadSubmission(sid);
+  }
   if (h.startsWith("#/task/")) {
     const pid = resolveTaskToken(decodeURIComponent(h.slice("#/task/".length)));
     if (!pid) return null;
@@ -843,6 +862,12 @@ function router() {
   _syncHistoryEntry(pend && pend.to === h ? pend.kind : null);
   _currentRoute = h;
   if (!h.startsWith("#/contests/")) stopContestTicker();
+  if (h.startsWith("#/submission/")) {
+    show("submission");
+    setTitle("submission");
+    loadSubmission(decodeURIComponent(h.slice("#/submission/".length)));
+    return;
+  }
   if (h.startsWith("#/task/")) {
     openTaskByToken(decodeURIComponent(h.slice("#/task/".length)));
     return;
@@ -861,7 +886,6 @@ function router() {
   if (h === "#/history") { show("history"); setTitle("history"); loadHistory(); return; }
   if (h === "#/settings") { show("settings"); setTitle("settings"); renderSettings(); return; }
   if (h === "#/admin") {
-    if (!state.is_admin) { location.hash = "#/"; return; }
     show("admin");
     setTitle("admin");
     renderAdmin();
@@ -1491,12 +1515,13 @@ async function loadTaskSubs() {
     }
     const rows = h.submissions || [];
     renderTopScores(rows);
+    const accessNote = `<p class="dim">${esc(peerAccessMessage(h.peer_access))}</p>`;
     if (!rows.length) {
-      body.innerHTML = `<span class="dim">ข้อนี้ยังไม่มีใครส่ง — เป็นคนแรกเลย</span>`;
+      body.innerHTML = accessNote + `<span class="dim">ข้อนี้ยังไม่มีใครส่ง — เป็นคนแรกเลย</span>`;
       return;
     }
     body.classList.remove("dim");
-    body.innerHTML = historyTable(rows, false);
+    body.innerHTML = accessNote + historyTable(rows, false);
     bindViewButtons(body);
   } catch (e) {
     if (gen !== _getGen || pid !== state.current) return;
@@ -1562,11 +1587,13 @@ async function refreshMe() {
   try {
     const me = await apiGet("/api/auth/me");
     if (seq !== state.meSeq) return;
+    state.authError = false;
     state.user = (me && me.user) || null;
     state.is_admin = state.isAdmin = !!(me && me.is_admin);
     embedded = me && me.profile ? me : null;
   } catch (e) {
     if (seq !== state.meSeq) return;
+    state.authError = true;
     state.user = null;
     state.is_admin = state.isAdmin = false;
   }
@@ -1583,7 +1610,7 @@ async function refreshMe() {
   $("logout-btn").classList.toggle("hidden", !state.user);
   const navAdmin = $("nav-admin");
   if (navAdmin) navAdmin.classList.toggle("hidden", !state.is_admin);
-  if (!state.is_admin && (location.hash || "") === "#/admin") location.hash = "#/";
+  if (state.authReady && !state.is_admin && (location.hash || "") === "#/admin") renderAdmin();
   const chip = $("user-chip");
   chip.classList.toggle("hidden", !state.user);
   if (state.user) {
@@ -1605,6 +1632,18 @@ async function refreshMe() {
     chip.textContent = display;
     chip.title = state.user.email || "";
   }
+}
+
+async function restoreInitialSession() {
+  await refreshMe();
+  // A missing session cookie is not a final denial until remember-me is checked.
+  if (!state.user) {
+    try {
+      const r = await apiGet("/api/auth/restore");
+      if (r && r.restored) await refreshMe();
+    } catch (e) { state.authError = true; }
+  }
+  state.authReady = true;
 }
 
 $("login-btn").onclick = () => {
@@ -1757,7 +1796,7 @@ async function loadOverview() {
         <th>เวลา</th><th>ข้อ</th><th>ผู้ส่ง</th><th>ผล</th><th class="num">คะแนน</th>
       </tr></thead><tbody>` + rows.map((r) =>
       `<tr><td class="dim">${esc(shortTime(r.created_at))}</td><td>${problemCell(r.problem)}</td>` +
-      `<td>${esc(r.name || "—")}</td><td>${badge(r.accepted ? "AC" : (r.verdict || "?"))}</td>` +
+      `<td>${esc(r.name || "—")}</td><td>${badgeVerdict(rowVerdictCode(r))}</td>` +
       `<td class="num"><span class="${scoreCls(r.score)}">${esc(String(r.score ?? ""))}</span></td></tr>`
     ).join("") + `</tbody></table>` : `<p class="dash-empty">ยังไม่มีการส่ง</p>`;
 
@@ -2255,8 +2294,8 @@ async function doSubmit() {
     // Keep the verdict for this problem: coming back must not lose it.
     state.jobResults[pid] = { result: result, secs: secs };
     forgetJob(pid);
-    clearGetCache();     // history/stats answers changed with this submission
-    if (state.current === pid) {
+    invalidateGetCache();     // history/stats changed, but the identity did not
+    if (state.current === pid && document.querySelector("#view-task.active")) {
       renderResults(result, secs);
       $("result-body").scrollIntoView({ behavior: "smooth", block: "start" });
       setJudgeStatus(`เสร็จใน ${secs.toFixed(2)}s — ${result.score}/100 คะแนน`, false);
@@ -2299,12 +2338,12 @@ async function doSubmit() {
   }
 }
 
-/* Verdicts read in Thai first, with the acronym kept as a tooltip for anyone
- * who has seen a judge before. */
+/* The verdict label is the judge's English abbreviation. The constant name is
+ * historical; do not replace these values with Thai words. */
 const VERDICT_TH = {
-  AC: "ผ่าน", WA: "คำตอบไม่ตรง", TLE: "ช้าเกินเวลา", MLE: "แรมเกิน",
-  OLE: "พิมพ์ผลเกิน", RE: "โปรแกรมพังตอนรัน", CE: "คอมไพล์ไม่ผ่าน",
-  OK: "รันผ่าน", SKIP: "ข้าม", "": "—",
+  AC: "AC", WA: "WA", TLE: "TLE", MLE: "MLE",
+  OLE: "OLE", RE: "RE", CE: "CE",
+  OK: "OK", SKIP: "SKIP", "": "—",
 };
 
 function badgeVerdict(v) {
@@ -2347,15 +2386,15 @@ function renderResults(d, secs) {
   $("score-line").textContent = `${d.passed}/${d.total} — ${d.score}/100` +
     (secs == null ? "" : ` — ${secs.toFixed(2)}s`);
   let html = "";
+  if (d.author || d.language) {
+    html += `<div class="meta">โดย ${esc(d.author || "—")} · ${esc(d.language || "")}${d.filename ? ` · ${esc(d.filename)}` : ""}</div>`;
+  }
   if (d.verdict === "CE") {
     html += `<div class="score-big bad">คอมไพล์ไม่ผ่าน</div>`;
     html += `<div class="detail-cell"><pre>${esc(d.compile_error || "(ไม่มีข้อความ)")}</pre></div>`;
   } else {
     const ok = d.accepted;
     html += `<div class="score-big ${ok ? "ok" : "bad"}">${ok ? "ผ่านทั้งหมด" : "ยังไม่ผ่าน"}</div>`;
-    if (d.author || d.language) {
-      html += `<div class="meta">โดย ${esc(d.author || "—")} · ${esc(d.language || "")}${d.filename ? ` · ${esc(d.filename)}` : ""}</div>`;
-    }
     html += verdictSummary(d);
     const counts = Object.entries(d.counts || {})
       .map(([k, n]) => `${VERDICT_TH[k] || k}:${n}`).join("  ");
@@ -2539,6 +2578,17 @@ function rowVerdictCode(r) {
   return ["CE", "RE", "MLE", "TLE", "OLE", "WA"].find((k) => counts[k]) || "WA";
 }
 
+function peerAccessMessage(access) {
+  if (access && access.allowed) return "เข้าสู่ระบบแล้ว เปิดดูโค้ดและผลรายเทสต์ของเพื่อนได้ทุกข้อที่เปิดอยู่ โดยไม่เปิดเผยข้อมูลทดสอบ";
+  const reason = access && access.reason;
+  if (reason === "login") return "เข้าสู่ระบบก่อนดูโค้ดของเพื่อน";
+  if (reason === "contest") return "ยังดูโค้ดของเพื่อนไม่ได้: ข้อนี้อยู่ในการแข่งขันที่กำลังจะเริ่มหรือกำลังแข่ง";
+  if (reason === "unavailable") return "ยังตรวจสอบสิทธิ์ดูโค้ดของเพื่อนไม่ได้ กรุณาลองอีกครั้ง";
+  if (reason === "hidden") return "ข้อนี้ยังไม่เปิดให้ดูโค้ดของเพื่อน";
+  if (reason === "incomplete") return "การส่งนี้ยังตรวจไม่เสร็จ ลองใหม่ภายหลัง";
+  return "ยังดูโค้ดของเพื่อนไม่ได้ในขณะนี้";
+}
+
 const SHORT_TIME_OPTS = { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" };
 const _shortTimeFmt = new Intl.DateTimeFormat("th-TH", SHORT_TIME_OPTS);
 const _shortTimeFmtYear = new Intl.DateTimeFormat("th-TH", { ...SHORT_TIME_OPTS, year: "2-digit" });
@@ -2638,37 +2688,119 @@ async function loadHistory(force) {
   }
 }
 async function viewSubmission(sid) {
+  const route = "#/submission/" + encodeURIComponent(sid);
+  if (location.hash === route) return loadSubmission(sid);
+  _nav(route, "push");
+}
+
+function clearSubmissionInspection() {
+  state.inspectionSeq = (state.inspectionSeq || 0) + 1;
+  state.inspectedSubmission = false;
+  $("submission-body").innerHTML = "";
+  $("submission-status").textContent = "";
+  $("submission-body").removeAttribute("aria-busy");
+}
+
+async function loadSubmission(sid) {
+  const gen = state.inspectionIdentityGen || 0;
+  const seq = state.inspectionSeq = (state.inspectionSeq || 0) + 1;
+  const route = location.hash;
+  const current = () => gen === (state.inspectionIdentityGen || 0) &&
+    seq === state.inspectionSeq && location.hash === route;
+  const body = $("submission-body"), status = $("submission-status");
+  state.inspectedSubmission = false;
+  body.innerHTML = "";
+  body.setAttribute("aria-busy", "true");
+  status.textContent = "กำลังโหลดการส่งและตรวจสอบสิทธิ์…";
   try {
     const r = await apiGet(`/api/history/${encodeURIComponent(sid)}`);
-    if (r.problem !== state.current) {
-      openTask(r.problem);
-      await selectProblem(r.problem);
-    }
-    show("task");
-    setTaskTab("submit");
-    renderResults({
-      verdict: r.verdict, accepted: r.accepted,
-      passed: r.passed, total: r.total, score: r.score,
-      counts: r.counts || {}, build_warnings: "",
-      compile_error: r.detail || "",
-      limits: { time_s: "-", memory_mb: "-" }, checker: "-",
-      results: r.results || [],
-      code: r.code || "", filename: r.filename || "", language: r.language || "",
-      author: r.name || "",
-    }, null);
-    document.querySelector("#pane-submit").scrollIntoView({ behavior: "smooth" });
+    if (!current()) return;
+    renderSubmission(r, sid);
+    state.inspectedSubmission = true;
+    status.textContent = "";
+    setTitle("submission", r.name ? `การส่งของ ${r.name}` : "");
   } catch (e) {
-    // 403 = someone else's submission: the payload never reaches the DOM, so no
-    // foreign code can be rendered. 401 = not logged in.
+    if (!current()) return;
     const msg = e.status === 403
-      ? "ไม่ใช่การส่งของคุณ — ดูได้เฉพาะการส่งของตัวเอง (admin ดูได้ทุกอัน)"
-      : (e.status === 401 ? "ต้อง login ก่อนดูผลการส่ง" : e.message);
-    show("task");
-    setTaskTab("submit");
-    $("result-body").innerHTML = `<span class="dim">${esc(msg)}</span>`;
-    setJudgeStatus(msg, false);
-    $("score-line").textContent = "";
+      ? peerAccessMessage({ reason: /contest/.test(e.message) ? "contest" : /hidden/.test(e.message) ? "hidden" : "attempt" })
+      : e.status === 401 ? peerAccessMessage({ reason: "login" })
+      : e.status === 503 ? peerAccessMessage({ reason: "unavailable" })
+      : e.status === 404 ? "ไม่พบการส่งนี้ หรือการส่งนี้ยังไม่พร้อมให้ดู" : `โหลดการส่งไม่สำเร็จ: ${e.message}`;
+    status.textContent = msg;
+    body.innerHTML = `<div class="inspection-error"><p>เปิดรายละเอียดการส่งนี้ไม่ได้</p>` +
+      (e.status === 401 ? `<a class="ghost-btn" href="#/login">เข้าสู่ระบบ</a>` :
+        `<button class="ghost-btn" id="submission-retry" type="button">ลองอีกครั้ง</button>`) + `</div>`;
+    const retry = $("submission-retry");
+    if (retry) retry.onclick = () => loadSubmission(sid);
+  } finally {
+    if (current()) body.removeAttribute("aria-busy");
   }
+}
+
+function submissionSourceHtml(code, language) {
+  // Highlight once so multiline C/C++ comments retain their colour. Close and
+  // reopen the highlighter's fixed spans at line boundaries for valid markup.
+  let continuation = "";
+  return highlightCode(code, language).split("\n").map((line, i) => {
+    const prefix = continuation;
+    for (const tag of line.matchAll(/<span class="tk-[a-z]">|<\/span>/g)) {
+      continuation = tag[0] === "</span>" ? "" : tag[0];
+    }
+    return `<span class="source-line"><span class="source-line-number" aria-hidden="true">${i + 1}</span>` +
+      `<span class="source-line-code">${prefix}${line || " "}${continuation ? "</span>" : ""}</span></span>`;
+  }).join("\n");
+}
+
+function renderSubmission(r, sid) {
+  const code = typeof r.code === "string" ? r.code : "";
+  const peer = r.peer_inspection === true;
+  const problem = state.problems.find((p) => p.id === r.problem);
+  const language = { python: "Python", c: "C", cpp: "C++" }[r.language] || r.language || "—";
+  const rows = r.results || [];
+  const measure = (value, unit) => value == null ? "—" : `${esc(String(value))} ${unit}`;
+  let html = `<div class="inspection-summary" id="submission-meta">` +
+    `<div class="inspection-author"><span class="dim">ผู้ส่ง</span><h2>${esc(r.name || "ไม่ระบุชื่อ")}</h2></div>` +
+    `<div class="inspection-verdict">${badgeVerdict(rowVerdictCode(r))}<strong class="${scoreCls(r.score)}">${esc(String(r.score ?? "—"))}<span class="dim"> / 100</span></strong></div>` +
+    `<dl class="inspection-facts"><div><dt>โจทย์</dt><dd><a id="submission-problem" href="#/task/${encodeURIComponent(r.problem)}">${esc(problem ? problem.title : r.problem)}</a></dd></div>` +
+    `<div><dt>รหัสการส่ง</dt><dd class="inspection-id">${esc(sid)}</dd></div>` +
+    `<div><dt>ภาษา</dt><dd>${esc(language)}</dd></div>` +
+    `<div><dt>ส่งเมื่อ</dt><dd>${esc(shortTime(r.created_at) || "—")}</dd></div>` +
+    `<div><dt>เทสต์ที่ผ่าน</dt><dd>${esc(String(r.passed ?? "—"))} / ${esc(String(r.total ?? "—"))}</dd></div></dl></div>`;
+  html += `<section class="card inspection-source-card" aria-labelledby="submission-code-heading"><div class="card-head">` +
+    `<div><h2 id="submission-code-heading">โค้ดที่ส่ง</h2><span class="dim inspection-file">${esc(r.filename || language)} · ${code.split("\n").length} บรรทัด</span></div>` +
+    `<div class="inspection-code-tools"><button class="ghost-btn" id="submission-wrap" type="button" aria-pressed="false" aria-controls="submission-source">ตัดบรรทัดยาว</button>` +
+    `<button class="ghost-btn" id="submission-copy" type="button">${icon("copy")}คัดลอกโค้ด</button></div></div>` +
+    (code ? `<pre class="inspection-source" id="submission-source" tabindex="0" aria-label="โค้ดที่ส่ง ภาษา ${esc(language)}"><code>${submissionSourceHtml(code, r.language)}</code></pre>` :
+      `<p class="dim" id="submission-source">การส่งนี้ไม่มีโค้ดที่บันทึกไว้</p>`) + `</section>`;
+  html += `<section class="card inspection-tests-card" id="submission-tests" aria-labelledby="submission-tests-heading">` +
+    `<div class="card-head"><h2 id="submission-tests-heading">ผลการตรวจรายเทสต์</h2><span class="dim">${rows.length} เทสต์</span></div>`;
+  if (peer) html += `<p class="dim">แสดงผล เวลา และหน่วยความจำ โดยไม่เปิดเผยข้อมูลทดสอบหรือข้อความวินิจฉัยส่วนตัว</p>`;
+  if (!peer && r.verdict === "CE" && r.detail) html += `<div class="detail-cell"><pre>${esc(r.detail)}</pre></div>`;
+  if (rows.length) {
+    html += `<div class="inspection-table-scroll" tabindex="0" role="region" aria-label="ตารางผลการตรวจรายเทสต์"><table class="tests"><thead><tr>` +
+      `<th scope="col">เทสต์</th><th scope="col">ผล</th><th scope="col">เวลา (วินาที)</th><th scope="col">CPU (วินาที)</th><th scope="col">แรม (MB)</th></tr></thead><tbody>`;
+    rows.forEach((row, i) => {
+      html += `<tr><th scope="row">${String(i + 1).padStart(2, "0")}</th><td>${badgeVerdict(row.verdict)}</td>` +
+        `<td>${measure(row.wall_s, "")}</td><td>${measure(row.cpu_s, "")}</td><td>${measure(row.peak_mb, "")}</td></tr>`;
+      // Peers never receive detailed feedback. Keep the browser boundary just
+      // as narrow even if an older or malformed response includes extra fields.
+      if (!peer && row.verdict !== "AC") html += `<tr><td colspan="5" class="detail-cell"><details><summary>รายละเอียดเทสต์ ${i + 1}</summary>${detailHtml(row)}</details></td></tr>`;
+    });
+    html += `</tbody></table></div>`;
+  } else html += `<p class="dim">ไม่มีผลรายเทสต์ที่บันทึกไว้${r.verdict === "CE" ? " เนื่องจากคอมไพล์ไม่ผ่าน" : ""}</p>`;
+  html += `</section>`;
+  $("submission-body").innerHTML = html;
+  bindCopyButtons($("submission-body"));
+  const copy = $("submission-copy"), wrap = $("submission-wrap");
+  copy.disabled = wrap.disabled = !code;
+  copy.onclick = async () => {
+    try { await navigator.clipboard.writeText(code); toast("คัดลอกโค้ดแล้ว"); }
+    catch (e) { toast("คัดลอกไม่สำเร็จ เลือกโค้ดแล้วคัดลอกด้วยแป้นพิมพ์ได้"); }
+  };
+  wrap.onclick = () => {
+    const on = $("submission-source").classList.toggle("source-wrapped");
+    wrap.setAttribute("aria-pressed", on ? "true" : "false");
+  };
 }
 
 /* ---------------- contests ---------------- */
@@ -3141,7 +3273,7 @@ function buildProblemSelect(sel, multiple) {
 }
 
 /* ---------------- admin page (แยกจาก Settings, เห็นเฉพาะ admin) ---------------- */
-const ADMIN_TABS = ["overview", "contests", "reports", "tools"];
+const ADMIN_TABS = ["overview", "history", "contests", "reports", "admins", "tools"];
 
 function showAdminTab(name) {
   if (!ADMIN_TABS.includes(name)) name = "overview";
@@ -3161,9 +3293,17 @@ function showAdminTab(name) {
     state.adminOverviewLoaded = true;
     loadOverview();
   }
+  if (name === "history" && !state.adminHistoryLoaded) {
+    state.adminHistoryLoaded = true;
+    loadAdminHistory();
+  }
   if (name === "reports" && !state.adminReportsLoaded) {
     state.adminReportsLoaded = true;
     loadAdminReports();
+  }
+  if (name === "admins" && !state.adminAdminsLoaded) {
+    state.adminAdminsLoaded = true;
+    loadAdmins();
   }
   if (name === "tools" && !state.adminToolsBuilt) {
     state.adminToolsBuilt = true;
@@ -3172,11 +3312,20 @@ function showAdminTab(name) {
 }
 
 function renderAdmin() {
-  if (!state.is_admin) {
-    location.hash = "#/";
+  const pending = !state.authReady || state.authError;
+  $("admin-session-status").classList.toggle("hidden", !pending);
+  $("admin-content").classList.toggle("hidden", pending || !state.is_admin);
+  if (pending) {
+    $("admin-session-status").textContent = state.authError
+      ? "ตรวจสอบสิทธิ์ไม่สำเร็จ กรุณาโหลดหน้าใหม่อีกครั้ง"
+      : "กำลังตรวจสอบสิทธิ์ผู้ดูแล…";
     return;
   }
-  ["overview-card", "contest-card", "admin-card", "admin-tools-card"].forEach((id) => {
+  if (!state.is_admin) {
+    _nav("#/", "replace");
+    return;
+  }
+  ["overview-card", "admin-history-card", "contest-card", "admin-card", "admins-card", "admin-tools-card"].forEach((id) => {
     const el = $(id);
     if (el) el.classList.remove("hidden");
   });
@@ -3189,7 +3338,9 @@ function renderAdmin() {
       const label = refresh.querySelector("span");
       refresh.disabled = true;
       if (label) label.textContent = "กำลังโหลด…";
-      await Promise.all([loadOverview(), loadAdminContests(), loadAdminReports()]);
+      const jobs = [loadOverview(), loadAdminContests(), loadAdminReports()];
+      if (state.adminAdminsLoaded) jobs.push(loadAdmins());
+      await Promise.all(jobs);
       state.adminReportsLoaded = true;
       state.adminOverviewLoaded = true;
       if (label) label.textContent = "รีเฟรช";
@@ -3198,13 +3349,227 @@ function renderAdmin() {
   }
   const repRefresh = $("admin-reports-refresh");
   if (repRefresh) repRefresh.onclick = loadAdminReports;
+  const admRefresh = $("admins-refresh");
+  if (admRefresh) admRefresh.onclick = loadAdmins;
+  const addForm = $("admin-add-form");
+  if (addForm) addForm.onsubmit = addAdminByEmail;
+  const histRefresh = $("admin-history-refresh");
+  if (histRefresh) histRefresh.onclick = () => loadAdminHistory();
+  const histSize = $("admin-history-size");
+  if (histSize && !histSize.dataset.bound) {
+    histSize.dataset.bound = "1";
+    histSize.value = String(state.adminHistoryPerPage || 20);
+    histSize.onchange = () => {
+      state.adminHistoryPage = 1;
+      state.adminHistoryPerPage = Number(histSize.value) || 20;
+      loadAdminHistory();
+    };
+  }
+  const histProblem = $("admin-history-problem");
+  if (histProblem && !state.adminHistoryBuilt) {
+    buildProblemSelect(histProblem);
+    histProblem.insertAdjacentHTML("afterbegin", '<option value="">ทุกข้อ</option>');
+    histProblem.value = state.adminHistoryProblem || "";
+    state.adminHistoryBuilt = true;
+    histProblem.onchange = () => {
+      state.adminHistoryProblem = histProblem.value;
+      state.adminHistoryPage = 1;
+      loadAdminHistory();
+    };
+  }
   state.adminReportsLoaded = false;
   state.adminToolsBuilt = false;
   state.adminOverviewLoaded = false;
+  state.adminAdminsLoaded = false;
+  state.adminHistoryLoaded = false;
   // The contest tab shows a count badge, so its list still starts immediately;
   // only the panel bodies wait until their tab is opened.
   loadAdminContests();
   showAdminTab(state.adminTab || "overview");
+}
+
+function setAdminsStatus(text, isError) {
+  const el = $("admins-status");
+  if (!el) return;
+  el.textContent = text || "";
+  el.className = "status " + (isError ? "dash-error" : "dim");
+}
+
+async function loadAdmins() {
+  const box = $("admins-list");
+  if (!box) return;
+  box.classList.add("dim");
+  box.innerHTML = skel(3);
+  try {
+    const d = await apiGet("/api/admin/admins");
+    const rows = d.admins || [];
+    setDashCount("admins-count", `${rows.length} คน`);
+    const dl = $("admin-candidates");
+    if (dl) {
+      dl.innerHTML = (d.candidates || []).map((c) =>
+        `<option value="${esc(c.email)}">${esc(c.name || c.email)}</option>`).join("");
+    }
+    box.classList.remove("dim");
+    if (!rows.length) {
+      box.innerHTML = `<p class="dash-empty">ยังไม่มีผู้ดูแล</p>`;
+      return;
+    }
+    box.innerHTML = rows.map((r) => {
+      const env = r.source === "env";
+      const removable = !!r.removable && !env;
+      const mine = (state.user && (state.user.email || "").toLowerCase() === r.email);
+      return `<article class="admin-report">` +
+        `<div class="admin-report-head">` +
+        `<span class="admin-report-problem">${esc(r.email)}</span>` +
+        (env ? badge("ADMIN_EMAILS", "OK") : badge("ฐานข้อมูล", "upcoming")) +
+        (mine ? `<span class="diff-tag">คุณ</span>` : "") +
+        (removable ? `<button class="ghost-btn" type="button" data-admin-remove="${esc(r.email)}">ถอดสิทธิ์</button>` : "") +
+        `</div>` +
+        `<div class="admin-report-meta">` +
+        `<span>${env ? "ถาวรจาก ADMIN_EMAILS" : "เพิ่มโดย " + esc(r.created_by || "ไม่ระบุ")}</span>` +
+        (r.created_at ? `<span>${esc(shortTime(r.created_at))}</span>` : "") +
+        `</div></article>`;
+    }).join("");
+    box.querySelectorAll("[data-admin-remove]").forEach((b) => {
+      b.onclick = () => removeAdmin(b.dataset.adminRemove, b);
+    });
+  } catch (e) {
+    box.classList.remove("dim");
+    setDashCount("admins-count", "—");
+    box.innerHTML = `<p class="dash-empty dash-error">โหลดไม่ได้: ${esc(e.message)}</p>`;
+  }
+}
+
+async function addAdminByEmail(ev) {
+  ev.preventDefault();
+  const input = $("admin-add-email");
+  const btn = $("admin-add-btn");
+  const email = (input && input.value || "").trim().toLowerCase();
+  if (!email) return;
+  if (btn) btn.disabled = true;
+  setAdminsStatus("กำลังเพิ่ม…", false);
+  try {
+    const d = await apiPostJson("/api/admin/admins", { email });
+    if (input) input.value = "";
+    setAdminsStatus(`เพิ่ม ${d.email} เป็นผู้ดูแลแล้ว — มีผลทันที`, false);
+    toast("เพิ่มผู้ดูแลแล้ว", "t-ok");
+    await loadAdmins();
+  } catch (e) {
+    setAdminsStatus(e.message, true);
+    toast("เพิ่มผู้ดูแลไม่สำเร็จ: " + e.message, "t-err");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function removeAdmin(email, btn) {
+  if (!email) return;
+  if (!confirm(`ถอดสิทธิ์ผู้ดูแลของ ${email}?`)) return;
+  if (btn) btn.disabled = true;
+  try {
+    await apiDelete(`/api/admin/admins/${encodeURIComponent(email)}`);
+    toast("ถอดสิทธิ์แล้ว", "t-ok");
+    await loadAdmins();
+    if (state.user && (state.user.email || "").toLowerCase() === email) {
+      await refreshMe();
+    }
+  } catch (e) {
+    if (btn) btn.disabled = false;
+    toast("ถอดสิทธิ์ไม่สำเร็จ: " + e.message, "t-err");
+  }
+}
+
+function adminHistoryTable(rows) {
+  let html = `<table class="tests"><thead><tr>
+    <th>เวลา</th><th>ผู้ส่ง</th><th>ข้อ</th><th>ภาษา</th><th>ผล</th><th>คะแนน</th><th></th>
+  </tr></thead><tbody>`;
+  rows.forEach((r) => {
+    html += `<tr>
+      <td title="${esc(r.created_at || "")}">${esc(shortTime(r.created_at))}</td>
+      <td><div>${esc(r.name || "—")}</div><div class="admin-user-email">${esc(r.user_email || "")}</div></td>
+      <td>${problemCell(r.problem)}</td>
+      <td>${esc(r.language || "—")}</td>
+      <td>${badgeVerdict(rowVerdictCode(r))}</td>
+      <td>${r.passed}/${r.total} (<span class="${scoreCls(r.score)}">${r.score}</span>)</td>
+      <td>${r.id ? `<button class="icon-btn" data-view="${esc(r.id)}" title="ดูผลการตรวจ" aria-label="ดูผลการตรวจ">${icon("eye")}</button>` : ""}</td>
+    </tr>`;
+  });
+  return html + `</tbody></table>`;
+}
+
+function renderAdminHistoryPager(page, pages) {
+  const box = $("admin-history-pager");
+  if (!box) return;
+  const btn = (p, label, disabled) =>
+    `<button class="ghost-btn" type="button" data-history-page="${p}" ${disabled ? "disabled" : ""}>${label}</button>`;
+  box.innerHTML = btn(1, "« แรก", page <= 1) +
+    btn(page - 1, "ก่อนหน้า", page <= 1) +
+    `<span class="pager-info">หน้า ${page} / ${pages}</span>` +
+    btn(page + 1, "ถัดไป", page >= pages) +
+    btn(pages, "สุดท้าย »", page >= pages);
+  box.querySelectorAll("button[data-history-page]").forEach((b) => {
+    b.onclick = () => {
+      const p = Number(b.dataset.historyPage);
+      if (!p || p === state.adminHistoryPage) return;
+      state.adminHistoryPage = p;
+      loadAdminHistory();
+    };
+  });
+}
+
+async function loadAdminHistory() {
+  const body = $("admin-history-body");
+  if (!body) return;
+  const sizes = [20, 50, 100];
+  const per = sizes.includes(Number(state.adminHistoryPerPage))
+    ? Number(state.adminHistoryPerPage) : 20;
+  const page = Math.max(1, Number(state.adminHistoryPage) || 1);
+  const filter = $("admin-history-problem");
+  const pid = filter ? filter.value : "";
+  state.adminHistoryPerPage = per;
+  state.adminHistoryPage = page;
+  body.classList.add("dim");
+  body.innerHTML = skel(8);
+  const meta = $("admin-history-meta");
+  if (meta) meta.textContent = "กำลังโหลด…";
+  const pager = $("admin-history-pager");
+  if (pager) pager.innerHTML = "";
+  try {
+    let path = `/api/admin/submissions?page=${page}&per_page=${per}`;
+    if (pid) path += `&problem=${encodeURIComponent(pid)}`;
+    const d = await apiGet(path);
+    if (!d.configured) {
+      body.innerHTML = `<span class="dim">ยังไม่เปิด history — ตั้งค่า SUPABASE_URL / SUPABASE_KEY ที่ backend</span>`;
+      if (meta) meta.textContent = "";
+      setDashCount("admin-history-count", "—");
+      return;
+    }
+    const total = Number(d.total) || 0;
+    const pages = Number(d.pages) || 1;
+    state.adminHistoryPage = Number(d.page) || 1;
+    state.adminHistoryPerPage = Number(d.per_page) || per;
+    setDashCount("admin-history-count", `${total.toLocaleString("th-TH")} รายการ`);
+    if (meta) {
+      meta.textContent = total
+        ? `ทั้งหมด ${total.toLocaleString("th-TH")} รายการ · หน้า ${d.page} / ${pages} · ${d.per_page} รายการต่อหน้า`
+        : "ยังไม่มีการส่ง";
+    }
+    const rows = d.submissions || [];
+    if (!rows.length) {
+      body.innerHTML = `<span class="dim">ไม่พบประวัติการส่ง${pid ? "ของข้อนี้" : ""}</span>`;
+      renderAdminHistoryPager(Number(d.page) || 1, pages);
+      return;
+    }
+    body.classList.remove("dim");
+    body.innerHTML = adminHistoryTable(rows);
+    bindViewButtons(body);
+    renderAdminHistoryPager(Number(d.page) || 1, pages);
+  } catch (e) {
+    body.classList.remove("dim");
+    body.innerHTML = `<span class="dim">โหลดประวัติไม่ได้: ${esc(e.message)}</span>`;
+    if (meta) meta.textContent = "";
+    setDashCount("admin-history-count", "—");
+  }
 }
 
 function renderAdminTools() {
@@ -3611,7 +3976,8 @@ $("ct-save").onclick = async () => {
 };
 
 /* ---------------- init (cache-first, parallel, non-blocking) ---------------- */
-const PROBLEMS_CACHE_KEY = "ng_problems_v2";
+// Catalog numbers changed in the approved difficulty-order migration.
+const PROBLEMS_CACHE_KEY = "ng_problems_v3";
 const PROBLEMS_CACHE_TTL = 3600 * 1000;
 
 function loadProblemsCache() {
@@ -3855,22 +4221,14 @@ async function init() {
   // round trip on every navigation/reload.
   const [data] = await Promise.all([
     problemsFresh ? Promise.resolve(null) : apiGet("/api/problems").catch(() => null),
-    refreshMe(),
+    restoreInitialSession(),
     healthP,
   ]);
-  if (healthErr && !state.problems.length) {
+  if (healthErr && !state.problems.length && location.hash !== "#/admin") {
     show("home");
     document.querySelector("#view-home .hero .lede").textContent =
       "เชื่อมต่อระบบไม่ได้ในขณะนี้ ลองโหลดหน้าอีกครั้งในอีกสักครู่";
     return;
-  }
-  // Session cookie gone but remember-me alive (browser cleanup, expiry):
-  // silently restore the login before the first route render.
-  if (!state.user) {
-    try {
-      const r = await apiGet("/api/auth/restore");
-      if (r && r.restored) await refreshMe();
-    } catch (e) { /* stay logged out */ }
   }
   maybeShowCookieBanner();
   // The identity arrives after the first route render, so a view opened

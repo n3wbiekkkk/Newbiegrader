@@ -1,7 +1,9 @@
 # Current production architecture
 
-Updated 2026-10-19 after the operator-approved correctness/cache rollout and the
-backend problem-file migration.
+Updated 2026-10-20 after the operator-approved problem-file publication and
+catalog renumbering. The backend application remains the existing
+`f88a406-peer-learning-20261020` release; this catalog release did not deploy
+application code.
 
 - **Frontend:** Cloudflare Pages, `https://newbiegrader.pages.dev`; vanilla SPA.
 - **API route:** same-origin Pages Function → private Cloudflare Worker/service
@@ -15,12 +17,17 @@ backend problem-file migration.
   and read with `GRADER_FILE_STORAGE=local` (release `609bbf1`). Supabase
   Storage objects are retained only as an explicitly selected recovery source;
   there is no runtime cloud-file fallback in local mode.
+- **Catalog:** 89 problems / 1,594 cases / 89 selected PDFs, with 3,532 active
+  logical file objects. Difficulty numbering: easy 1–47, medium 48–81, hard 82–89.
+  Slug IDs remain stable; relational metadata remains in Supabase.
 - **Vercel:** not used in this production architecture.
 - **JustRunMy:** retired from production; stopped legacy material is retained
   only as historical recovery evidence. Current application rollback stays on
   AWS. There is no automatic legacy-origin retry/fallback.
 
-Current release IDs, commands executed, tests, backup and rollback evidence:
+Current catalog, commands executed, tests, backup and rollback evidence:
+[20-problem catalog release](releases/PROBLEM_EXPANSION_2026-10-20.md),
+[earlier missing-file repair](releases/PROBLEM_69_FILES_2026-10-20.md),
 [backend problem-file release record](releases/PRODUCTION_BACKEND_FILES_2026-10-19.md)
 and the earlier [correctness/cache record](releases/PRODUCTION_CORRECTNESS_RELEASE_2026-10-19.md).
 Historical migration checkpoints in other documents describe their original

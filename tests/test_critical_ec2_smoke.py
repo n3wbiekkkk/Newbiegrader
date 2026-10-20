@@ -19,8 +19,10 @@ SPEC.loader.exec_module(smoke)
 
 
 class SmokeCredentialBoundary(unittest.TestCase):
-    def exercise(self, production):
+    def exercise(self, production, expected_count=68, reported_count=None):
         requests = []
+        if reported_count is None:
+            reported_count = expected_count
         key = 'synthetic-staging-test-key-not-a-secret-0000'
 
         def curl(command, **kwargs):
@@ -37,9 +39,9 @@ class SmokeCredentialBoundary(unittest.TestCase):
             status, body, headers = 200, {}, []
             path = url.path
             if path == '/api/health':
-                body = {'ok': True, 'count': 68}
+                body = {'ok': True, 'count': reported_count}
             elif path == '/api/version':
-                body = {'problems': 68, 'system': {'role': 'api', 'queue_mode': 'database'}}
+                body = {'problems': reported_count, 'system': {'role': 'api', 'queue_mode': 'database'}}
             elif path == '/api/auth/me':
                 body = {'user': None, 'is_admin': False}
                 headers.append(('Cache-Control', 'no-store'))
@@ -83,6 +85,8 @@ class SmokeCredentialBoundary(unittest.TestCase):
                 access.write_text(json.dumps({'STAGING_ACCESS_KEY': key}))
                 access.chmod(0o600)
             argv = ['smoke_https.py', '--access-file', str(access), '--expected-samesite', 'none']
+            if expected_count != 68:
+                argv.extend(['--expected-problems', str(expected_count)])
             if production:
                 argv.append('--production')
             output = io.StringIO()
@@ -107,6 +111,13 @@ class SmokeCredentialBoundary(unittest.TestCase):
 
     def test_staging_keeps_its_missing_and_wrong_key_checks(self):
         self.exercise(False)
+
+    def test_production_catalog_count_can_be_reviewed_explicitly(self):
+        self.exercise(True, expected_count=89)
+
+    def test_missing_catalog_entries_fail_the_production_smoke(self):
+        with self.assertRaisesRegex(RuntimeError, 'public GET health'):
+            self.exercise(True, expected_count=89, reported_count=68)
 
 
 if __name__ == '__main__':

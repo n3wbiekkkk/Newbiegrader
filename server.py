@@ -19,6 +19,7 @@ import hmac
 import ipaddress
 import json
 import logging
+import math
 import os
 import re
 import secrets
@@ -268,12 +269,21 @@ async def _lifespan(_app: "FastAPI"):
         print(f"[web] local job recovery failed: {e}", file=sys.stderr)
     workers = ([] if GRADER_ROLE == "api" else
                [asyncio.create_task(_judge_worker(i)) for i in range(JUDGE_WORKERS)])
+    # Realtime admins live in Postgres; keep a small in-process snapshot so the
+    # many synchronous _is_admin() checks never wait on the network.
+    admin_task = None
+    if _sb is not None:
+        await asyncio.to_thread(_load_db_admins_sync)
+        admin_task = asyncio.create_task(_admin_cache_loop())
     try:
         yield
     finally:
         for w in workers:
             w.cancel()
         await asyncio.gather(*workers, return_exceptions=True)
+        if admin_task is not None:
+            admin_task.cancel()
+            await asyncio.gather(admin_task, return_exceptions=True)
 
 
 class RequestBodyLimit:
@@ -353,6 +363,9 @@ async def _security_headers(request: Request, call_next):
     if request.url.path.startswith("/api/auth/"):
         resp.headers["Cache-Control"] = "no-store"
         resp.headers["Pragma"] = "no-cache"
+    if request.url.path == "/api/history" or request.url.path.startswith("/api/history/"):
+        resp.headers["Cache-Control"] = "private, no-store"
+        resp.headers["Vary"] = "Cookie"
     resp.headers["Content-Security-Policy"] = (
         "default-src 'self'; script-src 'self'; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
@@ -1569,12 +1582,62 @@ GOOGLE_REDIRECT_URI = os.environ.get(
 FRONTEND_URL = os.environ.get(
     "FRONTEND_URL", "https://newbiegrader.pages.dev").rstrip("/")
 
+# ADMIN_EMAILS is the immutable bootstrap set: those accounts always keep
+# admin access, even if the database is down or a row is deleted by mistake.
 ADMIN_EMAILS = {e.strip().lower() for e in os.environ.get(
     "ADMIN_EMAILS", "sphetpitak@gmail.com").split(",") if e.strip()}
 
+# Additional admins are managed from the admin page and stored in public.admins.
+# _is_admin() stays synchronous and network-free: this snapshot is refreshed by
+# a background task (and updated immediately after an add/remove).
+_ADMIN_CACHE_TTL = max(2.0, float(os.environ.get("GRADER_ADMIN_CACHE_TTL", "5") or 5))
+_db_admin_emails: frozenset = frozenset()
+_admin_cache_error = False
+
+
+def _norm_email(value: object) -> str:
+    return str(value or "").strip().lower()
+
+
+def _admin_email_valid(email: str) -> bool:
+    return (0 < len(email) <= 254
+            and re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email) is not None)
+
+
+def _load_db_admins_sync() -> bool:
+    """Refresh the DB-backed admin snapshot; env bootstrap is always kept."""
+    global _db_admin_emails, _admin_cache_error
+    if _sb is None:
+        _db_admin_emails = frozenset()
+        return False
+    try:
+        res = _sb.table("admins").select("email").execute()
+        _db_admin_emails = frozenset(
+            _norm_email(row.get("email")) for row in (res.data or [])
+            if _norm_email(row.get("email")))
+        _admin_cache_error = False
+        return True
+    except Exception as e:
+        # Fail closed for DB-backed admins: never keep stale grants when the
+        # list cannot be verified. Env bootstrap accounts stay active, and the
+        # error is logged once per outage instead of every few seconds.
+        _db_admin_emails = frozenset()
+        if not _admin_cache_error:
+            print(f"[web] admin list unavailable (env admins still active): {e}",
+                  file=sys.stderr)
+            _admin_cache_error = True
+        return False
+
+
+async def _admin_cache_loop() -> None:
+    while True:
+        await asyncio.sleep(_ADMIN_CACHE_TTL)
+        await asyncio.to_thread(_load_db_admins_sync)
+
 
 def _is_admin(email: str) -> bool:
-    return bool(email) and email.lower() in ADMIN_EMAILS
+    value = _norm_email(email)
+    return bool(value) and (value in ADMIN_EMAILS or value in _db_admin_emails)
 
 
 REPORT_KINDS = ("statement", "tests", "other")
@@ -3332,6 +3395,108 @@ async def run_custom(
     raise HTTPException(status_code=504, detail="run timed out waiting for judge")
 
 
+_CASE_VERDICTS = frozenset({"AC", "WA", "TLE", "MLE", "OLE", "CE", "RE"})
+_COMPLETED_SUBMISSION_VERDICTS = _CASE_VERDICTS | {"REJECTED"}
+_HISTORY_PUBLIC_FIELDS = (
+    "id", "created_at", "problem", "language", "name", "filename", "verdict",
+    "accepted", "passed", "total", "score", "counts", "contest_id",
+)
+
+
+def _completed_peer_submission(row: dict) -> bool:
+    # submissions stores completed judge results, unlike judge_jobs. Explicit
+    # non-completed status/kind evidence in imported rows must still fail closed.
+    return (row.get("kind", "submit") in {"submit", "rejudge"}
+            and row.get("status", "done") == "done"
+            and row.get("verdict") in _COMPLETED_SUBMISSION_VERDICTS)
+
+
+def _peer_problem_policy(pid: str, contest_id: Optional[str] = None) -> str:
+    """Fresh visibility and contest decision; empty string means unprotected."""
+    prob = PROBLEMS.get(pid)
+    if prob is None or not getattr(prob, "is_published", True):
+        return "hidden"
+    try:
+        # Do not use the TTL cache or the legacy missing-table=empty fallback:
+        # unavailable contest policy cannot authorize new peer source access.
+        rows = _all_contest_rows()
+        if not isinstance(rows, list):
+            return "unavailable"
+        related = []
+        now = dt.datetime.now(dt.timezone.utc)
+        for row in rows:
+            if not isinstance(row, dict) or not isinstance(row.get("problems"), list):
+                return "unavailable"
+            if pid not in {_resolve_pid(str(token)) for token in row["problems"]}:
+                continue
+            try:
+                start = dt.datetime.fromisoformat(str(row.get("starts_at")).replace("Z", "+00:00"))
+                end = dt.datetime.fromisoformat(str(row.get("ends_at")).replace("Z", "+00:00"))
+                if start.utcoffset() is None or end.utcoffset() is None or end <= start:
+                    return "contest"
+            except (TypeError, ValueError, OverflowError):
+                return "contest"
+            if now <= end:
+                return "contest"  # Both upcoming and running contests protect it.
+            related.append(row)
+        if contest_id and not any(row.get("id") == contest_id for row in related):
+            return "contest"  # Missing/deleted target contest policy is unknown.
+        # Every related contest is now known to have ended, so it grants the
+        # same problem visibility as the existing started-contest policy.
+        if prob.hidden and not related:
+            return "hidden"
+        return ""
+    except Exception:
+        return "unavailable"
+
+
+def _peer_inspection_access(email: str, pid: str, contest_id: Optional[str] = None) -> dict:
+    """Source access for learning: any signed-in student, no attempt gate.
+
+    The completed-row check and the narrower peer serializer stay in the
+    detail route. Hidden/unpublished problems and problems in upcoming or
+    running contests remain protected by the fresh policy check.
+    """
+    if _is_admin(email):
+        return {"allowed": True, "reason": ""}
+    if not email:
+        return {"allowed": False, "reason": "login"}
+    reason = _peer_problem_policy(pid, contest_id)
+    return {"allowed": not reason, "reason": reason}
+
+
+def _public_history_row(row: dict) -> dict:
+    """Allowlist even when a storage adapter returns more than SELECT asked for."""
+    public = {key: row[key] for key in _HISTORY_PUBLIC_FIELDS if key in row
+              and (row[key] is None or isinstance(row[key], (str, int, float, bool)))}
+    counts = row.get("counts")
+    public["counts"] = {key: value for key, value in counts.items()
+                        if key in _CASE_VERDICTS and type(value) is int and value >= 0} \
+        if isinstance(counts, dict) else {}
+    # Old profiles/submissions sometimes fell back to the authentication email.
+    name = row.get("name")
+    public["name"] = name if isinstance(name, str) and name.strip() and "@" not in name else "นักเรียน"
+    return public
+
+
+def _peer_submission_detail(row: dict) -> dict:
+    public = _public_history_row(row)
+    public["code"] = row.get("code") if isinstance(row.get("code"), str) else ""
+    public["peer_inspection"] = True
+    public["results"] = []
+    for test in row.get("results", []) if isinstance(row.get("results"), list) else []:
+        if not isinstance(test, dict):
+            continue
+        verdict = test.get("verdict")
+        safe = {"verdict": verdict if isinstance(verdict, str) and verdict in _CASE_VERDICTS else "UNKNOWN",
+                "hidden": True}
+        for key in ("wall_s", "cpu_s", "peak_mb"):
+            value = test.get(key)
+            safe[key] = value if type(value) in (int, float) and math.isfinite(value) and value >= 0 else None
+        public["results"].append(safe)
+    return public
+
+
 @app.get("/api/history")
 async def history(request: Request, problem: Optional[str] = None, limit: int = 20,
                   mine: bool = False) -> dict:
@@ -3348,9 +3513,7 @@ async def history(request: Request, problem: Optional[str] = None, limit: int = 
 
     def _fetch():
         q = _sb.table("submissions").select(
-            "id,created_at,problem,language,name,filename,verdict,accepted,passed,"
-            "total,score,counts,contest_id"
-        ).order("created_at", desc=True).limit(limit)
+            ",".join(_HISTORY_PUBLIC_FIELDS)).order("created_at", desc=True).limit(limit)
         if wanted_problem:
             q = q.eq("problem", wanted_problem)
         if mine:
@@ -3368,9 +3531,16 @@ async def history(request: Request, problem: Optional[str] = None, limit: int = 
         # The public feed must not advertise contest-only problems.
         hidden = _hidden_pids()
         contests = {r.get("id"): r for r in _contest_policy_rows()}
-        rows = [r for r in rows if (r.get("problem") or "") not in hidden
+        # A hidden problem reached through an ended contest still has its
+        # per-problem feed. The global feed must not advertise hidden tasks.
+        visible_problem = wanted_problem and _visible_to(wanted_problem, email)
+        rows = [r for r in rows if ((r.get("problem") or "") not in hidden
+                or (visible_problem and r.get("problem") == wanted_problem))
                 and not _contest_result_frozen(contests.get(r.get("contest_id")), r)]
-    return {"configured": True, "submissions": rows}
+    payload = {"configured": True, "submissions": [_public_history_row(row) for row in rows]}
+    if wanted_problem and not mine:
+        payload["peer_access"] = await asyncio.to_thread(_peer_inspection_access, email, wanted_problem)
+    return payload
 
 
 @app.get("/api/history/{sid}")
@@ -3390,10 +3560,16 @@ async def history_detail(request: Request, sid: str) -> dict:
     if not rows:
         raise HTTPException(status_code=404, detail="submission not found")
     row = dict(rows[0])
-    # Your own submissions, or any submission if you are an admin. Nobody else:
-    # a row carries the author's source code.
+    # Owners/admins retain their existing feedback. Peers receive a narrower,
+    # explicitly serialized source/results view after fresh authorization.
     if row.get("user_email") != email and not _is_admin(email):
-        raise HTTPException(status_code=403, detail="not your submission")
+        access = await asyncio.to_thread(_peer_inspection_access, email,
+                                         row.get("problem", ""), row.get("contest_id"))
+        if not access["allowed"] or not _completed_peer_submission(row):
+            reason = access["reason"] or "incomplete submission"
+            raise HTTPException(status_code=503 if reason == "unavailable" else 403,
+                                detail="peer inspection locked: " + reason)
+        return _peer_submission_detail(row)
     row.pop("user_email", None)  # never expose login emails publicly
     reveal = REVEAL_SAMPLES
     if not row.get("contest_id") and any(r.get("practice_feedback") is True for r in row.get("results", [])):
@@ -3483,6 +3659,167 @@ async def set_report_status(request: Request, rid: str) -> dict:
 _boot_time = time.monotonic()
 
 
+# ---- admin: realtime admin management ----
+def _admin_rows_sync() -> list:
+    res = _sb.table("admins").select(
+        "email,created_at,created_by").order("created_at").execute()
+    rows = []
+    for row in res.data or []:
+        email = _norm_email(row.get("email"))
+        if email:
+            rows.append({"email": email,
+                         "created_at": row.get("created_at"),
+                         "created_by": row.get("created_by") or ""})
+    return rows
+
+
+@app.get("/api/admin/admins")
+async def admin_list_admins(request: Request) -> dict:
+    global _db_admin_emails
+    user = request.session.get("user") or {}
+    if not _is_admin(user.get("email", "")):
+        raise HTTPException(status_code=403, detail="admin only")
+    you = _norm_email(user.get("email"))
+    configured = _sb is not None
+    db_rows: list = []
+    if configured:
+        try:
+            db_rows = await asyncio.to_thread(_admin_rows_sync)
+        except Exception as e:
+            raise _db_err(e)
+        _db_admin_emails = frozenset(row["email"] for row in db_rows)
+    seen = set()
+    admins = []
+    for email in sorted(ADMIN_EMAILS):
+        admins.append({"email": email, "source": "env", "removable": False,
+                       "created_at": None, "created_by": "ADMIN_EMAILS"})
+        seen.add(email)
+    for row in db_rows:
+        if row["email"] in seen:
+            continue
+        admins.append({"email": row["email"], "source": "database",
+                       "removable": row["email"] != you,
+                       "created_at": row.get("created_at"),
+                       "created_by": row.get("created_by") or ""})
+        seen.add(row["email"])
+    candidates = []
+    if configured:
+        try:
+            res = await asyncio.to_thread(
+                lambda: _sb.table("users").select("email,name").order(
+                    "created_at", desc=True).limit(100).execute())
+            for row in res.data or []:
+                email = _norm_email(row.get("email"))
+                if email and email not in seen:
+                    candidates.append({"email": email,
+                                       "name": row.get("name") or ""})
+        except Exception:
+            candidates = []
+    return {"configured": configured, "you": you, "admins": admins,
+            "candidates": candidates}
+
+
+@app.post("/api/admin/admins")
+async def admin_add_admin(request: Request) -> dict:
+    global _db_admin_emails
+    user = request.session.get("user") or {}
+    actor = _norm_email(user.get("email"))
+    if not _is_admin(actor):
+        raise HTTPException(status_code=403, detail="admin only")
+    if _sb is None:
+        raise HTTPException(status_code=404, detail="supabase not configured")
+    body = await _json_object(request)
+    email = _norm_email(body.get("email"))
+    if not _admin_email_valid(email):
+        raise HTTPException(status_code=400, detail="invalid email")
+    if email in ADMIN_EMAILS:
+        raise HTTPException(status_code=409,
+                            detail="this email is a bootstrap admin (ADMIN_EMAILS)")
+    if email in _db_admin_emails:
+        raise HTTPException(status_code=409, detail="already an admin")
+    try:
+        await asyncio.to_thread(
+            lambda: _sb.table("admins").insert(
+                {"email": email, "created_by": actor}).execute())
+    except Exception as e:
+        low = str(e).lower()
+        if "23505" in low or "duplicate" in low or "unique" in low:
+            raise HTTPException(status_code=409, detail="already an admin")
+        raise _db_err(e)
+    _db_admin_emails = _db_admin_emails | frozenset({email})
+    return {"ok": True, "email": email, "source": "database"}
+
+
+@app.delete("/api/admin/admins/{email}")
+async def admin_remove_admin(request: Request, email: str) -> dict:
+    global _db_admin_emails
+    user = request.session.get("user") or {}
+    actor = _norm_email(user.get("email"))
+    if not _is_admin(actor):
+        raise HTTPException(status_code=403, detail="admin only")
+    target = _norm_email(email)
+    if not _admin_email_valid(target):
+        raise HTTPException(status_code=400, detail="invalid email")
+    if target in ADMIN_EMAILS:
+        raise HTTPException(
+            status_code=409,
+            detail="bootstrap admins are fixed in ADMIN_EMAILS on the server")
+    if target == actor:
+        raise HTTPException(status_code=400,
+                            detail="cannot remove your own admin access")
+    if _sb is None:
+        raise HTTPException(status_code=404, detail="supabase not configured")
+    if target not in _db_admin_emails:
+        await asyncio.to_thread(_load_db_admins_sync)
+    if target not in _db_admin_emails:
+        raise HTTPException(status_code=404, detail="admin not found")
+    try:
+        await asyncio.to_thread(
+            lambda: _sb.table("admins").delete().eq("email", target).execute())
+    except Exception as e:
+        raise _db_err(e)
+    _db_admin_emails = frozenset(e for e in _db_admin_emails if e != target)
+    return {"ok": True, "email": target}
+
+
+@app.get("/api/admin/submissions")
+async def admin_submissions(request: Request, page: int = 1, per_page: int = 20,
+                            problem: Optional[str] = None) -> dict:
+    """Paginated all-user submission history (metadata only, never source)."""
+    user = request.session.get("user") or {}
+    if not _is_admin(user.get("email", "")):
+        raise HTTPException(status_code=403, detail="admin only")
+    if _sb is None:
+        raise HTTPException(status_code=404, detail="supabase not configured")
+    if per_page not in (20, 50, 100):
+        per_page = 20
+    page = max(1, page)
+    wanted_problem = _resolve_pid(problem) if problem else ""
+
+    def _fetch():
+        q = _sb.table("submissions").select(
+            "id,created_at,user_email,name,problem,language,verdict,accepted,"
+            "passed,total,score,counts,contest_id", count="exact")
+        if wanted_problem:
+            q = q.eq("problem", wanted_problem)
+        return q.order("created_at", desc=True).order("id", desc=True).range(
+            (page - 1) * per_page, page * per_page - 1).execute()
+
+    try:
+        res = await asyncio.to_thread(_fetch)
+    except Exception as e:
+        raise _db_err(e)
+    total = res.count or 0
+    return {
+        "configured": True,
+        "page": page,
+        "per_page": per_page,
+        "total": total,
+        "pages": max(1, (total + per_page - 1) // per_page),
+        "submissions": res.data or [],
+    }
+
+
 @app.get("/api/admin/overview")
 async def admin_overview(request: Request) -> dict:
     user = request.session.get("user") or {}
@@ -3496,7 +3833,7 @@ async def admin_overview(request: Request) -> dict:
         n_users = (_sb.table("users").select("email", count="exact").limit(1)
                    .execute().count) or 0
         subs = _sb.table("submissions").select(
-            "id,created_at,problem,name,language,verdict,accepted,score").order(
+            "id,created_at,problem,name,language,verdict,accepted,score,counts").order(
             "created_at", desc=True).limit(500).execute().data or []
         reps = _sb.table("reports").select("status", count="exact").limit(1).execute()
         rep_open = _sb.table("reports").select("id", count="exact").eq(
@@ -3555,7 +3892,8 @@ async def admin_overview(request: Request) -> dict:
         "per_problem": per_problem,
         "recent": [{k: r.get(k) for k in
                     ("id", "created_at", "problem", "name", "language",
-                     "verdict", "score")} for r in subs[:10]],
+                     "verdict", "accepted", "score", "counts")}
+                   for r in subs[:10]],
         "system": {"uptime_s": int(time.monotonic() - _boot_time),
                    "problems_loaded": sorted(PROBLEMS.keys()), **_host_limits()},
     }
@@ -3673,27 +4011,31 @@ def _all_contest_rows() -> List[dict]:
     rows: List[dict] = []
     offset = 0
     page = 500
-    guard = 0
-    while guard < 20:  # hard cap 10k contests, far above realistic use
-        guard += 1
-        try:
-            q = _sb.table("contests").select("*").order("starts_at", desc=True)
-            if hasattr(q, "range"):
-                res = q.range(offset, offset + page - 1).execute()
-            elif hasattr(q, "offset"):
-                res = q.offset(offset).limit(page).execute()
-            else:
-                raise RuntimeError("contest policy pagination unavailable")
-            batch = res.data or []
-            rows.extend(batch)
-            if len(batch) < page:
-                break
-            offset += page
-        except Exception:
-            raise
-    else:
-        raise RuntimeError("contest policy exceeds pagination budget")
-    return rows
+    for _ in range(1000):
+        # One extra row can establish that the 10k safety bound was exceeded;
+        # an empty response at exactly 10k still proves complete exhaustion.
+        requested = min(page, 10001 - offset)
+        q = (_sb.table("contests").select("*")
+             .order("starts_at", desc=True).order("id", desc=True))
+        if hasattr(q, "range"):
+            res = q.range(offset, offset + requested - 1).execute()
+        elif hasattr(q, "offset"):
+            res = q.offset(offset).limit(requested).execute()
+        else:
+            raise RuntimeError("contest policy pagination unavailable")
+        batch = res.data
+        if (not isinstance(batch, list) or len(batch) > requested
+                or any(not isinstance(row, dict) for row in batch)):
+            raise RuntimeError("contest policy page malformed")
+        if not batch:
+            return rows
+        rows.extend(batch)
+        offset += len(batch)
+        if offset > 10000:
+            break
+        # A configured PostgREST response cap can make every page short.
+        # Only an empty page proves that all protective contests were read.
+    raise RuntimeError("contest policy exceeds pagination budget")
 
 
 @app.get("/api/contests")

@@ -35,6 +35,9 @@ class CriticalPracticeFeedback(unittest.TestCase):
                            '_active_jobs': {}}.items():
             self.stack.enter_context(patch.object(server, key, value))
         self.stack.enter_context(patch.object(server, '_contest_policy_rows', side_effect=lambda **_kwargs: self.contests))
+        # Peer detail reads the freshest contest policy from the DB, not the
+        # cached feedback policy used by _effective_reveal.
+        self.stack.enter_context(patch.object(server, '_all_contest_rows', side_effect=lambda: self.contests))
         self.stack.enter_context(patch.dict(os.environ, {'GRADER_REQUIRE_NETNS': '0'}))
         app = FastAPI()
 
