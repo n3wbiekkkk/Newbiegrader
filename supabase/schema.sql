@@ -643,3 +643,15 @@ revoke all on function public.auth_google_identity(text,text,text) from public, 
 grant execute on function public.auth_email_budget(text,text,text) to service_role;
 grant execute on function public.auth_email_complete(text,uuid,text,text) to service_role;
 grant execute on function public.auth_google_identity(text,text,text) to service_role;
+
+-- ============================================================================
+-- 2026-10-20: realtime admin management. ADMIN_EMAILS stays the immutable
+-- bootstrap set; rows here are additional admins editable from the admin page.
+-- ============================================================================
+create table if not exists public.admins (
+  email text primary key check (email = lower(btrim(email)) and email <> ''),
+  created_at timestamptz not null default now(),
+  created_by text not null default ''
+);
+alter table public.admins enable row level security;
+grant all on public.admins to service_role;

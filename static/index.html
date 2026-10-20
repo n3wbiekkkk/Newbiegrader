@@ -388,7 +388,7 @@
       <div>
         <p class="eyebrow">OPERATOR CONSOLE</p>
         <h2>ผู้ดูแลระบบ<span class="heading-period">.</span></h2>
-        <p class="dim">จัดการแข่งขัน ตรวจงาน และดูสุขภาพระบบ — เห็นเฉพาะอีเมลใน ADMIN_EMAILS</p>
+        <p class="dim">จัดการแข่งขัน ตรวจงาน และดูสุขภาพระบบ — เห็นเฉพาะอีเมลที่ได้รับสิทธิ์ผู้ดูแล</p>
       </div>
     </div>
 
@@ -396,6 +396,7 @@
       <button class="admin-tab" type="button" role="tab" data-admin-tab="overview" aria-selected="true">ภาพรวม</button>
       <button class="admin-tab" type="button" role="tab" data-admin-tab="contests" aria-selected="false">คอนเทสต์ <span class="admin-tab-count" id="admin-tab-contest-count">—</span></button>
       <button class="admin-tab" type="button" role="tab" data-admin-tab="reports" aria-selected="false">รีพอร์ต</button>
+      <button class="admin-tab" type="button" role="tab" data-admin-tab="admins" aria-selected="false">ผู้ดูแล</button>
       <button class="admin-tab" type="button" role="tab" data-admin-tab="tools" aria-selected="false">เครื่องมือ</button>
     </div>
 
@@ -534,6 +535,53 @@
       <div id="admin-reports" class="dim">—</div>
     </div>
 
+    <div class="card hidden admin-panel" id="admins-card" data-admin-panel="admins">
+      <div class="card-head admin-section-head">
+        <div>
+          <h3 class="admin-section-title">ผู้ดูแลระบบ <span class="dash-count" id="admins-count">—</span></h3>
+          <p class="admin-sub dim">เพิ่มหรือถอดสิทธิ์ได้ทันทีโดยไม่ต้องรีสตาร์ท · อีเมลใน ADMIN_EMAILS เป็นชุดถาวรที่ถอดจากหน้าเว็บไม่ได้</p>
+        </div>
+        <button class="ghost-btn" type="button" id="admins-refresh"><svg class="ic"><use href="#i-refresh"/></svg><span>รีเฟรช</span></button>
+      </div>
+      <div class="tool-stack">
+        <section class="tool-card">
+          <div class="tool-card-head">
+            <span class="tool-icon"><svg class="ic"><use href="#i-users"/></svg></span>
+            <div>
+              <h4>เพิ่มผู้ดูแล</h4>
+              <p class="ct-hint">พิมพ์อีเมลบัญชี Google ที่ต้องการให้เห็นเมนูผู้ดูแลและการส่งของทุกคน</p>
+            </div>
+          </div>
+          <form id="admin-add-form" autocomplete="off">
+            <div class="tool-fields">
+              <div class="settings-row">
+                <label for="admin-add-email">อีเมลผู้ดูแลใหม่</label>
+                <input id="admin-add-email" type="email" maxlength="254" list="admin-candidates"
+                       placeholder="name@gmail.com" spellcheck="false" required>
+                <datalist id="admin-candidates"></datalist>
+              </div>
+            </div>
+            <div class="submit-row">
+              <button id="admin-add-btn" class="submit-btn" type="submit">
+                <svg class="ic"><use href="#i-check"/></svg><span>เพิ่มผู้ดูแล</span>
+              </button>
+            </div>
+          </form>
+          <div id="admins-status" class="status dim" role="status" aria-live="polite"></div>
+        </section>
+        <section class="tool-card">
+          <div class="tool-card-head">
+            <span class="tool-icon"><svg class="ic"><use href="#i-users"/></svg></span>
+            <div>
+              <h4>รายชื่อผู้ดูแล</h4>
+              <p class="ct-hint">ADMIN_EMAILS = ถอดไม่ได้ · ฐานข้อมูล = เพิ่ม/ถอดได้ทันที</p>
+            </div>
+          </div>
+          <div id="admins-list" class="dim">—</div>
+        </section>
+      </div>
+    </div>
+
     <div class="card hidden admin-panel" id="admin-tools-card" data-admin-panel="tools">
       <div class="card-head admin-section-head">
         <div>
@@ -644,6 +692,6 @@
 </div>
 
 <script src="/config.js?v=6"></script>
-<script src="/app.js?v=52"></script>
+<script src="/app.js?v=53"></script>
 </body>
 </html>

@@ -3067,7 +3067,7 @@ function buildProblemSelect(sel, multiple) {
 }
 
 /* ---------------- admin page (แยกจาก Settings, เห็นเฉพาะ admin) ---------------- */
-const ADMIN_TABS = ["overview", "contests", "reports", "tools"];
+const ADMIN_TABS = ["overview", "contests", "reports", "admins", "tools"];
 
 function showAdminTab(name) {
   if (!ADMIN_TABS.includes(name)) name = "overview";
@@ -3091,6 +3091,10 @@ function showAdminTab(name) {
     state.adminReportsLoaded = true;
     loadAdminReports();
   }
+  if (name === "admins" && !state.adminAdminsLoaded) {
+    state.adminAdminsLoaded = true;
+    loadAdmins();
+  }
   if (name === "tools" && !state.adminToolsBuilt) {
     state.adminToolsBuilt = true;
     renderAdminTools();
@@ -3102,7 +3106,7 @@ function renderAdmin() {
     location.hash = "#/";
     return;
   }
-  ["overview-card", "contest-card", "admin-card", "admin-tools-card"].forEach((id) => {
+  ["overview-card", "contest-card", "admin-card", "admins-card", "admin-tools-card"].forEach((id) => {
     const el = $(id);
     if (el) el.classList.remove("hidden");
   });
@@ -3115,7 +3119,9 @@ function renderAdmin() {
       const label = refresh.querySelector("span");
       refresh.disabled = true;
       if (label) label.textContent = "กำลังโหลด…";
-      await Promise.all([loadOverview(), loadAdminContests(), loadAdminReports()]);
+      const jobs = [loadOverview(), loadAdminContests(), loadAdminReports()];
+      if (state.adminAdminsLoaded) jobs.push(loadAdmins());
+      await Promise.all(jobs);
       state.adminReportsLoaded = true;
       state.adminOverviewLoaded = true;
       if (label) label.textContent = "รีเฟรช";
@@ -3124,13 +3130,109 @@ function renderAdmin() {
   }
   const repRefresh = $("admin-reports-refresh");
   if (repRefresh) repRefresh.onclick = loadAdminReports;
+  const admRefresh = $("admins-refresh");
+  if (admRefresh) admRefresh.onclick = loadAdmins;
+  const addForm = $("admin-add-form");
+  if (addForm) addForm.onsubmit = addAdminByEmail;
   state.adminReportsLoaded = false;
   state.adminToolsBuilt = false;
   state.adminOverviewLoaded = false;
+  state.adminAdminsLoaded = false;
   // The contest tab shows a count badge, so its list still starts immediately;
   // only the panel bodies wait until their tab is opened.
   loadAdminContests();
   showAdminTab(state.adminTab || "overview");
+}
+
+function setAdminsStatus(text, isError) {
+  const el = $("admins-status");
+  if (!el) return;
+  el.textContent = text || "";
+  el.className = "status " + (isError ? "dash-error" : "dim");
+}
+
+async function loadAdmins() {
+  const box = $("admins-list");
+  if (!box) return;
+  box.classList.add("dim");
+  box.innerHTML = skel(3);
+  try {
+    const d = await apiGet("/api/admin/admins");
+    const rows = d.admins || [];
+    setDashCount("admins-count", `${rows.length} คน`);
+    const dl = $("admin-candidates");
+    if (dl) {
+      dl.innerHTML = (d.candidates || []).map((c) =>
+        `<option value="${esc(c.email)}">${esc(c.name || c.email)}</option>`).join("");
+    }
+    box.classList.remove("dim");
+    if (!rows.length) {
+      box.innerHTML = `<p class="dash-empty">ยังไม่มีผู้ดูแล</p>`;
+      return;
+    }
+    box.innerHTML = rows.map((r) => {
+      const env = r.source === "env";
+      const removable = !!r.removable && !env;
+      const mine = (state.user && (state.user.email || "").toLowerCase() === r.email);
+      return `<article class="admin-report">` +
+        `<div class="admin-report-head">` +
+        `<span class="admin-report-problem">${esc(r.email)}</span>` +
+        (env ? badge("ADMIN_EMAILS", "OK") : badge("ฐานข้อมูล", "upcoming")) +
+        (mine ? `<span class="diff-tag">คุณ</span>` : "") +
+        (removable ? `<button class="ghost-btn" type="button" data-admin-remove="${esc(r.email)}">ถอดสิทธิ์</button>` : "") +
+        `</div>` +
+        `<div class="admin-report-meta">` +
+        `<span>${env ? "ถาวรจาก ADMIN_EMAILS" : "เพิ่มโดย " + esc(r.created_by || "ไม่ระบุ")}</span>` +
+        (r.created_at ? `<span>${esc(shortTime(r.created_at))}</span>` : "") +
+        `</div></article>`;
+    }).join("");
+    box.querySelectorAll("[data-admin-remove]").forEach((b) => {
+      b.onclick = () => removeAdmin(b.dataset.adminRemove, b);
+    });
+  } catch (e) {
+    box.classList.remove("dim");
+    setDashCount("admins-count", "—");
+    box.innerHTML = `<p class="dash-empty dash-error">โหลดไม่ได้: ${esc(e.message)}</p>`;
+  }
+}
+
+async function addAdminByEmail(ev) {
+  ev.preventDefault();
+  const input = $("admin-add-email");
+  const btn = $("admin-add-btn");
+  const email = (input && input.value || "").trim().toLowerCase();
+  if (!email) return;
+  if (btn) btn.disabled = true;
+  setAdminsStatus("กำลังเพิ่ม…", false);
+  try {
+    const d = await apiPostJson("/api/admin/admins", { email });
+    if (input) input.value = "";
+    setAdminsStatus(`เพิ่ม ${d.email} เป็นผู้ดูแลแล้ว — มีผลทันที`, false);
+    toast("เพิ่มผู้ดูแลแล้ว", "t-ok");
+    await loadAdmins();
+  } catch (e) {
+    setAdminsStatus(e.message, true);
+    toast("เพิ่มผู้ดูแลไม่สำเร็จ: " + e.message, "t-err");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function removeAdmin(email, btn) {
+  if (!email) return;
+  if (!confirm(`ถอดสิทธิ์ผู้ดูแลของ ${email}?`)) return;
+  if (btn) btn.disabled = true;
+  try {
+    await apiDelete(`/api/admin/admins/${encodeURIComponent(email)}`);
+    toast("ถอดสิทธิ์แล้ว", "t-ok");
+    await loadAdmins();
+    if (state.user && (state.user.email || "").toLowerCase() === email) {
+      await refreshMe();
+    }
+  } catch (e) {
+    if (btn) btn.disabled = false;
+    toast("ถอดสิทธิ์ไม่สำเร็จ: " + e.message, "t-err");
+  }
 }
 
 function renderAdminTools() {
