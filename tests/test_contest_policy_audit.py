@@ -139,6 +139,32 @@ class ContestPolicyAudit(unittest.TestCase):
         self.assertNotIn("HIDDEN-IN", json.dumps(read_back))
         self.assertTrue(all(item.get("hidden") for item in read_back["results"]))
 
+    def test_live_contest_hides_stored_sample_feedback_on_history_read(self):
+        """A stored row may predate the live policy (or an old rejudge).
+
+        /api/history/{sid} trusted the stored bytes and applied a static
+        REVEAL_SAMPLES to contest rows, so a submission written while samples
+        were allowed could still disclose them after the contest switched to
+        show_samples=false. Re-evaluate the owner-facing policy at read time.
+        """
+        owner = "synthetic@example.invalid"
+        row = dict(self.submission("sid-stored", 0), language="python",
+                   results=[{"test": "01", "verdict": "WA", "input": "SAMPLE-IN",
+                             "expected": "SAMPLE-OUT", "actual": "WRONG",
+                             "diff": "sample-diff"}])
+        self.fake.tables["contests"] = [self.contest]
+        self.fake.tables["submissions"] = [row]
+        out = asyncio.run(server.history_detail(self.request_with(owner, {}), "sid-stored"))
+        self.assertNotIn("SAMPLE-IN", json.dumps(out))
+        self.assertNotIn("SAMPLE-OUT", json.dumps(out))
+
+        # Positive control: once the contest ends, the same stored row is
+        # history and public sample feedback is allowed again.
+        self.contest["ends_at"] = (self.now - dt.timedelta(minutes=1)).isoformat()
+        self.fake.tables["contests"] = [self.contest]
+        out = asyncio.run(server.history_detail(self.request_with(owner, {}), "sid-stored"))
+        self.assertIn("SAMPLE-IN", json.dumps(out))
+
     def test_rejudge_job_never_hands_the_owner_hidden_test_data(self):
         """The in-memory job record holds the redacted variant only.
 

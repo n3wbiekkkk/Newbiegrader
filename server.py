@@ -3406,7 +3406,11 @@ async def history_detail(request: Request, sid: str) -> dict:
         raise HTTPException(status_code=403, detail="not your submission")
     row.pop("user_email", None)  # never expose login emails publicly
     reveal = REVEAL_SAMPLES
-    if not row.get("contest_id") and any(r.get("practice_feedback") is True for r in row.get("results", [])):
+    stored_results = row.get("results", [])
+    if row.get("contest_id") or any(r.get("practice_feedback") is True for r in stored_results):
+        # Re-evaluate the live owner-facing policy: stored rows can predate the
+        # current contest window (or an old rejudge), so trusting their bytes
+        # would serve samples during a show_samples=false contest.
         reveal = await asyncio.to_thread(_effective_reveal, None, email, row.get("problem", ""))
     row["results"] = _result_with_reveal(row, {"results": row.get("results", [])}, reveal)["results"]
     return row
