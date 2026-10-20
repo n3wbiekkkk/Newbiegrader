@@ -74,6 +74,8 @@ class MemoryLimitPolicy(unittest.TestCase):
                     for tc in prob.tests]
         self.assertEqual(set(verdicts), {"AC"}, f"reference solution verdicts: {verdicts}")
 
+    @unittest.skipUnless(sys.platform.startswith("linux"),
+                         "RLIMIT_AS kernel ceiling is enforced on Linux, not macOS mmap")
     def test_python_over_the_kernel_ceiling_is_mle(self):
         """Far over the allowance: the RLIMIT_AS ceiling stops it (SIGKILL)."""
         declared = 64
