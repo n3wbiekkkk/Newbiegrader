@@ -3471,9 +3471,8 @@ async def run_custom(
     raise HTTPException(status_code=504, detail="run timed out waiting for judge")
 
 
-_PEER_QUALIFYING_VERDICTS = frozenset({"AC", "WA", "TLE", "MLE", "OLE"})
-_COMPLETED_SUBMISSION_VERDICTS = _PEER_QUALIFYING_VERDICTS | {"CE", "RE", "REJECTED"}
-_CASE_VERDICTS = _PEER_QUALIFYING_VERDICTS | {"CE", "RE"}
+_CASE_VERDICTS = frozenset({"AC", "WA", "TLE", "MLE", "OLE", "CE", "RE"})
+_COMPLETED_SUBMISSION_VERDICTS = _CASE_VERDICTS | {"REJECTED"}
 _HISTORY_PUBLIC_FIELDS = (
     "id", "created_at", "problem", "language", "name", "filename", "verdict",
     "accepted", "passed", "total", "score", "counts", "contest_id",
@@ -3486,64 +3485,6 @@ def _completed_peer_submission(row: dict) -> bool:
     return (row.get("kind", "submit") in {"submit", "rejudge"}
             and row.get("status", "done") == "done"
             and row.get("verdict") in _COMPLETED_SUBMISSION_VERDICTS)
-
-
-def _peer_qualifying_attempt(row: dict, *, verify_tests: bool = True) -> bool:
-    if not _completed_peer_submission(row):
-        return False
-    verdict = row.get("verdict")
-    if verdict not in _PEER_QUALIFYING_VERDICTS | {"REJECTED"}:
-        return False
-    counts = row.get("counts", {})
-    if not isinstance(counts, dict) or any(
-            key not in _CASE_VERDICTS or type(value) is not int or value < 0
-            for key, value in counts.items()):
-        return False
-    if counts.get("CE", 0) or counts.get("RE", 0):
-        return False
-    if verdict == "REJECTED" and not sum(counts.values()):
-        return False  # Aggregate REJECTED alone says nothing about runtime errors.
-    if verify_tests:
-        tests = row.get("results", [])
-        if not isinstance(tests, list) or any(
-                not isinstance(test, dict) or test.get("verdict") not in _PEER_QUALIFYING_VERDICTS
-                for test in tests):
-            return False
-    return True
-
-
-def _has_peer_qualifying_attempt(email: str, pid: str) -> bool:
-    """Indexed account/problem scan, independent of the public feed's limit.
-
-    Small pages contain no source or diagnostics. Fetch full verdict evidence
-    only for plausible candidates; old explicit verdicts need not have counts.
-    A safety bound is an unavailable decision, never permission to disclose.
-    """
-    page = 500
-    offset = 0
-    for _ in range(1000):
-        if offset >= 50000:
-            break
-        batch = (_sb.table("submissions").select("id,kind,verdict,counts")
-                 .eq("user_email", email).eq("problem", pid)
-                 .order("created_at", desc=True).order("id", desc=True)
-                 .range(offset, offset + page - 1).execute()).data
-        if not isinstance(batch, list):
-            raise RuntimeError("submission evidence unavailable")
-        if not batch:
-            return False
-        for row in batch:
-            if not _peer_qualifying_attempt(row, verify_tests=False):
-                continue
-            candidates = (_sb.table("submissions").select("id,kind,verdict,counts,results")
-                          .eq("user_email", email).eq("problem", pid).eq("id", row["id"])
-                          .limit(1).execute()).data
-            if candidates and _peer_qualifying_attempt(candidates[0]):
-                return True
-        # PostgREST may impose a response cap smaller than the requested page.
-        # Only an empty batch proves exhaustion; advance by rows actually read.
-        offset += len(batch)
-    raise RuntimeError("submission evidence scan limit reached")
 
 
 def _peer_problem_policy(pid: str, contest_id: Optional[str] = None) -> str:
@@ -3586,16 +3527,17 @@ def _peer_problem_policy(pid: str, contest_id: Optional[str] = None) -> str:
 
 
 def _peer_inspection_access(email: str, pid: str, contest_id: Optional[str] = None) -> dict:
+    """Source access for learning: any signed-in student, no attempt gate.
+
+    The completed-row check and the narrower peer serializer stay in the
+    detail route. Hidden/unpublished problems and problems in upcoming or
+    running contests remain protected by the fresh policy check.
+    """
     if _is_admin(email):
         return {"allowed": True, "reason": ""}
     if not email:
         return {"allowed": False, "reason": "login"}
     reason = _peer_problem_policy(pid, contest_id)
-    if not reason:
-        try:
-            reason = "" if _has_peer_qualifying_attempt(email, pid) else "attempt"
-        except Exception:
-            reason = "unavailable"
     return {"allowed": not reason, "reason": reason}
 
 

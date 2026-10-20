@@ -56,20 +56,16 @@ separate policy below; peer access never includes private test diagnostics.
 
 ## Peer submission inspection
 
-The per-problem Submissions tab permits a logged-in student to inspect peers'
-completed submissions for that same problem after one qualifying completed
-judged attempt. AC, WA, TLE, MLE and OLE qualify; CE and RE do not. A mixed run
-containing any CE or RE does not qualify. Queued/running/error jobs, playground
-runs and attempts on another problem or account do not count. Another qualifying
-attempt unlocks access even if later attempts fail with CE/RE. Recognized legacy
-explicit verdicts can count when detailed evidence is absent; unknown or
-malformed evidence fails closed. Stored `REJECTED` is an aggregate failure,
-not proof that an attempt avoided CE/RE: inspect its verdict counts and tests.
+The per-problem Submissions tab allows any signed-in student to inspect peers'
+completed submissions for that same visible practice problem. No prior attempt
+is required: the maintainer updated this policy on 2026-10-20 to make peer
+source available for learning. Anonymous visitors cannot open source. Owners
+keep their existing practice-feedback access; admins keep their full inspection
+access.
 
-The exclusions apply to the viewing student's qualifying attempt. An eligible
-student can inspect a completed peer CE/RE submission as well as accepted or
-unsuccessful submissions. Owners keep their existing practice-feedback access;
-admins keep their existing inspection access.
+The completed-row check remains. Queued/running/error jobs, playground runs and
+rows with unknown verdicts cannot be opened. A peer can inspect a completed
+CE/RE submission as well as accepted or unsuccessful submissions.
 
 Any upcoming or running contest containing the problem blocks peer inspection,
 including old practice submissions and submissions from other ended contests.
@@ -86,7 +82,9 @@ budget fail closed rather than authorizing access from partial contest policy.
 Peer detail uses explicit field allowlists: source, author display name,
 language/filename, verdict/score/counts and per-test verdict/time/memory. It never
 returns test names, input, expected/actual output, diff, compiler/runtime
-diagnostics, login email, or arbitrary persisted fields. Public submission lists
+diagnostics, login email, or arbitrary persisted fields. In particular, opening
+a peer submission never reveals hidden test I/O, even though an admin may see
+that I/O through the separate owner/admin feedback path. Public submission lists
 have a separate allowlist and never contain source or per-test results. Legacy
 display names that fall back to an email address are replaced with a neutral
 label. Source is student-authored text and may itself contain whatever the
@@ -97,31 +95,18 @@ invalidates identity-specific cached answers and rendered inspected source on
 identity changes, and rejects late or superseded detail responses. The API
 always authorizes again when a submission is opened; the list's access message
 is guidance, not an access token. A returned source can be retained by a student;
-later policy changes cannot retract it.
+later policy changes cannot retract it. Because source access is open to every
+signed-in student, contest protection is the primary anti-cheating control; do
+not publish a problem in a contest while peers can inspect its solutions.
 
 ### Database boundary
 
-Eligibility uses persisted `submissions`, not process memory or the newest
-50/100-row feed. The server filters by `user_email` and `problem`, orders by
-`created_at`, and reads bounded pages until it finds a qualifying historical
-attempt or exhausts that account/problem history. The existing
-`submissions_history_filter (user_email, problem, created_at desc)` index supports
-this lookup. Each page selects only the verdict evidence needed for the check;
-it does not download source or private diagnostics. A plausible candidate's
-persisted case results are then checked on the server to reject contradictory
-CE/RE evidence; these private fields are never returned to peers. Pagination
-advances by the rows actually returned, including when PostgREST's configured
-response cap is smaller than the requested page, until an empty page. Eligibility
-has no 50/100-row feed cutoff. A safety bound of 50,000 examined rows or 1,000
-page requests returns 503 unavailable rather than declaring the student
-ineligible or authorizing disclosure. Very large account/problem histories may
-need more than one database request; no eligibility cache can bypass fresh
-contest policy.
-
-No schema migration, new table/RPC, client grant, or RLS change is required.
-`submissions` remains service-role-only, and all access goes through the API.
-Do not apply live database changes for this feature. Synthetic regressions are
-in `tests/test_critical_peer_inspection.py` and `tests/test_peer_inspection.js`.
+Peer access requires only a signed-in identity, a completed target row, and the
+fresh contest/visibility policy. It does not scan the viewer's submission
+history or use a process-local eligibility cache. `submissions` remains
+service-role-only, and all access goes through the API. Do not apply live
+database changes for this feature. Synthetic regressions are in
+`tests/test_critical_peer_inspection.py` and `tests/test_peer_inspection.js`.
 
 ## Verification and release
 
