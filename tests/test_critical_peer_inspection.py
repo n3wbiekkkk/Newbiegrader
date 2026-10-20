@@ -1,4 +1,4 @@
-"""Synthetic peer-source access: historical attempts, fresh policy, safe JSON."""
+"""Peer source for learning: any signed-in student, fresh policy, safe JSON."""
 import contextlib
 import datetime as dt
 import unittest
@@ -55,11 +55,6 @@ class CriticalPeerInspection(unittest.TestCase):
                'contest_id': None}
         return row | extra
 
-    def qualify(self, **extra):
-        row = self.row('qualifying', **extra)
-        self.db.rows('submissions').append(row)
-        return row
-
     def get(self):
         return self.client.get('/api/history/peer')
 
@@ -70,88 +65,33 @@ class CriticalPeerInspection(unittest.TestCase):
                 'starts_at': (now + dt.timedelta(hours=bounds[0])).isoformat(),
                 'ends_at': (now + dt.timedelta(hours=bounds[1])).isoformat()} | extra
 
-    def test_critical_allowed_completed_verdicts_unlock_peer_source(self):
-        for verdict in ('AC', 'WA', 'TLE', 'MLE', 'OLE'):
-            for top in (verdict, 'AC' if verdict == 'AC' else 'REJECTED'):
-                with self.subTest(verdict=verdict, top=top):
-                    self.db.rows('submissions')[:] = [self.target]
-                    self.qualify(verdict=top, counts={verdict: 1})
-                    response = self.get()
-                    self.assertEqual(response.status_code, 200, response.text)
-                    self.assertEqual(response.json()['code'], 'print("peer source")')
-                    self.assertEqual(response.json()['name'], 'Peer Display Name')
-
-    def test_critical_missing_ce_re_and_mixed_runtime_attempts_stay_locked(self):
-        cases = [None, {'verdict': 'CE', 'counts': {'CE': 1}},
-                 {'verdict': 'RE', 'counts': {'RE': 1}},
-                 {'counts': {'RE': 1}}, {'counts': {'WA': 1, 'RE': 1}},
-                 {'counts': {'WA': 1, 'CE': 1}}, {'verdict': 'AC', 'counts': {'RE': 1}},
-                 {'kind': 'playground'}, {'status': 'queued'}, {'status': 'running'},
-                 {'status': 'error'}, {'verdict': 'RUNNING'}, {'verdict': 'UNKNOWN'},
-                 {'counts': {}}, {'counts': {'WA': '1'}}, {'counts': {'WA': -1}},
-                 {'counts': {'WA': 1, 'UNKNOWN': 1}}, {'counts': []},
-                 {'results': [{'verdict': 'RE'}]}, {'results': [{'verdict': 'UNKNOWN'}]}]
-        for attempt in cases:
-            with self.subTest(attempt=attempt):
-                self.db.rows('submissions')[:] = [self.target]
-                if attempt is not None:
-                    self.qualify(**attempt)
-                self.assertEqual(self.get().status_code, 403)
-
-    def test_critical_legacy_explicit_verdict_without_counts_can_unlock(self):
-        self.qualify(verdict='TLE', counts={}, results=[])
-        self.assertEqual(self.get().status_code, 200)
-
-    def test_critical_historical_attempt_survives_recent_feed_window_and_restart(self):
-        self.qualify(created_at='2020-01-01T00:00:00+00:00')
-        self.db.rows('submissions').extend(
-            self.row('new-' + str(i), verdict='REJECTED', counts={'RE': 1},
-                     created_at='2026-10-01T00:00:00+00:00') for i in range(550))
-        # No process-local eligibility state is available or necessary.
-        with patch.object(server, '_jobs', {}):
-            self.assertEqual(self.get().status_code, 200)
-
-    def test_critical_history_pagination_handles_lower_database_response_caps(self):
-        self.qualify(created_at='2020-01-01T00:00:00+00:00')
-        self.db.rows('submissions').extend(
-            self.row('new-' + str(i), counts={'RE': 1}) for i in range(80))
-        original = self.db.table
-
-        def table(name):
-            query = original(name)
-            execute = query.execute
-
-            def capped_execute():
-                response = execute()
-                if getattr(query, '_cols', '') == 'id,kind,verdict,counts':
-                    response.data = response.data[:37]
-                return response
-
-            query.execute = capped_execute
-            return query
-
-        with patch.object(self.db, 'table', side_effect=table):
-            self.assertEqual(self.get().status_code, 200)
-
-    def test_critical_only_same_viewer_same_problem_attempt_counts(self):
-        for extra in ({'email': 'other@example.invalid'}, {'problem': 'another-problem'}):
-            with self.subTest(extra=extra):
-                self.db.rows('submissions')[:] = [self.target]
-                self.qualify(**extra)
-                self.assertEqual(self.get().status_code, 403)
-
-    def test_critical_any_completed_peer_target_verdict_is_readable(self):
-        self.qualify()
-        for verdict in ('CE', 'RE', 'WA', 'TLE', 'MLE', 'OLE', 'AC', 'REJECTED'):
+    def test_critical_logged_in_viewer_needs_no_attempt_and_reads_completed_target(self):
+        # The only row belongs to the peer author: the viewer has not submitted
+        # this problem at all, yet learning access is intentionally open.
+        self.assertEqual(self.db.rows('submissions'), [self.target])
+        for verdict in ('AC', 'WA', 'TLE', 'MLE', 'OLE', 'CE', 'RE', 'REJECTED'):
             with self.subTest(verdict=verdict):
                 self.target['verdict'] = verdict
-                self.assertEqual(self.get().status_code, 200)
-        for status in ('queued', 'running', 'error'):
-            self.target['status'] = status
-            self.assertEqual(self.get().status_code, 403)
+                self.target['accepted'] = verdict == 'AC'
+                response = self.get()
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertEqual(response.json()['code'], 'print("peer source")')
+                self.assertEqual(response.json()['name'], 'Peer Display Name')
+
+    def test_critical_non_completed_or_unknown_target_rows_stay_locked(self):
+        cases = ({'kind': 'playground'}, {'status': 'queued'}, {'status': 'running'},
+                 {'status': 'error'}, {'verdict': 'RUNNING'}, {'verdict': 'UNKNOWN'})
+        for extra in cases:
+            with self.subTest(extra=extra):
+                self.db.rows('submissions')[:] = [self.row('peer', AUTHOR, **extra)]
+                self.assertEqual(self.get().status_code, 403)
+
+    def test_critical_legacy_explicit_verdict_without_counts_is_readable(self):
+        self.db.rows('submissions')[:] = [
+            self.row('peer', AUTHOR, verdict='TLE', counts={}, results=[])]
+        self.assertEqual(self.get().status_code, 200)
 
     def test_critical_upcoming_running_and_reused_contests_block_every_peer_row(self):
-        self.qualify()
         for window in ('upcoming', 'running'):
             for target_contest in (None, 'ended-cup'):
                 with self.subTest(window=window, target_contest=target_contest):
@@ -162,18 +102,15 @@ class CriticalPeerInspection(unittest.TestCase):
                     self.assertIn('contest', response.json()['detail'])
 
     def test_critical_ended_contest_allows_peer_inspection(self):
-        self.qualify()
         self.contests[:] = [self.contest('ended')]
         self.target['contest_id'] = 'cup'
         self.assertEqual(self.get().status_code, 200)
 
     def test_critical_target_contest_missing_from_current_policy_fails_closed(self):
-        self.qualify()
         self.target['contest_id'] = 'missing-cup'
         self.assertEqual(self.get().status_code, 403)
 
     def test_critical_ended_hidden_problem_is_discoverable_in_its_submission_tab(self):
-        self.qualify()
         self.prob.hidden = True
         self.contests[:] = [self.contest('ended', hide_from_tasks=True)]
         response = self.client.get('/api/history?problem=' + self.prob.pid)
@@ -184,7 +121,6 @@ class CriticalPeerInspection(unittest.TestCase):
         self.assertNotIn('peer', [row['id'] for row in global_feed])
 
     def test_critical_new_contest_policy_bypasses_stale_visibility_cache(self):
-        self.qualify()
         with patch.object(server, '_cached_contest_rows', return_value=[]):
             self.assertEqual(self.get().status_code, 200)
             self.contests.append(self.contest('upcoming'))
@@ -218,7 +154,6 @@ class CriticalPeerInspection(unittest.TestCase):
             yield
 
     def test_critical_real_policy_pagination_cannot_hide_a_protected_contest(self):
-        self.qualify()
         for window in ('upcoming', 'running'):
             with self.subTest(window=window):
                 unrelated = self.contest('upcoming', id='unrelated', problems=['another-problem'],
@@ -230,7 +165,6 @@ class CriticalPeerInspection(unittest.TestCase):
                 self.assertNotIn('peer source', response.text)
 
     def test_critical_real_policy_subsequent_page_outage_or_malformed_page_fails_closed(self):
-        self.qualify()
         self.db.rows('contests')[:] = [self.contest('ended', problems=['another-problem'])]
         for failure in ('outage', 'malformed'):
             with self.subTest(failure=failure), self.capped_real_contest_policy(second_page=failure):
@@ -245,7 +179,6 @@ class CriticalPeerInspection(unittest.TestCase):
             self.assertEqual([row['id'] for row in server._all_contest_rows()], ['z', 'm', 'a'])
 
     def test_critical_policy_outage_and_invalid_dates_fail_closed(self):
-        self.qualify()
         for exc in (RuntimeError('outage'), RuntimeError('relation "public.contests" does not exist')):
             with patch.object(server, '_all_contest_rows', side_effect=exc):
                 response = self.get()
@@ -257,25 +190,6 @@ class CriticalPeerInspection(unittest.TestCase):
         self.contests[:] = [self.contest('ended', starts_at='2030-01-01T00:00:00+00:00')]
         self.assertEqual(self.get().status_code, 403)
 
-    def test_critical_qualifying_query_outage_cannot_unlock(self):
-        self.qualify()
-        original = self.db.table
-
-        def table(name):
-            query = original(name)
-            original_eq = query.eq
-
-            def eq(column, value):
-                if name == 'submissions' and column == 'user_email':
-                    raise RuntimeError('synthetic eligibility outage')
-                return original_eq(column, value)
-
-            query.eq = eq
-            return query
-
-        with patch.object(self.db, 'table', side_effect=table):
-            self.assertIn(self.get().status_code, (403, 503))
-
     def test_critical_anonymous_owner_and_admin_boundaries(self):
         self.email = ''
         self.assertEqual(self.get().status_code, 401)
@@ -285,7 +199,6 @@ class CriticalPeerInspection(unittest.TestCase):
             self.assertEqual(self.get().status_code, 200)
 
     def test_critical_peer_json_has_only_source_and_public_result_fields(self):
-        self.qualify()
         self.target.update({'detail': CANARY, 'compile_error': CANARY,
                             'future_private_field': {'login_email': AUTHOR, 'secret': CANARY}})
         self.target['counts']['future_private_field'] = CANARY
@@ -304,7 +217,6 @@ class CriticalPeerInspection(unittest.TestCase):
         self.assertTrue(row['peer_inspection'])
 
     def test_critical_peer_measurement_fields_cannot_carry_nested_private_data(self):
-        self.qualify()
         self.target['results'] = [{'verdict': {'private': CANARY}, 'wall_s': [CANARY],
                                   'cpu_s': {'private': CANARY}, 'peak_mb': float('nan')}]
         response = self.get()
@@ -324,7 +236,6 @@ class CriticalPeerInspection(unittest.TestCase):
         self.assertNotIn('results', response.json()['submissions'][0])
 
     def test_critical_legacy_name_email_fallback_is_not_a_public_display_name(self):
-        self.qualify()
         self.target['name'] = AUTHOR
         response = self.get()
         self.assertEqual(response.status_code, 200)
@@ -333,7 +244,6 @@ class CriticalPeerInspection(unittest.TestCase):
         self.assertNotIn(AUTHOR, public.text)
 
     def test_critical_publication_and_hidden_visibility_are_enforced_for_peers(self):
-        self.qualify()
         self.prob.is_published = False
         self.assertIn(self.get().status_code, (403, 404))
         self.prob.is_published = True

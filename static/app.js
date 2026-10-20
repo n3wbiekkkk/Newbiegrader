@@ -2571,13 +2571,14 @@ function rowVerdictCode(r) {
 }
 
 function peerAccessMessage(access) {
-  if (access && access.allowed) return "เปิดดูโค้ดและผลรายเทสต์ของเพื่อนได้แล้ว โดยไม่เปิดเผยข้อมูลทดสอบ";
+  if (access && access.allowed) return "เข้าสู่ระบบแล้ว เปิดดูโค้ดและผลรายเทสต์ของเพื่อนได้ทุกข้อที่เปิดอยู่ โดยไม่เปิดเผยข้อมูลทดสอบ";
   const reason = access && access.reason;
   if (reason === "login") return "เข้าสู่ระบบก่อนดูโค้ดของเพื่อน";
   if (reason === "contest") return "ยังดูโค้ดของเพื่อนไม่ได้: ข้อนี้อยู่ในการแข่งขันที่กำลังจะเริ่มหรือกำลังแข่ง";
   if (reason === "unavailable") return "ยังตรวจสอบสิทธิ์ดูโค้ดของเพื่อนไม่ได้ กรุณาลองอีกครั้ง";
   if (reason === "hidden") return "ข้อนี้ยังไม่เปิดให้ดูโค้ดของเพื่อน";
-  return "ส่งข้อนี้ให้ตรวจเสร็จอย่างน้อยหนึ่งครั้งโดยไม่มี CE หรือ RE ก่อนดูโค้ดของเพื่อน (AC, WA, TLE, MLE, OLE ใช้ได้) — ยังดูการส่งของตัวเองได้เสมอ";
+  if (reason === "incomplete") return "การส่งนี้ยังตรวจไม่เสร็จ ลองใหม่ภายหลัง";
+  return "ยังดูโค้ดของเพื่อนไม่ได้ในขณะนี้";
 }
 
 const SHORT_TIME_OPTS = { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" };
@@ -2707,7 +2708,9 @@ async function viewSubmission(sid) {
   } catch (e) {
     if (!current()) return;
     const msg = e.status === 403
-      ? peerAccessMessage({ reason: /contest/.test(e.message) ? "contest" : /hidden/.test(e.message) ? "hidden" : "attempt" })
+      ? peerAccessMessage({ reason: /contest/.test(e.message) ? "contest"
+          : /hidden/.test(e.message) ? "hidden"
+          : /incomplete/.test(e.message) ? "incomplete" : "" })
       : (e.status === 401 ? peerAccessMessage({ reason: "login" }) : e.status === 503 ? peerAccessMessage({ reason: "unavailable" }) : e.message);
     show("task");
     setTaskTab("submit");
