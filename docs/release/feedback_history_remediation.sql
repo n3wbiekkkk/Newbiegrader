@@ -5,10 +5,12 @@
 -- review. Keep the transaction ending in ROLLBACK until the preview and backup
 -- have been reviewed; change only the final ROLLBACK to COMMIT when approved.
 --
--- This script intentionally targets explicit submission IDs. It preserves the
--- public sample fields and the test name/verdict/timing metadata, removes only
--- fields that could carry hidden input/output/diagnostics, and records a durable
--- backup table when committed.
+-- This script intentionally targets explicit submission IDs. It preserves only
+-- result objects whose test name is in the problem's current public
+-- problems.samples; it does not trust a stored `public` marker. It removes
+-- fields that could carry hidden input/output/diagnostics, retains the test
+-- name/verdict/timing metadata, and records a durable backup table when
+-- committed.
 begin;
 
 -- Keep a short lock window on large history tables.
@@ -43,13 +45,10 @@ where not exists (
 -- redacted. This is the review gate before the UPDATE below.
 with expanded as (
   select s.id, item,
-         coalesce(
-           (item->>'public')::boolean,
-           exists (
-             select 1
-             from jsonb_array_elements_text(coalesce(p.samples, '[]'::jsonb)) as sample(name)
-             where sample.name = item->>'test'
-           )
+         exists (
+           select 1
+           from jsonb_array_elements_text(coalesce(p.samples, '[]'::jsonb)) as sample(name)
+           where sample.name = item->>'test'
          ) as is_public
   from public.submissions s
   join remediation_targets t on t.id = s.id
@@ -69,13 +68,10 @@ with redacted as (
          coalesce(
            jsonb_agg(
              case
-               when coalesce(
-                      (item->>'public')::boolean,
-                      exists (
-                        select 1
-                        from jsonb_array_elements_text(coalesce(p.samples, '[]'::jsonb)) as sample(name)
-                        where sample.name = item->>'test'
-                      )
+               when exists (
+                      select 1
+                      from jsonb_array_elements_text(coalesce(p.samples, '[]'::jsonb)) as sample(name)
+                      where sample.name = item->>'test'
                     ) is true
                  then item
                else (
@@ -110,13 +106,10 @@ declare
 begin
   with expanded as (
     select s.id, item,
-           coalesce(
-             (item->>'public')::boolean,
-             exists (
-               select 1
-               from jsonb_array_elements_text(coalesce(p.samples, '[]'::jsonb)) as sample(name)
-               where sample.name = item->>'test'
-             )
+           exists (
+             select 1
+             from jsonb_array_elements_text(coalesce(p.samples, '[]'::jsonb)) as sample(name)
+             where sample.name = item->>'test'
            ) as is_public
     from public.submissions s
     join remediation_targets t on t.id = s.id

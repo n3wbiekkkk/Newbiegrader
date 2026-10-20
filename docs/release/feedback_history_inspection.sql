@@ -8,21 +8,19 @@
 --
 -- "test data" here means any of input/expected/actual/diff/stdout/stderr/detail.
 -- A row is potentially over-disclosed when such data exists for a result that
--- is not a current public sample. Stored rows from older releases may omit the
--- `public` marker; the join against problems.samples is deliberately
--- conservative when that marker is absent or the problem row has been removed.
+-- is not a current public sample. Current problems.samples is authoritative:
+-- the stored `public` marker is not trusted for this decision, because a stale
+-- or malformed marker must not hide a non-sample result. If the problem row is
+-- missing, every result is treated as non-public.
 
 -- 1. Overall count by problem and contest association.
 with result_items as (
   select s.id, s.problem, s.contest_id, s.created_at, s.kind,
          item,
-         coalesce(
-           (item->>'public')::boolean,
-           exists (
-             select 1
-             from jsonb_array_elements_text(coalesce(p.samples, '[]'::jsonb)) as sample(name)
-             where sample.name = item->>'test'
-           )
+         exists (
+           select 1
+           from jsonb_array_elements_text(coalesce(p.samples, '[]'::jsonb)) as sample(name)
+           where sample.name = item->>'test'
          ) as is_public,
          (
            coalesce(length(item->>'input'), 0) > 0
@@ -51,13 +49,10 @@ order by potentially_over_disclosed_results desc, problem, contest_id;
 with result_items as (
   select s.id, s.problem, s.contest_id, s.created_at, s.kind, s.user_email,
          item,
-         coalesce(
-           (item->>'public')::boolean,
-           exists (
-             select 1
-             from jsonb_array_elements_text(coalesce(p.samples, '[]'::jsonb)) as sample(name)
-             where sample.name = item->>'test'
-           )
+         exists (
+           select 1
+           from jsonb_array_elements_text(coalesce(p.samples, '[]'::jsonb)) as sample(name)
+           where sample.name = item->>'test'
          ) as is_public,
          (
            coalesce(length(item->>'input'), 0) > 0
