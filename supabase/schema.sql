@@ -335,7 +335,11 @@ begin
   end if;
   update public.judge_jobs set status=case when coalesce(p_error,'')='' then 'done' else 'error' end,
     result=case when p_result is null then null else p_result || jsonb_build_object('id',v_id) end,
-    error=coalesce(p_error,''),finished_at=now(),lease_until=null,submission_id=v_id where id=p_id;
+    error=coalesce(p_error,''),finished_at=now(),lease_until=null,submission_id=v_id,
+    -- The submission row owns the validated source. Terminal jobs need only
+    -- the result; retaining source/payload would duplicate user code and
+    -- playground input indefinitely in the queue table.
+    source='',payload='{}'::jsonb where id=p_id;
   return jsonb_build_object('applied',true,'submission_id',v_id);
 end $$;
 
@@ -654,5 +658,5 @@ create table if not exists public.admins (
   created_by text not null default ''
 );
 alter table public.admins enable row level security;
-revoke all on public.admins from anon, authenticated;
+revoke all on public.admins from public, anon, authenticated;
 grant all on public.admins to service_role;

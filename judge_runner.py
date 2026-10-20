@@ -22,6 +22,11 @@ from dataclasses import dataclass
 
 ROOT = Path(__file__).resolve().parent
 
+# Mirrors grader.SPAWN_FAILED_* (tests assert they stay equal) so the supervisor
+# can report "the wrapper never started" without importing the engine.
+SPAWN_FAILED_RC = 127
+SPAWN_FAILED_MARKER = "GRADER_SPAWN_FAILED"
+
 
 class _WindowsJob:
     def __init__(self, process):
@@ -134,9 +139,19 @@ def _cleanup_linux():
 
 
 def _supervise(command: list[str], pid_file: str, expected_parent: int) -> int:
+    def spawn_failed(exc) -> int:
+        # No user code ran: report an environment failure so the engine can
+        # refuse a verdict instead of scoring the supervisor's exit code.
+        print(f"[judge_runner] {SPAWN_FAILED_MARKER}: {exc}", file=sys.stderr)
+        return SPAWN_FAILED_RC
+
     # os.read avoids a buffered read consuming the worker's subsequent stdin.
-    if os.read(0, 1) != b"\0":
-        return 125
+    try:
+        handshake = os.read(0, 1)
+    except OSError as exc:
+        return spawn_failed(exc)
+    if handshake != b"\0":
+        return spawn_failed("supervisor handshake was not received")
     linux = sys.platform.startswith("linux")
     stopped = False
 
@@ -147,11 +162,14 @@ def _supervise(command: list[str], pid_file: str, expected_parent: int) -> int:
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     if linux:
-        libc = ctypes.CDLL(None, use_errno=True)
-        if libc.prctl(36, 1, 0, 0, 0) != 0:  # PR_SET_CHILD_SUBREAPER
-            raise OSError(ctypes.get_errno(), "cannot enable child subreaper")
-        if libc.prctl(1, signal.SIGTERM, 0, 0, 0) != 0:  # PR_SET_PDEATHSIG
-            raise OSError(ctypes.get_errno(), "cannot monitor supervisor owner")
+        try:
+            libc = ctypes.CDLL(None, use_errno=True)
+            if libc.prctl(36, 1, 0, 0, 0) != 0:  # PR_SET_CHILD_SUBREAPER
+                raise OSError(ctypes.get_errno(), "cannot enable child subreaper")
+            if libc.prctl(1, signal.SIGTERM, 0, 0, 0) != 0:  # PR_SET_PDEATHSIG
+                raise OSError(ctypes.get_errno(), "cannot monitor supervisor owner")
+        except OSError as exc:
+            return spawn_failed(exc)
         # The owner may have died between spawning us and setting PDEATHSIG.
         if os.getppid() != expected_parent:
             stopped = True
@@ -159,8 +177,14 @@ def _supervise(command: list[str], pid_file: str, expected_parent: int) -> int:
         return 124
     process = None
     try:
-        process = subprocess.Popen(command)
-        Path(pid_file).write_text(str(process.pid), encoding="ascii")
+        try:
+            process = subprocess.Popen(command)
+            Path(pid_file).write_text(str(process.pid), encoding="ascii")
+        except OSError as exc:
+            # Popen failed (nothing started) or the pid file could not be
+            # written (the child is killed by the finally block below). Either
+            # way no submission code may be scored.
+            return spawn_failed(exc)
         while process.poll() is None and not stopped:
             time.sleep(.01)
         return 124 if stopped else process.returncode
@@ -377,7 +401,13 @@ def _job() -> int:
 
 if __name__ == "__main__":
     if sys.argv[1:2] == ["--supervise"]:
-        returncode = _supervise(sys.argv[5:], sys.argv[2], int(sys.argv[3]))
+        try:
+            returncode = _supervise(sys.argv[5:], sys.argv[2], int(sys.argv[3]))
+        except Exception as exc:
+            # Unexpected supervisor failure: fail closed as an environment
+            # error, never let exit code 1 become the submission's verdict.
+            print(f"[judge_runner] {SPAWN_FAILED_MARKER}: {exc}", file=sys.stderr)
+            returncode = SPAWN_FAILED_RC
         if os.name == "posix" and returncode < 0:
             # Replicate the signal after cleanup; SystemExit(-9) becomes 247 and
             # would hide the grader's existing SIGKILL/MLE classification.

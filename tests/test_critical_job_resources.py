@@ -90,12 +90,16 @@ class CriticalJobResources(unittest.TestCase):
             self.assertFalse(resources._active)
 
     def test_critical_global_cgroup_root_is_never_modified(self):
+        # Stub the supervisor capability read: without it the test errors on
+        # non-Linux hosts and passes vacuously (capability branch) as an
+        # unprivileged user. Pin the failure to the delegated-manager check.
         with patch.dict(os.environ, {"GRADER_REQUIRE_JOB_CGROUP": "1", "GRADER_JOB_CGROUP_ROOT": "/sys/fs/cgroup"}), \
                 patch.object(resources.sys, "platform", "linux"), \
                 patch.object(resources.os, "geteuid", return_value=0), \
+                patch.object(Path, "read_text", return_value="CapEff:\t00000000000000ff\n"), \
                 patch.object(resources, "_private_directory"), \
                 patch.object(resources, "_write") as write:
-            with self.assertRaises(resources.IsolationUnavailable):
+            with self.assertRaisesRegex(resources.IsolationUnavailable, "delegated manager subgroup"):
                 resources.initialize()
         write.assert_not_called()
 
@@ -148,7 +152,10 @@ class CriticalJobResources(unittest.TestCase):
         write.assert_not_called()
 
     def test_critical_required_cgroups_are_checked_even_for_nonroot_worker(self):
-        with patch.dict(os.environ, {"GRADER_ALLOW_UNISOLATED_JUDGE": "1", "GRADER_REQUIRE_NETNS": "0"}), \
+        # Explicit session secret: this test must not depend on another module's
+        # import side effect to pass when the file runs on its own.
+        with patch.dict(os.environ, {"GRADER_ALLOW_UNISOLATED_JUDGE": "1", "GRADER_REQUIRE_NETNS": "0",
+                                     "SESSION_SECRET": "synthetic-critical-session-secret"}), \
                 patch.object(server, "GRADER_ROLE", "worker"), \
                 patch.object(server, "QUEUE_MODE", "database"), \
                 patch.object(server.os, "geteuid", return_value=1000), \

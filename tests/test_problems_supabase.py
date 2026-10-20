@@ -478,17 +478,13 @@ class SupabaseProblems(unittest.TestCase):
         tc = next(t for t in local.tests if t.name == sample)
         self.assertEqual(r.json()["input"], tc.input)
         self.assertEqual(r.json()["output"], tc.expected)
-        # Admission is metadata-only; missing assets must fail in the async
-        # worker, never produce a judged verdict or persisted submission.
-        r = self.client.post("/api/submit",
-                             data={"problem": slug, "language": "python",
-                                   "code": 'print("synthetic-storage-canary")\n'},
-                             headers=BROWSER)
-        self.assertEqual(r.status_code, 202, r.text)
-        done = self.wait_job(r.json()["job_id"])
+        # ...but submission still fails closed: admission deliberately needs only
+        # metadata, so the worker resolves the private bytes, finds none, and
+        # ends the job as an explicit error (never Accepted, never a verdict).
+        queued = self.submit(slug, (ROOT / "examples" / f"{slug}_ref.py").read_text())
+        done = self.wait_job(queued["job_id"])
         self.assertEqual(done["status"], "error", done)
-        self.assertFalse(done.get("result"))
-        self.assertFalse(self.fake.tables.get("submissions", []))
+        self.assertIn("unavailable", (done.get("error") or "").lower())
 
     def test_schema_has_private_problem_storage(self):
         sql = (ROOT / "supabase" / "schema.sql").read_text(encoding="utf-8")

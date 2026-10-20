@@ -366,6 +366,9 @@ async def _security_headers(request: Request, call_next):
     if request.url.path == "/api/history" or request.url.path.startswith("/api/history/"):
         resp.headers["Cache-Control"] = "private, no-store"
         resp.headers["Vary"] = "Cookie"
+    if request.url.path == "/api/admin" or request.url.path.startswith("/api/admin/"):
+        resp.headers["Cache-Control"] = "private, no-store"
+        resp.headers["Vary"] = "Cookie"
     resp.headers["Content-Security-Policy"] = (
         "default-src 'self'; script-src 'self'; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
@@ -568,6 +571,46 @@ def _db_err(e: Exception) -> HTTPException:
     return HTTPException(status_code=500, detail="database error")
 
 
+def _missing_submission_column(error: Exception) -> bool:
+    """True only for an explicit PostgREST/PostgreSQL missing-column signal.
+
+    A generic error containing the word "column" can be an integrity failure;
+    retrying that would silently drop provenance fields.
+    """
+    msg = str(error)
+    low = msg.lower()
+    return ("42703" in msg or "pgrst204" in low
+            or "undefined_column" in low
+            or ("column" in low and ("does not exist" in low
+                                     or "could not find" in low)))
+
+
+def _legacy_submission_row(row: dict, error: Exception, *, operation: str) -> dict:
+    """Strip only the 2026-10 traceability columns for an old schema.
+
+    A contest row may never lose contest_id. A practice row has no provenance
+    to lose, so it may also use the old schema when contest_id itself is absent.
+    Raises the original error for any non-missing-column failure.
+    """
+    if not _missing_submission_column(error):
+        raise error
+    low = str(error).lower()
+    if "contest_id" in low and row.get("contest_id"):
+        print("[web] refusing to drop contest_id from a contest submission; "
+              "run supabase/schema.sql", file=sys.stderr)
+        raise error
+    if row.get("contest_id"):
+        traceability = tuple(c for c in _NEW_SUB_COLS if c != "contest_id")
+    else:
+        traceability = _NEW_SUB_COLS
+    slim = {k: v for k, v in row.items() if k not in traceability}
+    if len(slim) == len(row):
+        raise error
+    print(f"[web] submissions {operation} retried without {traceability[0]}.. "
+          f"({error}); run supabase/schema.sql to add them", file=sys.stderr)
+    return slim
+
+
 async def _store_submission(row: dict, target_id: Optional[str] = None) -> Optional[str]:
     """Persist one submission (insert, or update when rejudging).
 
@@ -579,22 +622,22 @@ async def _store_submission(row: dict, target_id: Optional[str] = None) -> Optio
 
     def _write():
         if target_id:
-            return _sb.table("submissions").update(row).eq("id", target_id).execute()
+            try:
+                return _sb.table("submissions").update(row).eq("id", target_id).execute()
+            except Exception as first:
+                # Keep rejudge compatible with a pre-2026-10 schema too, under
+                # the same no-provenance-downgrade rule as inserts.
+                slim = _legacy_submission_row(row, first, operation="update")
+                return (_sb.table("submissions").update(slim)
+                        .eq("id", target_id).execute())
         try:
             return _sb.table("submissions").insert(row).execute()
         except Exception as first:
             # Pre-2026-10 database: the extra traceability columns do not exist
             # yet. Drop them rather than losing the submission. Retry ONLY for
-            # missing-column errors; network/timeouts must not double-insert.
-            msg = str(first)
-            if "42703" not in msg and "undefined_column" not in msg.lower() and \
-               "could not find" not in msg.lower() and "column" not in msg.lower():
-                raise
-            slim = {k: v for k, v in row.items() if k not in _NEW_SUB_COLS}
-            if len(slim) == len(row):
-                raise
-            print(f"[web] submissions insert retried without {_NEW_SUB_COLS[0]}.. "
-                  f"({first}); run supabase/schema.sql to add them", file=sys.stderr)
+            # missing-column errors; network/timeouts must not double-insert and
+            # integrity errors must not silently drop provenance columns.
+            slim = _legacy_submission_row(row, first, operation="insert")
             return _sb.table("submissions").insert(slim).execute()
 
     try:
@@ -1120,7 +1163,12 @@ async def _finish_job(jid: str, *, result: Optional[dict] = None, stored: Option
     job["status"] = "error" if error else "done"
     job["error"] = error
     if result is not None:
-        job["result"] = result
+        # Local mode keeps the same redacted variant the database queue stores.
+        # The requester-privileged view (REVEAL_ALL on admin rejudges) must not
+        # live in a record the submission owner can poll; job_status re-applies
+        # the job's policy per request.
+        job["result"] = result if job.get("kind") == "playground" else (
+            stored if stored is not None else result)
     job["finished_at"] = _iso_now()
     job.setdefault("created_monotonic", time.monotonic())
     # The submission row already owns the validated source. Polling terminal
@@ -1135,7 +1183,10 @@ async def _finish_job(jid: str, *, result: Optional[dict] = None, stored: Option
             _active_jobs.pop(email, None)
     await _update_job_db(jid, {"status": job["status"], "error": error,
                                "finished_at": job["finished_at"],
-                               "result": stored if stored is not None else result})
+                               "result": stored if stored is not None else result,
+                               # The row already owns the source. Do not keep
+                               # a second copy in the status record.
+                               "source": ""})
     _prune_jobs()
 
 
@@ -1332,6 +1383,25 @@ def _submission_row(job: dict, result: dict, stored: Optional[dict] = None) -> d
 
 
 # ---- contest policy (B7) ----
+def _contest_times_valid(contest: Optional[dict]) -> bool:
+    """True only for timezone-aware, ordered contest bounds.
+
+    _contest_window's legacy fallback treats malformed dates as ended for
+    display purposes.  Feedback authorities must never reuse that fallback:
+    an invalid bound is an unavailable policy, not permission to show samples.
+    """
+    if not isinstance(contest, dict):
+        return False
+    try:
+        start = dt.datetime.fromisoformat(
+            str(contest.get("starts_at")).replace("Z", "+00:00"))
+        end = dt.datetime.fromisoformat(
+            str(contest.get("ends_at")).replace("Z", "+00:00"))
+    except (TypeError, ValueError, OverflowError):
+        return False
+    return start.tzinfo is not None and end.tzinfo is not None and end > start
+
+
 def _contest_window(contest: dict) -> str:
     """'upcoming' | 'running' | 'ended' (UTC now vs the contest window)."""
     now = dt.datetime.now(dt.timezone.utc)
@@ -1379,6 +1449,8 @@ def _parse_bool(value: object, default: bool = True) -> bool:
 def _reveal_for(contest: Optional[dict], email: str) -> str:
     if _is_admin(email):
         return REVEAL_ALL
+    if contest is not None and not _contest_times_valid(contest):
+        return REVEAL_NONE
     if contest and _contest_window(contest) == "running" and contest.get("show_samples") is False:
         return REVEAL_NONE
     return REVEAL_SAMPLES
@@ -1394,8 +1466,20 @@ def _live_hidden_pids(exclude_cid: str = "") -> set:
     if _sb is None:
         return hidden
     try:
-        for row in _contest_policy_rows():
+        # Sample bytes are a live disclosure boundary: never let the 20s
+        # visibility cache keep serving them after another process turns
+        # show_samples off. Policy failures still raise (fail closed).
+        for row in _contest_policy_rows(fresh=True):
             if exclude_cid and row.get("id") == exclude_cid:
+                continue
+            # A malformed contest bound is not proof samples are public.
+            # Hide its listed problems until the policy can be trusted.
+            if not _contest_times_valid(row):
+                for x in (row.get("problems") or []):
+                    try:
+                        hidden.add(_resolve_pid(str(x)))
+                    except Exception:
+                        pass
                 continue
             if _contest_window(row) != "running":
                 continue
@@ -1425,9 +1509,7 @@ def _effective_reveal(contest: Optional[dict], email: str, pid: str) -> str:
                 continue
             # _contest_window's legacy invalid-date fallback is not a basis
             # for declassifying fixtures. Require valid, timezone-aware dates.
-            start = dt.datetime.fromisoformat(str(row.get("starts_at")).replace("Z", "+00:00"))
-            end = dt.datetime.fromisoformat(str(row.get("ends_at")).replace("Z", "+00:00"))
-            if start.tzinfo is None or end.tzinfo is None or end <= start:
+            if not _contest_times_valid(row):
                 return REVEAL_NONE
             window = _contest_window(row)
             if window != "ended":
@@ -1437,6 +1519,25 @@ def _effective_reveal(contest: Optional[dict], email: str, pid: str) -> str:
     except Exception:
         return REVEAL_NONE
     return REVEAL_SAMPLES if protected else REVEAL_PRACTICE
+
+
+def _live_reveal(contest_id: object, owner: str, pid: str) -> str:
+    """Owner-facing feedback policy for a stored row, evaluated now.
+
+    Contest rows use their own row so an admin owner keeps the same ALL view
+    the submit/rejudge path used; everyone else follows the live window.
+    Practice rows follow the contest-aware practice policy. Unknown contests
+    and policy failures fail closed to REVEAL_NONE.
+    """
+    if not contest_id:
+        return _effective_reveal(None, owner, pid)
+    try:
+        for row in _contest_policy_rows(fresh=True):
+            if str(row.get("id")) == str(contest_id):
+                return _reveal_for(row, owner)
+    except Exception:
+        return REVEAL_NONE
+    return REVEAL_NONE
 
 
 # ---- contest registration (Codeforces style) ----
@@ -2936,7 +3037,9 @@ def _run_playground(prob: Optional[grader.Problem], ext: str, source: str,
         res = grader.run_one(cmd, stdin_data, time_limit, eff_mem,
                              grader.detect_language(src))
         reason = res.get("reason", "")
-        if reason == "sandbox-unavailable":
+        if reason in ("sandbox-unavailable", "spawn-fail"):
+            # No user code ran (or mandatory isolation was unavailable): this
+            # is an environment failure, never a user-visible RE/CE verdict.
             return {"error": "execution environment unavailable"}
         if reason == "timeout":
             verdict = "TLE"
@@ -2944,7 +3047,7 @@ def _run_playground(prob: Optional[grader.Problem], ext: str, source: str,
             verdict = "OLE"
         elif reason in ("oom", "sigkill"):
             verdict = "MLE"
-        elif reason.startswith("signal:") or reason == "spawn-fail":
+        elif reason.startswith("signal:"):
             verdict = "RE"
         elif res.get("returncode"):
             verdict = "RE"
@@ -3295,10 +3398,18 @@ async def job_status(request: Request, jid: str) -> dict:
         raise HTTPException(status_code=404, detail="unknown job")
     status = job.get("status", "queued")
     result = job.get("result") if status == "done" else None
+    if result is not None and not isinstance(result, dict):
+        # Legacy/corrupt JSON could bypass the field-level redactor. Return no
+        # verdict payload rather than passing an unknown structure to a client.
+        result = None
     if isinstance(result, dict) and job.get("kind") != "playground":
-        reveal = job.get("reveal") or REVEAL_SAMPLES
-        if reveal == REVEAL_PRACTICE:
-            reveal = await asyncio.to_thread(_effective_reveal, None, user["email"], job.get("problem", ""))
+        # Re-evaluate the owner-facing live policy: the job's reveal is a
+        # creation-time snapshot and may predate a contest switching to hidden.
+        # Use the job owner, never the requester, so an admin poll cannot
+        # declassify another user's submission.
+        reveal = await asyncio.to_thread(
+            _live_reveal, job.get("contest_id"), job.get("user_email", ""),
+            job.get("problem", ""))
         result = _result_with_reveal(job, result, reveal)
     return {
         "id": jid, "status": status, "problem": job.get("problem", ""),
@@ -3414,7 +3525,28 @@ def _completed_peer_submission(row: dict) -> bool:
 def _peer_problem_policy(pid: str, contest_id: Optional[str] = None) -> str:
     """Fresh visibility and contest decision; empty string means unprotected."""
     prob = PROBLEMS.get(pid)
-    if prob is None or not getattr(prob, "is_published", True):
+    if prob is None:
+        return "hidden"
+    hidden_problem = bool(getattr(prob, "hidden", False))
+    if PROBLEM_SOURCE == "supabase":
+        # Peer source is a disclosure decision. Do not trust the TTL catalog
+        # for publication state: a problem can be unpublished or hidden while a
+        # history-only replica still has the old Problem object.
+        if _sb is None:
+            return "unavailable"
+        try:
+            res = (_sb.table("problems").select("slug,is_published,hidden")
+                   .eq("slug", pid).limit(1).execute())
+            fresh_rows = res.data or []
+        except Exception:
+            return "unavailable"
+        if not fresh_rows:
+            return "hidden"
+        fresh = fresh_rows[0]
+        if not _parse_bool(fresh.get("is_published"), False):
+            return "hidden"
+        hidden_problem = _parse_bool(fresh.get("hidden"), False)
+    elif not getattr(prob, "is_published", True):
         return "hidden"
     try:
         # Do not use the TTL cache or the legacy missing-table=empty fallback:
@@ -3443,7 +3575,7 @@ def _peer_problem_policy(pid: str, contest_id: Optional[str] = None) -> str:
             return "contest"  # Missing/deleted target contest policy is unknown.
         # Every related contest is now known to have ended, so it grants the
         # same problem visibility as the existing started-contest policy.
-        if prob.hidden and not related:
+        if hidden_problem and not related:
             return "hidden"
         return ""
     except Exception:
@@ -3560,9 +3692,13 @@ async def history_detail(request: Request, sid: str) -> dict:
     if not rows:
         raise HTTPException(status_code=404, detail="submission not found")
     row = dict(rows[0])
+    owner = row.get("user_email") or ""
     # Owners/admins retain their existing feedback. Peers receive a narrower,
     # explicitly serialized source/results view after fresh authorization.
-    if row.get("user_email") != email and not _is_admin(email):
+    # A non-owner admin is authorized to inspect the row, but must still use
+    # the submission owner's feedback policy below; admin access is not a
+    # reason to declassify a live hidden contest or an old practice row.
+    if owner != email and not _is_admin(email):
         access = await asyncio.to_thread(_peer_inspection_access, email,
                                          row.get("problem", ""), row.get("contest_id"))
         if not access["allowed"] or not _completed_peer_submission(row):
@@ -3571,9 +3707,13 @@ async def history_detail(request: Request, sid: str) -> dict:
                                 detail="peer inspection locked: " + reason)
         return _peer_submission_detail(row)
     row.pop("user_email", None)  # never expose login emails publicly
-    reveal = REVEAL_SAMPLES
-    if not row.get("contest_id") and any(r.get("practice_feedback") is True for r in row.get("results", [])):
-        reveal = await asyncio.to_thread(_effective_reveal, None, email, row.get("problem", ""))
+    # Re-evaluate the live owner-facing policy: stored rows can predate the
+    # current contest window (or an old rejudge), so trusting their bytes would
+    # serve samples during a show_samples=false contest. Use the submission
+    # owner, not the viewer, so an admin looking at someone else's row cannot
+    # declassify it.
+    reveal = await asyncio.to_thread(
+        _live_reveal, row.get("contest_id"), owner, row.get("problem", ""))
     row["results"] = _result_with_reveal(row, {"results": row.get("results", [])}, reveal)["results"]
     return row
 
@@ -3782,6 +3922,17 @@ async def admin_remove_admin(request: Request, email: str) -> dict:
     return {"ok": True, "email": target}
 
 
+_ADMIN_HISTORY_FIELDS = (
+    "id", "created_at", "user_email", "name", "problem", "language",
+    "verdict", "accepted", "passed", "total", "score", "counts", "contest_id",
+)
+
+
+def _admin_history_row(row: dict) -> dict:
+    """Allowlist metadata even when a storage adapter ignores the projection."""
+    return {key: row.get(key) for key in _ADMIN_HISTORY_FIELDS}
+
+
 @app.get("/api/admin/submissions")
 async def admin_submissions(request: Request, page: int = 1, per_page: int = 20,
                             problem: Optional[str] = None) -> dict:
@@ -3816,7 +3967,7 @@ async def admin_submissions(request: Request, page: int = 1, per_page: int = 20,
         "per_page": per_page,
         "total": total,
         "pages": max(1, (total + per_page - 1) // per_page),
-        "submissions": res.data or [],
+        "submissions": [_admin_history_row(row) for row in (res.data or [])],
     }
 
 
@@ -4129,7 +4280,11 @@ def delete_contest(request: Request, cid: str) -> dict:
 
 
 def _contest_result_frozen(contest: Optional[dict], submission: dict) -> bool:
-    if not contest or _contest_window(contest) != "running":
+    if not contest:
+        return False
+    if not _contest_times_valid(contest):
+        return True  # malformed policy cannot disclose a contest result
+    if _contest_window(contest) != "running":
         return False
     try:
         minutes = int(contest.get("freeze_minutes") or 0)
@@ -4156,7 +4311,9 @@ def _contest_scoreboard(contest: dict, live: bool, allowed_pids: Optional[set] =
     # contest timestamps are malformed.
     freeze_cutoff = None
     freeze_all = False
-    if not live and _contest_window(contest) == "running":
+    if not live and not _contest_times_valid(contest):
+        freeze_all = True
+    elif not live and _contest_window(contest) == "running":
         try:
             minutes = int(contest.get("freeze_minutes") or 0)
             if minutes > 0:
@@ -4464,16 +4621,23 @@ async def admin_rejudge(request: Request) -> dict:
     # Cache contests once: rejudged rows keep their original contest's policy,
     # so a live show_samples=false contest stays REVEAL_NONE.
     _contest_cache: Dict[str, Optional[dict]] = {}
-    def _reveal_for_row(cid: object, requester: str) -> str:
+    _practice_reveal: Dict[str, str] = {}
+    def _reveal_for_row(cid: object, owner: str, pid: str) -> str:
         if not cid:
-            return REVEAL_SAMPLES
+            # Practice feedback follows the same live policy as submit: hidden
+            # during any running show_samples=false contest, PRACTICE otherwise.
+            if pid not in _practice_reveal:
+                _practice_reveal[pid] = _effective_reveal(None, owner, pid)
+            return _practice_reveal[pid]
         ckey = str(cid)
         if ckey not in _contest_cache:
             try:
                 _contest_cache[ckey] = _contest_or_404(ckey)
             except HTTPException:
+                # Unknown/unavailable contest: fail closed, never samples.
                 _contest_cache[ckey] = None
-        return _reveal_for(_contest_cache[ckey], requester)
+        contest = _contest_cache[ckey]
+        return _reveal_for(contest, owner) if contest is not None else REVEAL_NONE
     for row in res.data or []:
         pid = row.get("problem", "")
         lang = row.get("language", "")
@@ -4488,7 +4652,10 @@ async def admin_rejudge(request: Request) -> dict:
                 "filename": row.get("filename"), "source": code,
                 "contest_id": row.get("contest_id"),
                 "target_id": row.get("id"),
-                "reveal": _reveal_for_row(row.get("contest_id"), user.get("email", "")),
+                # Owner-facing storage policy, never the requester's: an admin
+                # rejudge must not declassify a live show_samples=false contest.
+                "reveal": _reveal_for_row(
+                    row.get("contest_id"), row.get("user_email") or "", pid),
                 "tests_hash": _tests_hash(pid),
                 "grader_version": grader.GRADER_VERSION,
             }, track_active=False)

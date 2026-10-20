@@ -160,6 +160,13 @@ SANDBOX_REFUSED_RC = 126
 SANDBOX_REFUSED_MARKER = "GRADER_REQUIRE_NETNS"
 PRIVILEGE_REFUSED_RC = 125
 PRIVILEGE_REFUSED_MARKER = "GRADER_PRIVILEGE_DROP_FAILED"
+# Exit code + marker used when the supervisor cannot start the sandbox wrapper
+# at all (host resource failure such as EAGAIN). run_one maps it to reason
+# "spawn-fail", which judge_test turns into SandboxUnavailable: no submission
+# code ran, so the job must end as an environment error, never a verdict.
+# judge_runner.SPAWN_FAILED_* mirrors these values (asserted by tests).
+SPAWN_FAILED_RC = 127
+SPAWN_FAILED_MARKER = "GRADER_SPAWN_FAILED"
 
 
 SAMPLE_INTERVAL = _env_float("GRADER_SAMPLE_INTERVAL",
@@ -519,17 +526,26 @@ def prepare_workspace(workdir: Path, src: Optional[Path] = None) -> None:
 
 def _compile(command: list[str], workdir: Path):
     try:
-        from judge_runner import run_bounded
+        from judge_runner import run_bounded, SPAWN_FAILED_RC, SPAWN_FAILED_MARKER
     except ImportError as e:
-        raise CompileError(f"judge runner unavailable: {e}")
+        # The runner is infrastructure, not the student's source: never CE.
+        raise SandboxUnavailable("compiler runner unavailable (not a verdict)") from e
     prepare_workspace(workdir)
     # Linux/root must drop privileges even when compile memory limits are off.
     if os.name == "posix" and (COMPILE_MEMORY_MB or (
             sys.platform.startswith("linux") and os.geteuid() == 0)):
         command = [sys.executable, str(Path(__file__).resolve()), "--compile-sandbox",
                    str(COMPILE_MEMORY_MB), str(COMPILE_TIMEOUT), "--", *command]
-    result = run_bounded(command, "", COMPILE_TIMEOUT, output_limit=OUTPUT_LIMIT_BYTES,
-                         env=judge_env(str(workdir)), cwd=str(workdir))
+    try:
+        result = run_bounded(command, "", COMPILE_TIMEOUT, output_limit=OUTPUT_LIMIT_BYTES,
+                             env=judge_env(str(workdir)), cwd=str(workdir))
+    except OSError as exc:
+        # Host resource failure before the compiler started: not a CE.
+        raise SandboxUnavailable("compiler could not be started (not a verdict)") from exc
+    if result.returncode == SPAWN_FAILED_RC and SPAWN_FAILED_MARKER in (result.stderr or ""):
+        # The supervisor could not start the compiler at all. No student code
+        # was compiled, so this must never be recorded as CE.
+        raise SandboxUnavailable("compiler could not be started (not a verdict)")
     if result.returncode == PRIVILEGE_REFUSED_RC and PRIVILEGE_REFUSED_MARKER in result.stderr:
         raise SandboxUnavailable("compiler privilege drop failed (not a verdict)")
     if result.reason == "timeout":
@@ -821,12 +837,22 @@ def build_limits(memory_mb: int, time_limit: float, sandbox: bool = True, *,
             cpu = max(1, int(math.ceil(float(time_limit) + 1)))
             set_limit("RLIMIT_CPU", cpu)
             for lim, val in (
-                ("RLIMIT_NPROC", 64),      # กัน fork bomb
                 ("RLIMIT_FSIZE", 64 * 1024 * 1024),  # กันเขียนไฟล์ถล่ม disk
                 ("RLIMIT_CORE", 0),        # ไม่เอา core dump
                 ("RLIMIT_NOFILE", 64),     # กันเปิด fd ถล่ม (pinned by test_judge_runner)
             ):
                 set_limit(lim, val)
+            # RLIMIT_NPROC caps every process of the real UID, not just this
+            # job's children. It only holds as intended where the sandbox owns
+            # the UID (production Linux root drops to a unique job UID before
+            # exec). On macOS/Windows, and on non-root Linux where every job
+            # shares the service UID, a 64-process ceiling sits below the
+            # developer's own session: clang++ -> cc1 -> ld can fail EAGAIN,
+            # turning valid C/C++ sources into bogus CE. Keep the ceiling only
+            # for the Linux root identity-drop model; the warning above remains
+            # for all rlimit-only runs.
+            if sys.platform.startswith("linux") and os.geteuid() == 0:
+                set_limit("RLIMIT_NPROC", 64)  # กัน fork bomb
         except (ImportError, AttributeError, ValueError, OSError, TypeError):
             if strict_limits:
                 print(f"[grader] FATAL: {PRIVILEGE_REFUSED_MARKER}; resource limits unavailable",
@@ -1048,6 +1074,11 @@ def run_one(cmd: list[str], stdin_data: str, time_limit: float, memory_mb: int,
         # Strict-mode refusal: the wrapper exited before exec, so NO user
         # code ran. (A user program exiting 126 would lack the marker.)
         reason = "sandbox-unavailable"
+    if rc == SPAWN_FAILED_RC and SPAWN_FAILED_MARKER in (err or ""):
+        # The supervisor could not start the sandbox wrapper: host resource
+        # failure, not the submission. (A user program exiting 127 would lack
+        # the marker.) judge_test refuses to score it.
+        reason = "spawn-fail"
     if not reason and rc is not None and rc < 0:
         try:
             sig = -rc
@@ -1131,8 +1162,10 @@ def judge_test(cmd, tc: TestCase, prob: Problem, strict: bool,
         detail = hint + (f"\n{tail}" if tail.strip() else "")
         return "RE", wall, cpu, mem, detail, actual
     if reason == "spawn-fail":
-        detail = (res["stderr"] or "spawn failed") if diagnostics else "execution failed"
-        return "RE", wall, cpu, mem, detail, actual
+        # The sandbox wrapper never started (host resource failure): no
+        # submission code ran, so this is an environment error, never a
+        # verdict — the same contract as the strict-mode refusal above.
+        raise SandboxUnavailable("execution environment unavailable (not a verdict)")
     rc = res["returncode"]
     if rc is not None and rc != 0:
         err = res["stderr"] or ""
