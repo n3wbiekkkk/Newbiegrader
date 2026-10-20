@@ -165,6 +165,59 @@ class ContestPolicyAudit(unittest.TestCase):
         out = asyncio.run(server.history_detail(self.request_with(owner, {}), "sid-stored"))
         self.assertIn("SAMPLE-IN", json.dumps(out))
 
+    def test_live_contest_hides_practice_history_for_newly_hidden_problem(self):
+        """A practice row has no contest_id; the problem can still be listed
+        in a contest that starts later. Reading its stored samples must obey
+        the live policy rather than the row's provenance."""
+        owner = "synthetic@example.invalid"
+        row = dict(self.submission("sid-practice-stored", 0), contest_id=None,
+                   language="python",
+                   results=[{"test": "01", "verdict": "WA", "input": "SAMPLE-IN",
+                             "expected": "SAMPLE-OUT", "actual": "WRONG",
+                             "diff": "sample-diff"}])
+        self.fake.tables["contests"] = [self.contest]
+        self.fake.tables["submissions"] = [row]
+        out = asyncio.run(server.history_detail(self.request_with(owner, {}),
+                                                "sid-practice-stored"))
+        self.assertNotIn("SAMPLE-IN", json.dumps(out))
+
+        self.contest["ends_at"] = (self.now - dt.timedelta(minutes=1)).isoformat()
+        self.fake.tables["contests"] = [self.contest]
+        out = asyncio.run(server.history_detail(self.request_with(owner, {}),
+                                                "sid-practice-stored"))
+        self.assertIn("SAMPLE-IN", json.dumps(out))
+
+    def test_live_contest_hides_stored_job_feedback_on_poll(self):
+        """A job's reveal is a creation-time snapshot.
+
+        A practice job stored while the problem was outside a contest holds
+        REVEAL_SAMPLES. If the problem later enters a running
+        show_samples=false contest, polling the finished job must re-check the
+        live owner-facing policy, not replay the stale snapshot.
+        """
+        owner = "synthetic@example.invalid"
+        jid = "synthetic-stale-policy-job"
+        job = {"id": jid, "kind": "submit", "problem": self.prob.pid,
+               "contest_id": None, "user_email": owner,
+               "reveal": server.REVEAL_SAMPLES, "status": "done",
+               "language": "python", "source": "print(1)", "name": "Synthetic",
+               "result": self.result_with_samples_and_hidden()}
+        self.fake.tables["contests"] = [self.contest]
+        with patch.object(server, "QUEUE_MODE", "local"):
+            server._jobs[jid] = dict(job)
+            self.addCleanup(server._jobs.pop, jid, None)
+            polled = asyncio.run(server.job_status(self.request_with(owner, {}), jid))
+        self.assertNotIn("SAMPLE-IN", json.dumps(polled["result"]))
+        self.assertNotIn("HIDDEN-IN", json.dumps(polled["result"]))
+
+        # Positive control: after the contest ends, permitted sample feedback
+        # is visible again.
+        self.contest["ends_at"] = (self.now - dt.timedelta(minutes=1)).isoformat()
+        self.fake.tables["contests"] = [self.contest]
+        with patch.object(server, "QUEUE_MODE", "local"):
+            polled = asyncio.run(server.job_status(self.request_with(owner, {}), jid))
+        self.assertIn("SAMPLE-IN", json.dumps(polled["result"]))
+
     def test_rejudge_job_never_hands_the_owner_hidden_test_data(self):
         """The in-memory job record holds the redacted variant only.
 

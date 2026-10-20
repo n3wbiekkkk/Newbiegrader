@@ -3243,9 +3243,12 @@ async def job_status(request: Request, jid: str) -> dict:
     status = job.get("status", "queued")
     result = job.get("result") if status == "done" else None
     if isinstance(result, dict) and job.get("kind") != "playground":
-        reveal = job.get("reveal") or REVEAL_SAMPLES
-        if reveal == REVEAL_PRACTICE:
-            reveal = await asyncio.to_thread(_effective_reveal, None, user["email"], job.get("problem", ""))
+        # Re-evaluate the owner-facing live policy: the job's reveal is a
+        # creation-time snapshot and may predate a contest switching to hidden.
+        # Use the job owner, never the requester, so an admin poll cannot
+        # declassify another user's submission.
+        reveal = await asyncio.to_thread(
+            _effective_reveal, None, job.get("user_email", ""), job.get("problem", ""))
         result = _result_with_reveal(job, result, reveal)
     return {
         "id": jid, "status": status, "problem": job.get("problem", ""),
@@ -3405,13 +3408,12 @@ async def history_detail(request: Request, sid: str) -> dict:
     if row.get("user_email") != email and not _is_admin(email):
         raise HTTPException(status_code=403, detail="not your submission")
     row.pop("user_email", None)  # never expose login emails publicly
-    reveal = REVEAL_SAMPLES
-    stored_results = row.get("results", [])
-    if row.get("contest_id") or any(r.get("practice_feedback") is True for r in stored_results):
-        # Re-evaluate the live owner-facing policy: stored rows can predate the
-        # current contest window (or an old rejudge), so trusting their bytes
-        # would serve samples during a show_samples=false contest.
-        reveal = await asyncio.to_thread(_effective_reveal, None, email, row.get("problem", ""))
+    # Re-evaluate the live owner-facing policy: stored rows can predate the
+    # current contest window (or an old rejudge), so trusting their bytes would
+    # serve samples during a show_samples=false contest. With no protected
+    # contest this returns PRACTICE, which is equivalent to SAMPLES for rows
+    # without practice feedback.
+    reveal = await asyncio.to_thread(_effective_reveal, None, email, row.get("problem", ""))
     row["results"] = _result_with_reveal(row, {"results": row.get("results", [])}, reveal)["results"]
     return row
 
