@@ -6,11 +6,11 @@ rehearsal, and controlled activation. Release `609bbf1f49c510d914c440763bb2304a4
 serves all problem PDFs, public samples and private tests from backend disk;
 `/api/version.system.problem_file_storage` reports `local`. Metadata, auth and
 the durable queue remain in Supabase. See the
-[production release record](releases/PRODUCTION_BACKEND_FILES_2026-10-19.md).
+[current architecture](PRODUCTION_ARCHITECTURE.md).
 
 The operator explicitly requested moving files to the backend. No database
 migration or user-data rewrite was needed. This document keeps the design and
-operating rules; the release record holds the exact deployment evidence.
+operating rules; detailed deployment evidence is retained privately.
 
 ## Scope and trust boundary
 
@@ -116,7 +116,7 @@ drained and the singleton stopped before the switch; the API restarted in local
 mode, the real worker `--check` passed with its isolation profile, and exactly
 one worker restarted. The 45-minute recovery timer was stopped only after the
 public checks and one synthetic CE job passed. Exact IDs, backup hashes and
-limits are in the [release record](releases/PRODUCTION_BACKEND_FILES_2026-10-19.md).
+limits are retained in private release records.
 
 Do not infer deployment from Docker checks alone; those checks remain local
 evidence. A real authenticated `POST /api/submit` was not exercised because no

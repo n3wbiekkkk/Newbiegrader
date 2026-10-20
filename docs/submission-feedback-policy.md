@@ -126,4 +126,5 @@ Existing F3 sample/none redaction regressions remain unchanged and mandatory.
 Run on a disposable Linux/root environment with network disabled:
 `python tools/run_critical_tests.py`, then the full suite and Node checks.
 A branch push does not deploy the backend. Deploy only after the host isolation
-and resource prerequisites in `docs/audits/JOB_ISOLATION.md` are verified.
+and resource prerequisites in [the security release checks](SECURITY_READINESS.md)
+are verified.

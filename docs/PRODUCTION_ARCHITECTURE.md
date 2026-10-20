@@ -25,10 +25,9 @@ application code.
   only as historical recovery evidence. Current application rollback stays on
   AWS. There is no automatic legacy-origin retry/fallback.
 
-Current catalog, commands executed, tests, backup and rollback evidence:
-[20-problem catalog release](releases/PROBLEM_EXPANSION_2026-10-20.md),
-[earlier missing-file repair](releases/PROBLEM_69_FILES_2026-10-20.md),
-[backend problem-file release record](releases/PRODUCTION_BACKEND_FILES_2026-10-19.md)
-and the earlier [correctness/cache record](releases/PRODUCTION_CORRECTNESS_RELEASE_2026-10-19.md).
+See the [catalog number map](catalog/problem-numbers-2026-10-20.csv),
+[backend file-storage guide](BACKEND_PROBLEM_FILES.md), and
+[backup and restore guide](EC2_BACKUP_RESTORE.md). Detailed commands, tests and
+release evidence are retained privately.
 Historical migration checkpoints in other documents describe their original
 observation time; they do not override this current topology.

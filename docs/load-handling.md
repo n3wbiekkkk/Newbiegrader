@@ -63,7 +63,7 @@ the toolchain becomes incompatible.
 
 ## Rollout order
 
-1. Complete the [Linux validation checklist](linux-validation-todo.md). Windows checks and embedded PostgreSQL assertions have been run locally; they do not validate the production Linux sandbox.
+1. Complete the [security release checks](SECURITY_READINESS.md) on Linux. Windows checks and embedded PostgreSQL assertions have been run locally; they do not validate the production Linux sandbox.
 2. Trial the new revision against a disposable database and test accounts. Build the image, run all checks, and exercise both local and database modes.
 3. For a local-to-database transition, stop admissions, drain jobs if practical, and stop all old local-mode processes. Have the maintainer apply the complete idempotent `supabase/schema.sql` in Supabase SQL Editor. Do not run a mixed local/database fleet. Legacy running rows without ownership receive an expired lease so database workers can reclaim them; live leased ownership is left alone.
 4. Start one combined instance in database mode, verify health/version, admission, judging, history, ownership, and redaction, then add dedicated workers or API instances as needed. API-only mode requires an available worker fleet.

@@ -47,7 +47,7 @@ Practice submissions show input, expected output and actual output for failed ca
 
 </div>
 
-The [20-problem release](docs/catalog/NEW_PROBLEMS_2026-10-20.md) brings the catalog to 89 problems, numbered by difficulty under an explicit operator-approved migration. Stable slug IDs and submission history are preserved; the [number map](docs/catalog/problem-numbers-2026-10-20.csv) records previous numbers.
+The catalog contains 89 problems, numbered by difficulty under an explicit operator-approved migration. Stable slug IDs and submission history are preserved; the [number map](docs/catalog/problem-numbers-2026-10-20.csv) records previous numbers.
 
 Every problem ships with a reference solution, and every recorded verdict can be traced to the exact test set and grader version that produced it.
 
@@ -94,7 +94,7 @@ Plain HTML, CSS and JavaScript. No bundler, no transpiler and no framework.
 | `problems/` | Local working copy of the problem set (configuration, statement, tests). Not versioned here — runtime files are published to protected backend storage; metadata lives in Supabase |
 | `supabase/` | Database schema with append-only, re-runnable migrations |
 
-Host capacity is read from the service or container at startup, and worker counts, memory ceilings, queue bounds and timeouts are derived from it automatically. Current production is Cloudflare Pages + AWS EC2 t3.small with one worker; Vercel and JustRunMy are not used. Problem PDFs, public samples and private tests are served from backend disk (`GRADER_FILE_STORAGE=local`); Supabase holds metadata, auth and the durable queue. See [current architecture](docs/PRODUCTION_ARCHITECTURE.md), the [backend file release record](docs/releases/PRODUCTION_BACKEND_FILES_2026-10-19.md), the [earlier correctness/cache record](docs/releases/PRODUCTION_CORRECTNESS_RELEASE_2026-10-19.md), and the [EC2 runbook](docs/EC2_MIGRATION.md).
+Host capacity is read from the service or container at startup, and worker counts, memory ceilings, queue bounds and timeouts are derived from it automatically. Current production is Cloudflare Pages + AWS EC2 t3.small with one worker; Vercel and JustRunMy are not used. Problem PDFs, public samples and private tests are served from backend disk (`GRADER_FILE_STORAGE=local`); Supabase holds metadata, auth and the durable queue. See [current architecture](docs/PRODUCTION_ARCHITECTURE.md), [backend file storage](docs/BACKEND_PROBLEM_FILES.md), and the [EC2 runbook](docs/EC2_MIGRATION.md).
 
 ## Design Principles
 

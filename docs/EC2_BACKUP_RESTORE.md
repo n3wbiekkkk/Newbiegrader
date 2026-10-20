@@ -11,7 +11,7 @@ decryption passed. A restore into a disposable `0700` EC2 directory re-verified
 index hashes before the disposable copy was removed. Configuration/UID/tunnel
 plus `/etc/newbiegrader/problem-files.env` and the API/worker file-mode drop-ins
 were encrypted as `20261019T124435Z-ae06c238.tar.age`; decryption was verified.
-See the [backend file release record](releases/PRODUCTION_BACKEND_FILES_2026-10-19.md).
+See the [backend file-storage guide](BACKEND_PROBLEM_FILES.md).
 Automatic off-host scheduling is still not established.
 
 ## Previous application-rollout recovery check — 2026-10-19
@@ -21,8 +21,8 @@ bytes, 11.1 s dump) was restored into network-disabled disposable PostgreSQL.
 All 51 table content comparisons, 58 relation/ACL/RLS definitions, 150 constraints
 and policies matched. This supersedes the earlier logical snapshot for this
 rollout; hosted Auth/Storage-service recovery remains unverified. Configuration,
-UID and Cloudflare recovery were encrypted and decryption verified. See
-[exact scope and recovery locations](releases/PRODUCTION_CORRECTNESS_RELEASE_2026-10-19.md).
+UID and Cloudflare recovery were encrypted and decryption verified. Exact
+recovery locations are retained in private release records.
 
 Status 2026-10-19: EC2 configuration recovery, PostgreSQL **logical database**
 recovery and private Storage **file-byte** recovery verified. Running managed
