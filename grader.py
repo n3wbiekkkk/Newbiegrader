@@ -828,12 +828,21 @@ def build_limits(memory_mb: int, time_limit: float, sandbox: bool = True, *,
             cpu = max(1, int(math.ceil(float(time_limit) + 1)))
             set_limit("RLIMIT_CPU", cpu)
             for lim, val in (
-                ("RLIMIT_NPROC", 64),      # กัน fork bomb
                 ("RLIMIT_FSIZE", 64 * 1024 * 1024),  # กันเขียนไฟล์ถล่ม disk
                 ("RLIMIT_CORE", 0),        # ไม่เอา core dump
                 ("RLIMIT_NOFILE", 64),     # กันเปิด fd ถล่ม (pinned by test_judge_runner)
             ):
                 set_limit(lim, val)
+            # RLIMIT_NPROC caps every process of the real UID, not just this
+            # job's children. It only holds as intended where the sandbox owns
+            # the UID (production Linux drops to nobody before exec). On
+            # macOS/Windows there is no identity drop, so a 64-process ceiling
+            # sits below the developer's own login session and every spawn
+            # (clang++ -> cc1 -> ld) fails EAGAIN: no C/C++ compile can finish.
+            # Keep the ceiling on Linux (pinned by test_judge_runner) and leave
+            # the host limit elsewhere; the rlimit-only warning above stays.
+            if sys.platform.startswith("linux"):
+                set_limit("RLIMIT_NPROC", 64)  # กัน fork bomb
         except (ImportError, AttributeError, ValueError, OSError, TypeError):
             if strict_limits:
                 print(f"[grader] FATAL: {PRIVILEGE_REFUSED_MARKER}; resource limits unavailable",

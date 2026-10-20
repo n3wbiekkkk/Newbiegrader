@@ -2,6 +2,7 @@
 import asyncio
 import ctypes
 import importlib.util
+import json
 import os
 from pathlib import Path
 import shutil
@@ -122,6 +123,35 @@ class OutputCollectionTests(unittest.TestCase):
                                 "resource.getrlimit(resource.RLIMIT_NOFILE)[0]]))"], "", 3, 128)
         self.assertEqual(result["reason"], "")
         self.assertEqual(result["stdout"].strip(), "[134217728, 64, 67108864, 64]")
+
+    def test_shared_uid_keeps_its_host_process_ceiling_off_linux(self):
+        """RLIMIT_NPROC counts every process of the real UID, not just this
+        job's children. Off Linux there is no identity drop, so an absolute
+        64-process ceiling sits below the login session and every compiler
+        spawn fails EAGAIN (clang++ -> cc1 -> ld), turning valid C/C++ sources
+        into a bogus CE. The ceiling belongs to the Linux sandbox UID."""
+        root = Path(__file__).resolve().parent.parent
+        script = (
+            f"import sys; sys.path.insert(0, {str(root)!r})\n"
+            "import json, resource, subprocess\n"
+            "from unittest.mock import patch\n"
+            "import grader\n"
+            "before = resource.getrlimit(resource.RLIMIT_NPROC)[0]\n"
+            "with patch.object(sys, 'platform', 'darwin'):\n"
+            "    grader.build_limits(512, 3, network=False)()\n"
+            "after = resource.getrlimit(resource.RLIMIT_NPROC)[0]\n"
+            "spawn = subprocess.run([sys.executable, '-c',\n"
+            "    \"import subprocess,sys;\"\n"
+            "    \"print(subprocess.run([sys.executable,'-c','print(1)'],\"\n"
+            "    \"capture_output=True).returncode)\"], capture_output=True, text=True)\n"
+            "print(json.dumps([before, after, spawn.returncode, spawn.stdout.strip()]))\n")
+        out = subprocess.run([sys.executable, "-c", script], capture_output=True,
+                             text=True, cwd=str(root))
+        self.assertEqual(out.returncode, 0, out.stderr)
+        before, after, spawn_rc, spawn_out = json.loads(out.stdout.strip().splitlines()[-1])
+        self.assertEqual(after, before, "a shared UID must keep its host process ceiling")
+        self.assertEqual((spawn_rc, spawn_out), (0, "0"),
+                         "compiler-style two-level spawn must keep working")
 
     @unittest.skipUnless(os.name == "posix", "POSIX signal return codes")
     def test_supervisor_preserves_signal_verdict_classification(self):
