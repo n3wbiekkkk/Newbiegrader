@@ -1107,7 +1107,12 @@ async def _finish_job(jid: str, *, result: Optional[dict] = None, stored: Option
     job["status"] = "error" if error else "done"
     job["error"] = error
     if result is not None:
-        job["result"] = result
+        # Local mode keeps the same redacted variant the database queue stores.
+        # The requester-privileged view (REVEAL_ALL on admin rejudges) must not
+        # live in a record the submission owner can poll; job_status re-applies
+        # the job's policy per request.
+        job["result"] = result if job.get("kind") == "playground" else (
+            stored if stored is not None else result)
     job["finished_at"] = _iso_now()
     job.setdefault("created_monotonic", time.monotonic())
     # The submission row already owns the validated source. Polling terminal
@@ -4146,7 +4151,9 @@ async def admin_rejudge(request: Request) -> dict:
                 "filename": row.get("filename"), "source": code,
                 "contest_id": row.get("contest_id"),
                 "target_id": row.get("id"),
-                "reveal": _reveal_for_row(row.get("contest_id"), user.get("email", "")),
+                # Owner-facing storage policy, never the requester's: an admin
+                # rejudge must not declassify a live show_samples=false contest.
+                "reveal": _reveal_for_row(row.get("contest_id"), row.get("user_email") or ""),
                 "tests_hash": _tests_hash(pid),
                 "grader_version": grader.GRADER_VERSION,
             }, track_active=False)

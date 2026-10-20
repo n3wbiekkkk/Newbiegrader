@@ -2,6 +2,7 @@
 from contextlib import ExitStack
 import asyncio
 import datetime as dt
+import json
 from unittest.mock import patch
 import unittest
 
@@ -92,3 +93,74 @@ class ContestPolicyAudit(unittest.TestCase):
                 "problem": self.prob.pid, "score": score, "accepted": score == 100,
                 "created_at": (self.now + dt.timedelta(seconds=offset)).isoformat(),
                 "contest_id": self.contest["id"]}
+
+    def request_with(self, email, body):
+        payload = json.dumps(body).encode()
+
+        async def receive():
+            return {"type": "http.request", "body": payload, "more_body": False}
+
+        return Request({"type": "http", "session": {"user": {"email": email}}}, receive)
+
+    def result_with_samples_and_hidden(self):
+        return {"results": [
+            {"test": "01", "verdict": "WA", "public": True, "input": "SAMPLE-IN",
+             "expected": "SAMPLE-OUT", "actual": "WRONG", "diff": "sample-diff"},
+            {"test": "1001", "verdict": "WA", "public": False, "input": "HIDDEN-IN",
+             "expected": "HIDDEN-OUT", "actual": "WRONG", "diff": "hidden-diff"}]}
+
+    def test_admin_rejudge_keeps_the_submission_owner_feedback_policy(self):
+        """A rejudge stores the submission's policy, never the admin's view.
+
+        The admin requester resolves to REVEAL_ALL and storage folds anything
+        but REVEAL_NONE to REVEAL_SAMPLES, so an admin rejudge of a live
+        show_samples=false submission came back from /api/history with public
+        sample input/expected/diff — the feedback the contest withholds.
+        """
+        admin = "admin@example.invalid"
+        self.fake.tables["contests"] = [self.contest]
+        self.fake.tables.setdefault("judge_jobs", [])
+        self.fake.tables["submissions"] = [
+            dict(self.submission("sid-1", 0), language="python", code="print(1)")]
+        with patch.object(server, "ADMIN_EMAILS", {admin}), \
+                patch.object(server, "_ensure_problems_fresh"):
+            out = asyncio.run(server.admin_rejudge(
+                self.request_with(admin, {"ids": ["sid-1"]})))
+        self.assertEqual(out["queued"], 1, out)
+        jid = out["jobs"][0]
+        self.addCleanup(server._jobs.pop, jid, None)
+        job = server._jobs[jid]
+        self.assertEqual(job["reveal"], server.REVEAL_NONE)
+
+        row = server._submission_row(job, self.result_with_samples_and_hidden())
+        read_back = server._result_with_reveal(row, {"results": row["results"]},
+                                               server.REVEAL_SAMPLES)
+        self.assertNotIn("SAMPLE-IN", json.dumps(read_back))
+        self.assertNotIn("HIDDEN-IN", json.dumps(read_back))
+        self.assertTrue(all(item.get("hidden") for item in read_back["results"]))
+
+    def test_rejudge_job_never_hands_the_owner_hidden_test_data(self):
+        """The in-memory job record holds the redacted variant only.
+
+        Local mode kept the requester-privileged REVEAL_ALL result, and
+        /api/jobs/{id} re-applies the *job's* reveal to a record whose
+        user_email is the original submitter: the owner could poll an admin
+        rejudge of their own submission and read hidden input/expected/diff.
+        """
+        owner = "synthetic@example.invalid"
+        jid = "synthetic-rejudge-job"
+        self.fake.tables.setdefault("judge_jobs", [])
+        job = {"id": jid, "kind": "rejudge", "problem": self.prob.pid,
+               "contest_id": self.contest["id"], "user_email": owner,
+               "reveal": server.REVEAL_ALL, "status": "running", "language": "python",
+               "source": "print(1)", "name": "Synthetic"}
+        with patch.object(server, "QUEUE_MODE", "local"):
+            server._jobs[jid] = dict(job)
+            self.addCleanup(server._jobs.pop, jid, None)
+            stored = server._stored_result(job, self.result_with_samples_and_hidden())
+            asyncio.run(server._finish_job(jid, result=self.result_with_samples_and_hidden(),
+                                           stored=stored))
+            polled = asyncio.run(server.job_status(self.request_with(owner, {}), jid))
+        self.assertNotIn("HIDDEN-IN", json.dumps(server._jobs[jid]["result"]))
+        self.assertNotIn("HIDDEN-IN", json.dumps(polled["result"]))
+        self.assertNotIn("HIDDEN-OUT", json.dumps(polled["result"]))
