@@ -125,14 +125,16 @@ class OutputCollectionTests(unittest.TestCase):
         self.assertEqual(result["reason"], "")
         self.assertEqual(result["stdout"].strip(), "[134217728, 64, 67108864, 64]")
 
-    @unittest.skipUnless(sys.platform.startswith("linux") and os.geteuid() != 0,
-                         "needs non-root Linux to model a shared service UID")
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux RLIMIT semantics")
     def test_non_root_linux_does_not_impose_a_shared_uid_process_ceiling(self):
         root = Path(__file__).resolve().parent.parent
         script = (
             f"import sys; sys.path.insert(0, {str(root)!r})\n"
-            "import json, resource\n"
+            "import json, os, resource\n"
             "import grader\n"
+            "if os.geteuid() == 0:\n"
+            "    # The critical gate runs as root; exercise the shared-UID branch.\n"
+            "    grader.os.geteuid = lambda: 1000\n"
             "before = resource.getrlimit(resource.RLIMIT_NPROC)[0]\n"
             "grader.build_limits(512, 3, network=False)()\n"
             "after = resource.getrlimit(resource.RLIMIT_NPROC)[0]\n"
