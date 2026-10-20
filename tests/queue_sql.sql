@@ -101,6 +101,10 @@ begin
     end if;
     history_id := (answer->>'submission_id')::uuid;
     if history_id is null then raise exception 'completion did not persist history'; end if;
+    if (select source from public.judge_jobs where id = (first_claim->>'id')::uuid) <> ''
+       or (select payload from public.judge_jobs where id = (first_claim->>'id')::uuid) <> '{}'::jsonb then
+        raise exception 'completed job retained source/payload';
+    end if;
     perform public.judge_queue_finish((first_claim->>'id')::uuid, 'sql-worker-a',
         (first_claim->>'attempt')::int, '{"score":0}', history_row, '');
     if (select count(*) from public.submissions where job_id = (first_claim->>'id')::uuid) <> 1

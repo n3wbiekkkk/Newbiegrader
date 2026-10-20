@@ -1143,7 +1143,10 @@ async def _finish_job(jid: str, *, result: Optional[dict] = None, stored: Option
             _active_jobs.pop(email, None)
     await _update_job_db(jid, {"status": job["status"], "error": error,
                                "finished_at": job["finished_at"],
-                               "result": stored if stored is not None else result})
+                               "result": stored if stored is not None else result,
+                               # The row already owns the source. Do not keep
+                               # a second copy in the status record.
+                               "source": ""})
     _prune_jobs()
 
 
