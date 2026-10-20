@@ -49,9 +49,12 @@ The read paths now re-evaluate live contest policy and redact before storing and
 returning feedback. Historical rows created by older code are not purged
 automatically. `feedback_history_inspection.sql` identifies candidates;
 `feedback_history_remediation.sql` is a target-specific, transaction-scoped
-template with a durable backup table and a default `ROLLBACK`. It preserves
-public sample fields and test/verdict/timing metadata while removing hidden
-inputs, expected/actual output, diffs, and diagnostics.
+template with a durable backup table and a default `ROLLBACK`. The backup table
+contains raw before-image feedback, so the script enables RLS on it and revokes
+all access from `public`, `anon`, and `authenticated`; only `service_role` may
+read or insert. It preserves public sample fields and test/verdict/timing
+metadata while removing hidden inputs, expected/actual output, diffs, and
+diagnostics.
 
 Never treat the synthetic fixture output in this repository as production
 evidence. The production row set, policy decision, and execution authorization

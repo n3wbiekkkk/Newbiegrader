@@ -14,6 +14,7 @@ declare
   queue_function text;
   bad_grantee text;
   bad_view text;
+  privilege_name text;
 begin
   foreach wanted in array required_columns loop
     if not exists (
@@ -52,20 +53,32 @@ begin
     ) then
       raise exception '% is missing; queue/auth migration was not applied', queue_function;
     end if;
+    if not exists (
+      select 1 from pg_proc p
+      join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'public' and p.proname = queue_function
+        and has_function_privilege('service_role', p.oid, 'EXECUTE')
+    ) then
+      raise exception 'service_role cannot execute %', queue_function;
+    end if;
   end loop;
 
   foreach bad_grantee in array array['anon','authenticated'] loop
-    if exists (
-      select 1 from information_schema.role_table_grants g
-      where g.table_schema = 'public' and g.grantee = bad_grantee
-        and g.table_name in ('submissions','profiles','reports','users',
-          'judge_jobs','contests','contest_registrations','contest_announcements',
-          'judge_quota_events','problems','auth_rate_buckets','admins',
-          'leaderboard_scores','problem_stats')
-        and g.privilege_type in ('SELECT','INSERT','UPDATE','DELETE')
-    ) then
-      raise exception '% has a direct table grant; revoke it', bad_grantee;
-    end if;
+    foreach app_table in array array[
+      'submissions','profiles','reports','users','judge_jobs','contests',
+      'contest_registrations','contest_announcements','judge_quota_events',
+      'problems','auth_rate_buckets','admins','leaderboard_scores','problem_stats'
+    ] loop
+      foreach privilege_name in array array[
+        'SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER'
+      ] loop
+        if has_table_privilege(bad_grantee, 'public.' || app_table, privilege_name)
+           or has_any_column_privilege(bad_grantee, 'public.' || app_table,
+                                       privilege_name) then
+          raise exception '% has % on %; revoke it', bad_grantee, privilege_name, app_table;
+        end if;
+      end loop;
+    end loop;
   end loop;
 
   foreach bad_view in array array['leaderboard_scores','problem_stats'] loop

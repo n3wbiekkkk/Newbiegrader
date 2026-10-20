@@ -130,6 +130,27 @@ class ContestPolicyAudit(unittest.TestCase):
                     "01", Response())
         self.assertEqual(exc.exception.status_code, 404)
 
+    def test_malformed_contest_bounds_never_open_sample_feedback(self):
+        """Invalid, naive, or reversed bounds are unavailable policy, not ended."""
+        bad_bounds = (
+            {"starts_at": "not-a-date", "ends_at": (self.now + dt.timedelta(hours=1)).isoformat()},
+            {"starts_at": self.now.replace(tzinfo=None).isoformat(),
+             "ends_at": (self.now + dt.timedelta(hours=1)).isoformat()},
+            {"starts_at": (self.now + dt.timedelta(hours=2)).isoformat(),
+             "ends_at": (self.now + dt.timedelta(hours=1)).isoformat()},
+        )
+        owner = "synthetic@example.invalid"
+        row = self.result_with_samples_and_hidden()
+        for bad in bad_bounds:
+            contest = dict(self.contest, **bad)
+            with self.subTest(bounds=bad), patch.object(
+                    server, "_all_contest_rows", return_value=[contest]):
+                self.assertEqual(server._live_reveal(contest["id"], owner, self.prob.pid),
+                                 server.REVEAL_NONE)
+                self.assertEqual(server._reveal_for(contest, owner), server.REVEAL_NONE)
+                self.assertTrue(server._contest_result_frozen(contest, row))
+                self.assertIn(self.prob.pid, server._live_hidden_pids())
+
     def test_admin_rejudge_keeps_the_submission_owner_feedback_policy(self):
         """A rejudge stores the submission's policy, never the admin's view.
 

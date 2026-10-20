@@ -34,6 +34,31 @@ create table if not exists public.submission_feedback_backup_20261020
      from public.submissions s
      join remediation_targets t on t.id = s.id
      where false;
+
+-- The before-image intentionally contains raw hidden-test feedback. It must
+-- never be exposed through PostgREST or to browser roles. Keep it service-role
+-- only, even when this script is rerun against an existing backup table.
+alter table public.submission_feedback_backup_20261020 enable row level security;
+revoke all on table public.submission_feedback_backup_20261020
+  from public, anon, authenticated;
+grant select, insert on table public.submission_feedback_backup_20261020
+  to service_role;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_class
+    where oid = 'public.submission_feedback_backup_20261020'::regclass
+      and relrowsecurity
+  ) then
+    raise exception 'feedback backup table must have RLS enabled';
+  end if;
+  if has_table_privilege('anon', 'public.submission_feedback_backup_20261020', 'select')
+     or has_table_privilege('authenticated', 'public.submission_feedback_backup_20261020', 'select') then
+    raise exception 'feedback backup table must not be readable by browser roles';
+  end if;
+end $$;
+
 insert into public.submission_feedback_backup_20261020 (id, results, backed_up_at)
 select s.id, s.results, now()
 from public.submissions s

@@ -366,6 +366,9 @@ async def _security_headers(request: Request, call_next):
     if request.url.path == "/api/history" or request.url.path.startswith("/api/history/"):
         resp.headers["Cache-Control"] = "private, no-store"
         resp.headers["Vary"] = "Cookie"
+    if request.url.path == "/api/admin" or request.url.path.startswith("/api/admin/"):
+        resp.headers["Cache-Control"] = "private, no-store"
+        resp.headers["Vary"] = "Cookie"
     resp.headers["Content-Security-Policy"] = (
         "default-src 'self'; script-src 'self'; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
@@ -1380,6 +1383,25 @@ def _submission_row(job: dict, result: dict, stored: Optional[dict] = None) -> d
 
 
 # ---- contest policy (B7) ----
+def _contest_times_valid(contest: Optional[dict]) -> bool:
+    """True only for timezone-aware, ordered contest bounds.
+
+    _contest_window's legacy fallback treats malformed dates as ended for
+    display purposes.  Feedback authorities must never reuse that fallback:
+    an invalid bound is an unavailable policy, not permission to show samples.
+    """
+    if not isinstance(contest, dict):
+        return False
+    try:
+        start = dt.datetime.fromisoformat(
+            str(contest.get("starts_at")).replace("Z", "+00:00"))
+        end = dt.datetime.fromisoformat(
+            str(contest.get("ends_at")).replace("Z", "+00:00"))
+    except (TypeError, ValueError, OverflowError):
+        return False
+    return start.tzinfo is not None and end.tzinfo is not None and end > start
+
+
 def _contest_window(contest: dict) -> str:
     """'upcoming' | 'running' | 'ended' (UTC now vs the contest window)."""
     now = dt.datetime.now(dt.timezone.utc)
@@ -1427,6 +1449,8 @@ def _parse_bool(value: object, default: bool = True) -> bool:
 def _reveal_for(contest: Optional[dict], email: str) -> str:
     if _is_admin(email):
         return REVEAL_ALL
+    if contest is not None and not _contest_times_valid(contest):
+        return REVEAL_NONE
     if contest and _contest_window(contest) == "running" and contest.get("show_samples") is False:
         return REVEAL_NONE
     return REVEAL_SAMPLES
@@ -1447,6 +1471,15 @@ def _live_hidden_pids(exclude_cid: str = "") -> set:
         # show_samples off. Policy failures still raise (fail closed).
         for row in _contest_policy_rows(fresh=True):
             if exclude_cid and row.get("id") == exclude_cid:
+                continue
+            # A malformed contest bound is not proof samples are public.
+            # Hide its listed problems until the policy can be trusted.
+            if not _contest_times_valid(row):
+                for x in (row.get("problems") or []):
+                    try:
+                        hidden.add(_resolve_pid(str(x)))
+                    except Exception:
+                        pass
                 continue
             if _contest_window(row) != "running":
                 continue
@@ -1476,9 +1509,7 @@ def _effective_reveal(contest: Optional[dict], email: str, pid: str) -> str:
                 continue
             # _contest_window's legacy invalid-date fallback is not a basis
             # for declassifying fixtures. Require valid, timezone-aware dates.
-            start = dt.datetime.fromisoformat(str(row.get("starts_at")).replace("Z", "+00:00"))
-            end = dt.datetime.fromisoformat(str(row.get("ends_at")).replace("Z", "+00:00"))
-            if start.tzinfo is None or end.tzinfo is None or end <= start:
+            if not _contest_times_valid(row):
                 return REVEAL_NONE
             window = _contest_window(row)
             if window != "ended":
@@ -3367,6 +3398,10 @@ async def job_status(request: Request, jid: str) -> dict:
         raise HTTPException(status_code=404, detail="unknown job")
     status = job.get("status", "queued")
     result = job.get("result") if status == "done" else None
+    if result is not None and not isinstance(result, dict):
+        # Legacy/corrupt JSON could bypass the field-level redactor. Return no
+        # verdict payload rather than passing an unknown structure to a client.
+        result = None
     if isinstance(result, dict) and job.get("kind") != "playground":
         # Re-evaluate the owner-facing live policy: the job's reveal is a
         # creation-time snapshot and may predate a contest switching to hidden.
@@ -3490,7 +3525,28 @@ def _completed_peer_submission(row: dict) -> bool:
 def _peer_problem_policy(pid: str, contest_id: Optional[str] = None) -> str:
     """Fresh visibility and contest decision; empty string means unprotected."""
     prob = PROBLEMS.get(pid)
-    if prob is None or not getattr(prob, "is_published", True):
+    if prob is None:
+        return "hidden"
+    hidden_problem = bool(getattr(prob, "hidden", False))
+    if PROBLEM_SOURCE == "supabase":
+        # Peer source is a disclosure decision. Do not trust the TTL catalog
+        # for publication state: a problem can be unpublished or hidden while a
+        # history-only replica still has the old Problem object.
+        if _sb is None:
+            return "unavailable"
+        try:
+            res = (_sb.table("problems").select("slug,is_published,hidden")
+                   .eq("slug", pid).limit(1).execute())
+            fresh_rows = res.data or []
+        except Exception:
+            return "unavailable"
+        if not fresh_rows:
+            return "hidden"
+        fresh = fresh_rows[0]
+        if not _parse_bool(fresh.get("is_published"), False):
+            return "hidden"
+        hidden_problem = _parse_bool(fresh.get("hidden"), False)
+    elif not getattr(prob, "is_published", True):
         return "hidden"
     try:
         # Do not use the TTL cache or the legacy missing-table=empty fallback:
@@ -3519,7 +3575,7 @@ def _peer_problem_policy(pid: str, contest_id: Optional[str] = None) -> str:
             return "contest"  # Missing/deleted target contest policy is unknown.
         # Every related contest is now known to have ended, so it grants the
         # same problem visibility as the existing started-contest policy.
-        if prob.hidden and not related:
+        if hidden_problem and not related:
             return "hidden"
         return ""
     except Exception:
@@ -3866,6 +3922,17 @@ async def admin_remove_admin(request: Request, email: str) -> dict:
     return {"ok": True, "email": target}
 
 
+_ADMIN_HISTORY_FIELDS = (
+    "id", "created_at", "user_email", "name", "problem", "language",
+    "verdict", "accepted", "passed", "total", "score", "counts", "contest_id",
+)
+
+
+def _admin_history_row(row: dict) -> dict:
+    """Allowlist metadata even when a storage adapter ignores the projection."""
+    return {key: row.get(key) for key in _ADMIN_HISTORY_FIELDS}
+
+
 @app.get("/api/admin/submissions")
 async def admin_submissions(request: Request, page: int = 1, per_page: int = 20,
                             problem: Optional[str] = None) -> dict:
@@ -3900,7 +3967,7 @@ async def admin_submissions(request: Request, page: int = 1, per_page: int = 20,
         "per_page": per_page,
         "total": total,
         "pages": max(1, (total + per_page - 1) // per_page),
-        "submissions": res.data or [],
+        "submissions": [_admin_history_row(row) for row in (res.data or [])],
     }
 
 
@@ -4213,7 +4280,11 @@ def delete_contest(request: Request, cid: str) -> dict:
 
 
 def _contest_result_frozen(contest: Optional[dict], submission: dict) -> bool:
-    if not contest or _contest_window(contest) != "running":
+    if not contest:
+        return False
+    if not _contest_times_valid(contest):
+        return True  # malformed policy cannot disclose a contest result
+    if _contest_window(contest) != "running":
         return False
     try:
         minutes = int(contest.get("freeze_minutes") or 0)
@@ -4240,7 +4311,9 @@ def _contest_scoreboard(contest: dict, live: bool, allowed_pids: Optional[set] =
     # contest timestamps are malformed.
     freeze_cutoff = None
     freeze_all = False
-    if not live and _contest_window(contest) == "running":
+    if not live and not _contest_times_valid(contest):
+        freeze_all = True
+    elif not live and _contest_window(contest) == "running":
         try:
             minutes = int(contest.get("freeze_minutes") or 0)
             if minutes > 0:

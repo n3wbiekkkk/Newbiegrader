@@ -67,6 +67,33 @@ where not exists (
   select 1 from pg_proc p
   join pg_namespace n on n.oid = p.pronamespace
   where n.nspname = 'public' and p.proname = r.function_name
+    and p.prokind = 'f'
+    and regexp_replace(pg_get_function_identity_arguments(p.oid), '\s', '', 'g')
+        = regexp_replace(r.argument_types, '\s', '', 'g')
+);
+
+-- 4b. The queue/auth functions must remain executable by service_role.
+with required(function_name, argument_types) as (
+  values
+    ('judge_queue_admit', 'jsonb,integer,boolean,integer,integer'),
+    ('judge_queue_claim', 'text,integer'),
+    ('judge_queue_heartbeat', 'uuid,text,integer,integer'),
+    ('judge_queue_finish', 'uuid,text,integer,jsonb,jsonb,text'),
+    ('judge_queue_diagnostics', ''),
+    ('auth_email_budget', 'text,text,text'),
+    ('auth_email_complete', 'text,uuid,text,text'),
+    ('auth_google_identity', 'text,text,text')
+)
+select r.function_name as function_without_service_execute
+from required r
+where not exists (
+  select 1 from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public' and p.proname = r.function_name
+    and p.prokind = 'f'
+    and regexp_replace(pg_get_function_identity_arguments(p.oid), '\s', '', 'g')
+        = regexp_replace(r.argument_types, '\s', '', 'g')
+    and has_function_privilege('service_role', p.oid, 'EXECUTE')
 );
 
 -- 5. RLS must be enabled on every public application table.
@@ -80,16 +107,26 @@ where n.nspname = 'public' and c.relkind = 'r'
   and not c.relrowsecurity
 order by c.relname;
 
--- 6. Public browser roles must not have direct table privileges.
-select grantee, table_name, privilege_type
-from information_schema.role_table_grants
-where table_schema = 'public'
-  and grantee in ('anon','authenticated')
-  and table_name in ('submissions','profiles','reports','users','judge_jobs',
-                     'contests','contest_registrations','contest_announcements',
-                     'judge_quota_events','problems','auth_rate_buckets','admins',
-                     'leaderboard_scores','problem_stats')
-order by grantee, table_name, privilege_type;
+-- 6. Public browser roles must not have direct table or column privileges.
+-- has_table_privilege also catches grants inherited through PUBLIC.
+with required(table_name) as (
+  values ('submissions'), ('profiles'), ('reports'), ('users'), ('judge_jobs'),
+         ('contests'), ('contest_registrations'), ('contest_announcements'),
+         ('judge_quota_events'), ('problems'), ('auth_rate_buckets'), ('admins'),
+         ('leaderboard_scores'), ('problem_stats')
+), browser_roles(grantee) as (
+  values ('anon'), ('authenticated')
+), privileges(privilege_name) as (
+  values ('SELECT'), ('INSERT'), ('UPDATE'), ('DELETE'),
+         ('TRUNCATE'), ('REFERENCES'), ('TRIGGER')
+)
+select b.grantee, r.table_name, p.privilege_name
+from required r
+cross join browser_roles b
+cross join privileges p
+where has_table_privilege(b.grantee, format('public.%I', r.table_name), p.privilege_name)
+   or has_any_column_privilege(b.grantee, format('public.%I', r.table_name), p.privilege_name)
+order by b.grantee, r.table_name, p.privilege_name;
 
 -- 7. Queue/security function execution must be service_role-only.
 select p.proname as function_name, r.rolname as unexpected_grantee

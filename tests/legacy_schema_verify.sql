@@ -7,6 +7,8 @@ declare
   wanted text;
   legacy_count int;
   traceability record;
+  role_name text;
+  privilege_name text;
 begin
   foreach wanted in array expected loop
     if not exists (
