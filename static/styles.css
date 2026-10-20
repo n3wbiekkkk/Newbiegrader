@@ -528,11 +528,6 @@ table.tests td.detail-cell:last-child { text-align: left; }
 .verdict-sum { margin: 10px 0 4px; font-size: var(--fs-md); line-height: 1.6; }
 .verdict-sum.ok { color: var(--green); }
 .verdict-sum.bad { color: var(--red); }
-.verdict-legend { margin-top: 14px; }
-.verdict-legend summary { cursor: pointer; font-size: var(--fs-sm); color: var(--dim); }
-.verdict-legend summary:hover { color: var(--text); }
-.verdict-legend table { margin-top: 8px; max-width: 560px; }
-.verdict-legend td { vertical-align: middle; }
 .diff-pre {
   background: var(--panel2); border: 1px solid var(--border); color: var(--text);
   border-radius: var(--r-sm); padding: 10px var(--sp-3); margin: 6px 0; overflow-x: auto;
