@@ -414,7 +414,7 @@ class ApiE2E(unittest.TestCase):
         db.table("submissions").delete().eq("problem", "p1").execute()
         self.assertEqual(len(db.tables["submissions"]), 0)
 
-    def test_history_detail_is_owner_or_admin_only(self):
+    def test_history_detail_denies_peer_without_qualifying_attempt_but_allows_owner_admin(self):
         self.login(STUDENT_A)
         job = self.judged("thai_time", THAI_REF)
         sid = job["result"]["id"]

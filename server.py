@@ -19,6 +19,7 @@ import hmac
 import ipaddress
 import json
 import logging
+import math
 import os
 import re
 import secrets
@@ -362,6 +363,9 @@ async def _security_headers(request: Request, call_next):
     if request.url.path.startswith("/api/auth/"):
         resp.headers["Cache-Control"] = "no-store"
         resp.headers["Pragma"] = "no-cache"
+    if request.url.path == "/api/history" or request.url.path.startswith("/api/history/"):
+        resp.headers["Cache-Control"] = "private, no-store"
+        resp.headers["Vary"] = "Cookie"
     resp.headers["Content-Security-Policy"] = (
         "default-src 'self'; script-src 'self'; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
@@ -3391,6 +3395,166 @@ async def run_custom(
     raise HTTPException(status_code=504, detail="run timed out waiting for judge")
 
 
+_PEER_QUALIFYING_VERDICTS = frozenset({"AC", "WA", "TLE", "MLE", "OLE"})
+_COMPLETED_SUBMISSION_VERDICTS = _PEER_QUALIFYING_VERDICTS | {"CE", "RE", "REJECTED"}
+_CASE_VERDICTS = _PEER_QUALIFYING_VERDICTS | {"CE", "RE"}
+_HISTORY_PUBLIC_FIELDS = (
+    "id", "created_at", "problem", "language", "name", "filename", "verdict",
+    "accepted", "passed", "total", "score", "counts", "contest_id",
+)
+
+
+def _completed_peer_submission(row: dict) -> bool:
+    # submissions stores completed judge results, unlike judge_jobs. Explicit
+    # non-completed status/kind evidence in imported rows must still fail closed.
+    return (row.get("kind", "submit") in {"submit", "rejudge"}
+            and row.get("status", "done") == "done"
+            and row.get("verdict") in _COMPLETED_SUBMISSION_VERDICTS)
+
+
+def _peer_qualifying_attempt(row: dict, *, verify_tests: bool = True) -> bool:
+    if not _completed_peer_submission(row):
+        return False
+    verdict = row.get("verdict")
+    if verdict not in _PEER_QUALIFYING_VERDICTS | {"REJECTED"}:
+        return False
+    counts = row.get("counts", {})
+    if not isinstance(counts, dict) or any(
+            key not in _CASE_VERDICTS or type(value) is not int or value < 0
+            for key, value in counts.items()):
+        return False
+    if counts.get("CE", 0) or counts.get("RE", 0):
+        return False
+    if verdict == "REJECTED" and not sum(counts.values()):
+        return False  # Aggregate REJECTED alone says nothing about runtime errors.
+    if verify_tests:
+        tests = row.get("results", [])
+        if not isinstance(tests, list) or any(
+                not isinstance(test, dict) or test.get("verdict") not in _PEER_QUALIFYING_VERDICTS
+                for test in tests):
+            return False
+    return True
+
+
+def _has_peer_qualifying_attempt(email: str, pid: str) -> bool:
+    """Indexed account/problem scan, independent of the public feed's limit.
+
+    Small pages contain no source or diagnostics. Fetch full verdict evidence
+    only for plausible candidates; old explicit verdicts need not have counts.
+    A safety bound is an unavailable decision, never permission to disclose.
+    """
+    page = 500
+    offset = 0
+    for _ in range(1000):
+        if offset >= 50000:
+            break
+        batch = (_sb.table("submissions").select("id,kind,verdict,counts")
+                 .eq("user_email", email).eq("problem", pid)
+                 .order("created_at", desc=True).order("id", desc=True)
+                 .range(offset, offset + page - 1).execute()).data
+        if not isinstance(batch, list):
+            raise RuntimeError("submission evidence unavailable")
+        if not batch:
+            return False
+        for row in batch:
+            if not _peer_qualifying_attempt(row, verify_tests=False):
+                continue
+            candidates = (_sb.table("submissions").select("id,kind,verdict,counts,results")
+                          .eq("user_email", email).eq("problem", pid).eq("id", row["id"])
+                          .limit(1).execute()).data
+            if candidates and _peer_qualifying_attempt(candidates[0]):
+                return True
+        # PostgREST may impose a response cap smaller than the requested page.
+        # Only an empty batch proves exhaustion; advance by rows actually read.
+        offset += len(batch)
+    raise RuntimeError("submission evidence scan limit reached")
+
+
+def _peer_problem_policy(pid: str, contest_id: Optional[str] = None) -> str:
+    """Fresh visibility and contest decision; empty string means unprotected."""
+    prob = PROBLEMS.get(pid)
+    if prob is None or not getattr(prob, "is_published", True):
+        return "hidden"
+    try:
+        # Do not use the TTL cache or the legacy missing-table=empty fallback:
+        # unavailable contest policy cannot authorize new peer source access.
+        rows = _all_contest_rows()
+        if not isinstance(rows, list):
+            return "unavailable"
+        related = []
+        now = dt.datetime.now(dt.timezone.utc)
+        for row in rows:
+            if not isinstance(row, dict) or not isinstance(row.get("problems"), list):
+                return "unavailable"
+            if pid not in {_resolve_pid(str(token)) for token in row["problems"]}:
+                continue
+            try:
+                start = dt.datetime.fromisoformat(str(row.get("starts_at")).replace("Z", "+00:00"))
+                end = dt.datetime.fromisoformat(str(row.get("ends_at")).replace("Z", "+00:00"))
+                if start.utcoffset() is None or end.utcoffset() is None or end <= start:
+                    return "contest"
+            except (TypeError, ValueError, OverflowError):
+                return "contest"
+            if now <= end:
+                return "contest"  # Both upcoming and running contests protect it.
+            related.append(row)
+        if contest_id and not any(row.get("id") == contest_id for row in related):
+            return "contest"  # Missing/deleted target contest policy is unknown.
+        # Every related contest is now known to have ended, so it grants the
+        # same problem visibility as the existing started-contest policy.
+        if prob.hidden and not related:
+            return "hidden"
+        return ""
+    except Exception:
+        return "unavailable"
+
+
+def _peer_inspection_access(email: str, pid: str, contest_id: Optional[str] = None) -> dict:
+    if _is_admin(email):
+        return {"allowed": True, "reason": ""}
+    if not email:
+        return {"allowed": False, "reason": "login"}
+    reason = _peer_problem_policy(pid, contest_id)
+    if not reason:
+        try:
+            reason = "" if _has_peer_qualifying_attempt(email, pid) else "attempt"
+        except Exception:
+            reason = "unavailable"
+    return {"allowed": not reason, "reason": reason}
+
+
+def _public_history_row(row: dict) -> dict:
+    """Allowlist even when a storage adapter returns more than SELECT asked for."""
+    public = {key: row[key] for key in _HISTORY_PUBLIC_FIELDS if key in row
+              and (row[key] is None or isinstance(row[key], (str, int, float, bool)))}
+    counts = row.get("counts")
+    public["counts"] = {key: value for key, value in counts.items()
+                        if key in _CASE_VERDICTS and type(value) is int and value >= 0} \
+        if isinstance(counts, dict) else {}
+    # Old profiles/submissions sometimes fell back to the authentication email.
+    name = row.get("name")
+    public["name"] = name if isinstance(name, str) and name.strip() and "@" not in name else "นักเรียน"
+    return public
+
+
+def _peer_submission_detail(row: dict) -> dict:
+    public = _public_history_row(row)
+    public["code"] = row.get("code") if isinstance(row.get("code"), str) else ""
+    public["peer_inspection"] = True
+    public["results"] = []
+    for test in row.get("results", []) if isinstance(row.get("results"), list) else []:
+        if not isinstance(test, dict):
+            continue
+        verdict = test.get("verdict")
+        safe = {"verdict": verdict if isinstance(verdict, str) and verdict in _CASE_VERDICTS else "UNKNOWN",
+                "hidden": True}
+        for key in ("wall_s", "cpu_s", "peak_mb"):
+            value = test.get(key)
+            safe[key] = value if type(value) in (int, float) and math.isfinite(value) and value >= 0 else None
+        public["results"].append(safe)
+    return public
+
+
 @app.get("/api/history")
 async def history(request: Request, problem: Optional[str] = None, limit: int = 20,
                   mine: bool = False) -> dict:
@@ -3407,9 +3571,7 @@ async def history(request: Request, problem: Optional[str] = None, limit: int = 
 
     def _fetch():
         q = _sb.table("submissions").select(
-            "id,created_at,problem,language,name,filename,verdict,accepted,passed,"
-            "total,score,counts,contest_id"
-        ).order("created_at", desc=True).limit(limit)
+            ",".join(_HISTORY_PUBLIC_FIELDS)).order("created_at", desc=True).limit(limit)
         if wanted_problem:
             q = q.eq("problem", wanted_problem)
         if mine:
@@ -3427,9 +3589,16 @@ async def history(request: Request, problem: Optional[str] = None, limit: int = 
         # The public feed must not advertise contest-only problems.
         hidden = _hidden_pids()
         contests = {r.get("id"): r for r in _contest_policy_rows()}
-        rows = [r for r in rows if (r.get("problem") or "") not in hidden
+        # A hidden problem reached through an ended contest still has its
+        # per-problem feed. The global feed must not advertise hidden tasks.
+        visible_problem = wanted_problem and _visible_to(wanted_problem, email)
+        rows = [r for r in rows if ((r.get("problem") or "") not in hidden
+                or (visible_problem and r.get("problem") == wanted_problem))
                 and not _contest_result_frozen(contests.get(r.get("contest_id")), r)]
-    return {"configured": True, "submissions": rows}
+    payload = {"configured": True, "submissions": [_public_history_row(row) for row in rows]}
+    if wanted_problem and not mine:
+        payload["peer_access"] = await asyncio.to_thread(_peer_inspection_access, email, wanted_problem)
+    return payload
 
 
 @app.get("/api/history/{sid}")
@@ -3449,10 +3618,16 @@ async def history_detail(request: Request, sid: str) -> dict:
     if not rows:
         raise HTTPException(status_code=404, detail="submission not found")
     row = dict(rows[0])
-    # Your own submissions, or any submission if you are an admin. Nobody else:
-    # a row carries the author's source code.
+    # Owners/admins retain their existing feedback. Peers receive a narrower,
+    # explicitly serialized source/results view after fresh authorization.
     if row.get("user_email") != email and not _is_admin(email):
-        raise HTTPException(status_code=403, detail="not your submission")
+        access = await asyncio.to_thread(_peer_inspection_access, email,
+                                         row.get("problem", ""), row.get("contest_id"))
+        if not access["allowed"] or not _completed_peer_submission(row):
+            reason = access["reason"] or "incomplete submission"
+            raise HTTPException(status_code=503 if reason == "unavailable" else 403,
+                                detail="peer inspection locked: " + reason)
+        return _peer_submission_detail(row)
     row.pop("user_email", None)  # never expose login emails publicly
     reveal = REVEAL_SAMPLES
     if not row.get("contest_id") and any(r.get("practice_feedback") is True for r in row.get("results", [])):
@@ -3893,27 +4068,31 @@ def _all_contest_rows() -> List[dict]:
     rows: List[dict] = []
     offset = 0
     page = 500
-    guard = 0
-    while guard < 20:  # hard cap 10k contests, far above realistic use
-        guard += 1
-        try:
-            q = _sb.table("contests").select("*").order("starts_at", desc=True)
-            if hasattr(q, "range"):
-                res = q.range(offset, offset + page - 1).execute()
-            elif hasattr(q, "offset"):
-                res = q.offset(offset).limit(page).execute()
-            else:
-                raise RuntimeError("contest policy pagination unavailable")
-            batch = res.data or []
-            rows.extend(batch)
-            if len(batch) < page:
-                break
-            offset += page
-        except Exception:
-            raise
-    else:
-        raise RuntimeError("contest policy exceeds pagination budget")
-    return rows
+    for _ in range(1000):
+        # One extra row can establish that the 10k safety bound was exceeded;
+        # an empty response at exactly 10k still proves complete exhaustion.
+        requested = min(page, 10001 - offset)
+        q = (_sb.table("contests").select("*")
+             .order("starts_at", desc=True).order("id", desc=True))
+        if hasattr(q, "range"):
+            res = q.range(offset, offset + requested - 1).execute()
+        elif hasattr(q, "offset"):
+            res = q.offset(offset).limit(requested).execute()
+        else:
+            raise RuntimeError("contest policy pagination unavailable")
+        batch = res.data
+        if (not isinstance(batch, list) or len(batch) > requested
+                or any(not isinstance(row, dict) for row in batch)):
+            raise RuntimeError("contest policy page malformed")
+        if not batch:
+            return rows
+        rows.extend(batch)
+        offset += len(batch)
+        if offset > 10000:
+            break
+        # A configured PostgREST response cap can make every page short.
+        # Only an empty page proves that all protective contests were read.
+    raise RuntimeError("contest policy exceeds pagination budget")
 
 
 @app.get("/api/contests")
