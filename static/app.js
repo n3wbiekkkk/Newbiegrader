@@ -648,6 +648,11 @@ function apiGetCached(path, ttlMs, force = false) {
 
 function clearGetCache() {
   _getGen++;
+  if (state.inspectedSubmission) {
+    $("result-body").innerHTML = "";
+    $("score-line").textContent = "";
+    state.inspectedSubmission = false;
+  }
   _getCache.clear();
   _getInflight.clear();
   state.detailCache = {};
@@ -1491,12 +1496,13 @@ async function loadTaskSubs() {
     }
     const rows = h.submissions || [];
     renderTopScores(rows);
+    const accessNote = `<p class="dim">${esc(peerAccessMessage(h.peer_access))}</p>`;
     if (!rows.length) {
-      body.innerHTML = `<span class="dim">ข้อนี้ยังไม่มีใครส่ง — เป็นคนแรกเลย</span>`;
+      body.innerHTML = accessNote + `<span class="dim">ข้อนี้ยังไม่มีใครส่ง — เป็นคนแรกเลย</span>`;
       return;
     }
     body.classList.remove("dim");
-    body.innerHTML = historyTable(rows, false);
+    body.innerHTML = accessNote + historyTable(rows, false);
     bindViewButtons(body);
   } catch (e) {
     if (gen !== _getGen || pid !== state.current) return;
@@ -2347,15 +2353,15 @@ function renderResults(d, secs) {
   $("score-line").textContent = `${d.passed}/${d.total} — ${d.score}/100` +
     (secs == null ? "" : ` — ${secs.toFixed(2)}s`);
   let html = "";
+  if (d.author || d.language) {
+    html += `<div class="meta">โดย ${esc(d.author || "—")} · ${esc(d.language || "")}${d.filename ? ` · ${esc(d.filename)}` : ""}</div>`;
+  }
   if (d.verdict === "CE") {
     html += `<div class="score-big bad">คอมไพล์ไม่ผ่าน</div>`;
     html += `<div class="detail-cell"><pre>${esc(d.compile_error || "(ไม่มีข้อความ)")}</pre></div>`;
   } else {
     const ok = d.accepted;
     html += `<div class="score-big ${ok ? "ok" : "bad"}">${ok ? "ผ่านทั้งหมด" : "ยังไม่ผ่าน"}</div>`;
-    if (d.author || d.language) {
-      html += `<div class="meta">โดย ${esc(d.author || "—")} · ${esc(d.language || "")}${d.filename ? ` · ${esc(d.filename)}` : ""}</div>`;
-    }
     html += verdictSummary(d);
     const counts = Object.entries(d.counts || {})
       .map(([k, n]) => `${VERDICT_TH[k] || k}:${n}`).join("  ");
@@ -2539,6 +2545,16 @@ function rowVerdictCode(r) {
   return ["CE", "RE", "MLE", "TLE", "OLE", "WA"].find((k) => counts[k]) || "WA";
 }
 
+function peerAccessMessage(access) {
+  if (access && access.allowed) return "เปิดดูโค้ดและผลรายเทสต์ของเพื่อนได้แล้ว โดยไม่เปิดเผยข้อมูลทดสอบ";
+  const reason = access && access.reason;
+  if (reason === "login") return "เข้าสู่ระบบก่อนดูโค้ดของเพื่อน";
+  if (reason === "contest") return "ยังดูโค้ดของเพื่อนไม่ได้: ข้อนี้อยู่ในการแข่งขันที่กำลังจะเริ่มหรือกำลังแข่ง";
+  if (reason === "unavailable") return "ยังตรวจสอบสิทธิ์ดูโค้ดของเพื่อนไม่ได้ กรุณาลองอีกครั้ง";
+  if (reason === "hidden") return "ข้อนี้ยังไม่เปิดให้ดูโค้ดของเพื่อน";
+  return "ส่งข้อนี้ให้ตรวจเสร็จอย่างน้อยหนึ่งครั้งโดยไม่มี CE หรือ RE ก่อนดูโค้ดของเพื่อน (AC, WA, TLE, MLE, OLE ใช้ได้) — ยังดูการส่งของตัวเองได้เสมอ";
+}
+
 const SHORT_TIME_OPTS = { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" };
 const _shortTimeFmt = new Intl.DateTimeFormat("th-TH", SHORT_TIME_OPTS);
 const _shortTimeFmtYear = new Intl.DateTimeFormat("th-TH", { ...SHORT_TIME_OPTS, year: "2-digit" });
@@ -2638,14 +2654,20 @@ async function loadHistory(force) {
   }
 }
 async function viewSubmission(sid) {
+  const gen = _getGen, seq = state.inspectionSeq = (state.inspectionSeq || 0) + 1;
+  const originalProblem = state.current;
+  const current = () => gen === _getGen && seq === state.inspectionSeq;
   try {
     const r = await apiGet(`/api/history/${encodeURIComponent(sid)}`);
+    if (!current() || state.current !== originalProblem) return;
     if (r.problem !== state.current) {
       openTask(r.problem);
       await selectProblem(r.problem);
     }
+    if (!current() || state.current !== r.problem) return;
     show("task");
     setTaskTab("submit");
+    state.inspectedSubmission = true;
     renderResults({
       verdict: r.verdict, accepted: r.accepted,
       passed: r.passed, total: r.total, score: r.score,
@@ -2658,11 +2680,10 @@ async function viewSubmission(sid) {
     }, null);
     document.querySelector("#pane-submit").scrollIntoView({ behavior: "smooth" });
   } catch (e) {
-    // 403 = someone else's submission: the payload never reaches the DOM, so no
-    // foreign code can be rendered. 401 = not logged in.
+    if (!current()) return;
     const msg = e.status === 403
-      ? "ไม่ใช่การส่งของคุณ — ดูได้เฉพาะการส่งของตัวเอง (admin ดูได้ทุกอัน)"
-      : (e.status === 401 ? "ต้อง login ก่อนดูผลการส่ง" : e.message);
+      ? peerAccessMessage({ reason: /contest/.test(e.message) ? "contest" : /hidden/.test(e.message) ? "hidden" : "attempt" })
+      : (e.status === 401 ? peerAccessMessage({ reason: "login" }) : e.status === 503 ? peerAccessMessage({ reason: "unavailable" }) : e.message);
     show("task");
     setTaskTab("submit");
     $("result-body").innerHTML = `<span class="dim">${esc(msg)}</span>`;
@@ -3141,7 +3162,7 @@ function buildProblemSelect(sel, multiple) {
 }
 
 /* ---------------- admin page (แยกจาก Settings, เห็นเฉพาะ admin) ---------------- */
-const ADMIN_TABS = ["overview", "contests", "reports", "tools"];
+const ADMIN_TABS = ["overview", "history", "contests", "reports", "admins", "tools"];
 
 function showAdminTab(name) {
   if (!ADMIN_TABS.includes(name)) name = "overview";
@@ -3161,9 +3182,17 @@ function showAdminTab(name) {
     state.adminOverviewLoaded = true;
     loadOverview();
   }
+  if (name === "history" && !state.adminHistoryLoaded) {
+    state.adminHistoryLoaded = true;
+    loadAdminHistory();
+  }
   if (name === "reports" && !state.adminReportsLoaded) {
     state.adminReportsLoaded = true;
     loadAdminReports();
+  }
+  if (name === "admins" && !state.adminAdminsLoaded) {
+    state.adminAdminsLoaded = true;
+    loadAdmins();
   }
   if (name === "tools" && !state.adminToolsBuilt) {
     state.adminToolsBuilt = true;
@@ -3176,7 +3205,7 @@ function renderAdmin() {
     location.hash = "#/";
     return;
   }
-  ["overview-card", "contest-card", "admin-card", "admin-tools-card"].forEach((id) => {
+  ["overview-card", "admin-history-card", "contest-card", "admin-card", "admins-card", "admin-tools-card"].forEach((id) => {
     const el = $(id);
     if (el) el.classList.remove("hidden");
   });
@@ -3189,7 +3218,9 @@ function renderAdmin() {
       const label = refresh.querySelector("span");
       refresh.disabled = true;
       if (label) label.textContent = "กำลังโหลด…";
-      await Promise.all([loadOverview(), loadAdminContests(), loadAdminReports()]);
+      const jobs = [loadOverview(), loadAdminContests(), loadAdminReports()];
+      if (state.adminAdminsLoaded) jobs.push(loadAdmins());
+      await Promise.all(jobs);
       state.adminReportsLoaded = true;
       state.adminOverviewLoaded = true;
       if (label) label.textContent = "รีเฟรช";
@@ -3198,13 +3229,227 @@ function renderAdmin() {
   }
   const repRefresh = $("admin-reports-refresh");
   if (repRefresh) repRefresh.onclick = loadAdminReports;
+  const admRefresh = $("admins-refresh");
+  if (admRefresh) admRefresh.onclick = loadAdmins;
+  const addForm = $("admin-add-form");
+  if (addForm) addForm.onsubmit = addAdminByEmail;
+  const histRefresh = $("admin-history-refresh");
+  if (histRefresh) histRefresh.onclick = () => loadAdminHistory();
+  const histSize = $("admin-history-size");
+  if (histSize && !histSize.dataset.bound) {
+    histSize.dataset.bound = "1";
+    histSize.value = String(state.adminHistoryPerPage || 20);
+    histSize.onchange = () => {
+      state.adminHistoryPage = 1;
+      state.adminHistoryPerPage = Number(histSize.value) || 20;
+      loadAdminHistory();
+    };
+  }
+  const histProblem = $("admin-history-problem");
+  if (histProblem && !state.adminHistoryBuilt) {
+    buildProblemSelect(histProblem);
+    histProblem.insertAdjacentHTML("afterbegin", '<option value="">ทุกข้อ</option>');
+    histProblem.value = state.adminHistoryProblem || "";
+    state.adminHistoryBuilt = true;
+    histProblem.onchange = () => {
+      state.adminHistoryProblem = histProblem.value;
+      state.adminHistoryPage = 1;
+      loadAdminHistory();
+    };
+  }
   state.adminReportsLoaded = false;
   state.adminToolsBuilt = false;
   state.adminOverviewLoaded = false;
+  state.adminAdminsLoaded = false;
+  state.adminHistoryLoaded = false;
   // The contest tab shows a count badge, so its list still starts immediately;
   // only the panel bodies wait until their tab is opened.
   loadAdminContests();
   showAdminTab(state.adminTab || "overview");
+}
+
+function setAdminsStatus(text, isError) {
+  const el = $("admins-status");
+  if (!el) return;
+  el.textContent = text || "";
+  el.className = "status " + (isError ? "dash-error" : "dim");
+}
+
+async function loadAdmins() {
+  const box = $("admins-list");
+  if (!box) return;
+  box.classList.add("dim");
+  box.innerHTML = skel(3);
+  try {
+    const d = await apiGet("/api/admin/admins");
+    const rows = d.admins || [];
+    setDashCount("admins-count", `${rows.length} คน`);
+    const dl = $("admin-candidates");
+    if (dl) {
+      dl.innerHTML = (d.candidates || []).map((c) =>
+        `<option value="${esc(c.email)}">${esc(c.name || c.email)}</option>`).join("");
+    }
+    box.classList.remove("dim");
+    if (!rows.length) {
+      box.innerHTML = `<p class="dash-empty">ยังไม่มีผู้ดูแล</p>`;
+      return;
+    }
+    box.innerHTML = rows.map((r) => {
+      const env = r.source === "env";
+      const removable = !!r.removable && !env;
+      const mine = (state.user && (state.user.email || "").toLowerCase() === r.email);
+      return `<article class="admin-report">` +
+        `<div class="admin-report-head">` +
+        `<span class="admin-report-problem">${esc(r.email)}</span>` +
+        (env ? badge("ADMIN_EMAILS", "OK") : badge("ฐานข้อมูล", "upcoming")) +
+        (mine ? `<span class="diff-tag">คุณ</span>` : "") +
+        (removable ? `<button class="ghost-btn" type="button" data-admin-remove="${esc(r.email)}">ถอดสิทธิ์</button>` : "") +
+        `</div>` +
+        `<div class="admin-report-meta">` +
+        `<span>${env ? "ถาวรจาก ADMIN_EMAILS" : "เพิ่มโดย " + esc(r.created_by || "ไม่ระบุ")}</span>` +
+        (r.created_at ? `<span>${esc(shortTime(r.created_at))}</span>` : "") +
+        `</div></article>`;
+    }).join("");
+    box.querySelectorAll("[data-admin-remove]").forEach((b) => {
+      b.onclick = () => removeAdmin(b.dataset.adminRemove, b);
+    });
+  } catch (e) {
+    box.classList.remove("dim");
+    setDashCount("admins-count", "—");
+    box.innerHTML = `<p class="dash-empty dash-error">โหลดไม่ได้: ${esc(e.message)}</p>`;
+  }
+}
+
+async function addAdminByEmail(ev) {
+  ev.preventDefault();
+  const input = $("admin-add-email");
+  const btn = $("admin-add-btn");
+  const email = (input && input.value || "").trim().toLowerCase();
+  if (!email) return;
+  if (btn) btn.disabled = true;
+  setAdminsStatus("กำลังเพิ่ม…", false);
+  try {
+    const d = await apiPostJson("/api/admin/admins", { email });
+    if (input) input.value = "";
+    setAdminsStatus(`เพิ่ม ${d.email} เป็นผู้ดูแลแล้ว — มีผลทันที`, false);
+    toast("เพิ่มผู้ดูแลแล้ว", "t-ok");
+    await loadAdmins();
+  } catch (e) {
+    setAdminsStatus(e.message, true);
+    toast("เพิ่มผู้ดูแลไม่สำเร็จ: " + e.message, "t-err");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function removeAdmin(email, btn) {
+  if (!email) return;
+  if (!confirm(`ถอดสิทธิ์ผู้ดูแลของ ${email}?`)) return;
+  if (btn) btn.disabled = true;
+  try {
+    await apiDelete(`/api/admin/admins/${encodeURIComponent(email)}`);
+    toast("ถอดสิทธิ์แล้ว", "t-ok");
+    await loadAdmins();
+    if (state.user && (state.user.email || "").toLowerCase() === email) {
+      await refreshMe();
+    }
+  } catch (e) {
+    if (btn) btn.disabled = false;
+    toast("ถอดสิทธิ์ไม่สำเร็จ: " + e.message, "t-err");
+  }
+}
+
+function adminHistoryTable(rows) {
+  let html = `<table class="tests"><thead><tr>
+    <th>เวลา</th><th>ผู้ส่ง</th><th>ข้อ</th><th>ภาษา</th><th>ผล</th><th>คะแนน</th><th></th>
+  </tr></thead><tbody>`;
+  rows.forEach((r) => {
+    html += `<tr>
+      <td title="${esc(r.created_at || "")}">${esc(shortTime(r.created_at))}</td>
+      <td><div>${esc(r.name || "—")}</div><div class="admin-user-email">${esc(r.user_email || "")}</div></td>
+      <td>${problemCell(r.problem)}</td>
+      <td>${esc(r.language || "—")}</td>
+      <td>${badgeVerdict(rowVerdictCode(r))}</td>
+      <td>${r.passed}/${r.total} (<span class="${scoreCls(r.score)}">${r.score}</span>)</td>
+      <td>${r.id ? `<button class="icon-btn" data-view="${esc(r.id)}" title="ดูผลการตรวจ" aria-label="ดูผลการตรวจ">${icon("eye")}</button>` : ""}</td>
+    </tr>`;
+  });
+  return html + `</tbody></table>`;
+}
+
+function renderAdminHistoryPager(page, pages) {
+  const box = $("admin-history-pager");
+  if (!box) return;
+  const btn = (p, label, disabled) =>
+    `<button class="ghost-btn" type="button" data-history-page="${p}" ${disabled ? "disabled" : ""}>${label}</button>`;
+  box.innerHTML = btn(1, "« แรก", page <= 1) +
+    btn(page - 1, "ก่อนหน้า", page <= 1) +
+    `<span class="pager-info">หน้า ${page} / ${pages}</span>` +
+    btn(page + 1, "ถัดไป", page >= pages) +
+    btn(pages, "สุดท้าย »", page >= pages);
+  box.querySelectorAll("button[data-history-page]").forEach((b) => {
+    b.onclick = () => {
+      const p = Number(b.dataset.historyPage);
+      if (!p || p === state.adminHistoryPage) return;
+      state.adminHistoryPage = p;
+      loadAdminHistory();
+    };
+  });
+}
+
+async function loadAdminHistory() {
+  const body = $("admin-history-body");
+  if (!body) return;
+  const sizes = [20, 50, 100];
+  const per = sizes.includes(Number(state.adminHistoryPerPage))
+    ? Number(state.adminHistoryPerPage) : 20;
+  const page = Math.max(1, Number(state.adminHistoryPage) || 1);
+  const filter = $("admin-history-problem");
+  const pid = filter ? filter.value : "";
+  state.adminHistoryPerPage = per;
+  state.adminHistoryPage = page;
+  body.classList.add("dim");
+  body.innerHTML = skel(8);
+  const meta = $("admin-history-meta");
+  if (meta) meta.textContent = "กำลังโหลด…";
+  const pager = $("admin-history-pager");
+  if (pager) pager.innerHTML = "";
+  try {
+    let path = `/api/admin/submissions?page=${page}&per_page=${per}`;
+    if (pid) path += `&problem=${encodeURIComponent(pid)}`;
+    const d = await apiGet(path);
+    if (!d.configured) {
+      body.innerHTML = `<span class="dim">ยังไม่เปิด history — ตั้งค่า SUPABASE_URL / SUPABASE_KEY ที่ backend</span>`;
+      if (meta) meta.textContent = "";
+      setDashCount("admin-history-count", "—");
+      return;
+    }
+    const total = Number(d.total) || 0;
+    const pages = Number(d.pages) || 1;
+    state.adminHistoryPage = Number(d.page) || 1;
+    state.adminHistoryPerPage = Number(d.per_page) || per;
+    setDashCount("admin-history-count", `${total.toLocaleString("th-TH")} รายการ`);
+    if (meta) {
+      meta.textContent = total
+        ? `ทั้งหมด ${total.toLocaleString("th-TH")} รายการ · หน้า ${d.page} / ${pages} · ${d.per_page} รายการต่อหน้า`
+        : "ยังไม่มีการส่ง";
+    }
+    const rows = d.submissions || [];
+    if (!rows.length) {
+      body.innerHTML = `<span class="dim">ไม่พบประวัติการส่ง${pid ? "ของข้อนี้" : ""}</span>`;
+      renderAdminHistoryPager(Number(d.page) || 1, pages);
+      return;
+    }
+    body.classList.remove("dim");
+    body.innerHTML = adminHistoryTable(rows);
+    bindViewButtons(body);
+    renderAdminHistoryPager(Number(d.page) || 1, pages);
+  } catch (e) {
+    body.classList.remove("dim");
+    body.innerHTML = `<span class="dim">โหลดประวัติไม่ได้: ${esc(e.message)}</span>`;
+    if (meta) meta.textContent = "";
+    setDashCount("admin-history-count", "—");
+  }
 }
 
 function renderAdminTools() {
