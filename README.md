@@ -69,17 +69,17 @@ Submission history, per-problem statistics, plagiarism screening, one-click reju
 ### Lightweight frontend
 Plain HTML, CSS and JavaScript. No bundler, no transpiler and no framework.
 
-## ผลการตรวจ
+## Verdicts
 
-| ผลตรวจ | ความหมาย |
+| Verdict | Meaning |
 | :---: | --- |
-| `AC` | ผ่านทุกเทสต์ |
-| `WA` | คำตอบไม่ถูกต้อง |
-| `TLE` | ใช้เวลาเกินกำหนด |
-| `MLE` | ใช้หน่วยความจำเกินกำหนด |
-| `OLE` | แสดงผลลัพธ์เกินกำหนด |
-| `RE` | เกิดข้อผิดพลาดขณะรันโปรแกรม |
-| `CE` | คอมไพล์ไม่ผ่าน |
+| `AC` | Accepted. Every test passed. |
+| `WA` | Wrong answer. |
+| `TLE` | Time limit exceeded. |
+| `MLE` | Memory limit exceeded. |
+| `OLE` | Output limit exceeded. |
+| `RE` | Runtime error. |
+| `CE` | Compilation error. |
 
 ## Architecture
 

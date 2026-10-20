@@ -44,7 +44,6 @@ test('rendered result I/O copy buttons receive handlers, including history rende
     return elements.get(id);
   };
   context.bindCopyButtons = (body) => { assert.equal(body, context.$('result-body')); bound++; };
-  context.verdictLegend = () => '';
   context.renderResults({verdict:'CE', passed:0, total:1, score:0, compile_error:'synthetic'}, null);
   assert.equal(bound, 1);
 });
