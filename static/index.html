@@ -18,7 +18,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anuphan:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600;700&display=swap">
-<link rel="stylesheet" href="/styles.css?v=26">
+<link rel="stylesheet" href="/styles.css?v=27">
 </head>
 <body>
 <a class="skip-link" href="#main">ข้ามไปเนื้อหา</a>
@@ -394,6 +394,7 @@
 
     <div class="admin-tabs" role="tablist" aria-label="ส่วนของผู้ดูแล">
       <button class="admin-tab" type="button" role="tab" data-admin-tab="overview" aria-selected="true">ภาพรวม</button>
+      <button class="admin-tab" type="button" role="tab" data-admin-tab="history" aria-selected="false">ประวัติการส่ง</button>
       <button class="admin-tab" type="button" role="tab" data-admin-tab="contests" aria-selected="false">คอนเทสต์ <span class="admin-tab-count" id="admin-tab-contest-count">—</span></button>
       <button class="admin-tab" type="button" role="tab" data-admin-tab="reports" aria-selected="false">รีพอร์ต</button>
       <button class="admin-tab" type="button" role="tab" data-admin-tab="admins" aria-selected="false">ผู้ดูแล</button>
@@ -434,6 +435,34 @@
           <div class="dash-card-body" id="overview-hidden">—</div>
         </section>
       </div>
+    </div>
+    <div class="card hidden admin-panel" id="admin-history-card" data-admin-panel="history">
+      <div class="card-head admin-section-head">
+        <div>
+          <h3 class="admin-section-title">ประวัติการส่งทั้งหมด <span class="dash-count" id="admin-history-count">—</span></h3>
+          <p class="admin-sub dim">ทุกบัญชี ทุกข้อ — เปิดดูทีละหน้า เลือกได้ 20 / 50 / 100 รายการต่อหน้า</p>
+        </div>
+        <button class="ghost-btn" type="button" id="admin-history-refresh"><svg class="ic"><use href="#i-refresh"/></svg><span>รีเฟรช</span></button>
+      </div>
+      <div class="admin-history-toolbar">
+        <div class="settings-row">
+          <label for="admin-history-problem">กรองตามข้อ</label>
+          <select id="admin-history-problem"><option value="">ทุกข้อ</option></select>
+        </div>
+        <div class="settings-row">
+          <label for="admin-history-size">รายการต่อหน้า</label>
+          <select id="admin-history-size">
+            <option value="20" selected>20</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+          </select>
+        </div>
+      </div>
+      <div id="admin-history-meta" class="meta" aria-live="polite"></div>
+      <div class="card table-card admin-history-table">
+        <div id="admin-history-body" class="dim" style="padding:16px">กำลังโหลด…</div>
+      </div>
+      <div id="admin-history-pager" class="admin-pager" role="navigation" aria-label="แบ่งหน้าประวัติการส่ง"></div>
     </div>
     <div class="card hidden admin-panel" id="contest-card" data-admin-panel="contests">
       <div class="card-head admin-section-head">

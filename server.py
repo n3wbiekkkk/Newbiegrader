@@ -3665,6 +3665,44 @@ async def admin_remove_admin(request: Request, email: str) -> dict:
     return {"ok": True, "email": target}
 
 
+@app.get("/api/admin/submissions")
+async def admin_submissions(request: Request, page: int = 1, per_page: int = 20,
+                            problem: Optional[str] = None) -> dict:
+    """Paginated all-user submission history (metadata only, never source)."""
+    user = request.session.get("user") or {}
+    if not _is_admin(user.get("email", "")):
+        raise HTTPException(status_code=403, detail="admin only")
+    if _sb is None:
+        raise HTTPException(status_code=404, detail="supabase not configured")
+    if per_page not in (20, 50, 100):
+        per_page = 20
+    page = max(1, page)
+    wanted_problem = _resolve_pid(problem) if problem else ""
+
+    def _fetch():
+        q = _sb.table("submissions").select(
+            "id,created_at,user_email,name,problem,language,verdict,accepted,"
+            "passed,total,score,counts,contest_id", count="exact")
+        if wanted_problem:
+            q = q.eq("problem", wanted_problem)
+        return q.order("created_at", desc=True).order("id", desc=True).range(
+            (page - 1) * per_page, page * per_page - 1).execute()
+
+    try:
+        res = await asyncio.to_thread(_fetch)
+    except Exception as e:
+        raise _db_err(e)
+    total = res.count or 0
+    return {
+        "configured": True,
+        "page": page,
+        "per_page": per_page,
+        "total": total,
+        "pages": max(1, (total + per_page - 1) // per_page),
+        "submissions": res.data or [],
+    }
+
+
 @app.get("/api/admin/overview")
 async def admin_overview(request: Request) -> dict:
     user = request.session.get("user") or {}

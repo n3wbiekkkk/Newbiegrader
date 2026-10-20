@@ -193,6 +193,67 @@ class AdminManagement(unittest.TestCase):
         self.assertTrue(server._load_db_admins_sync())
         self.assertTrue(server._is_admin(NEW_ADMIN))
 
+    def _seed_submissions(self, count: int = 5, problem: str = "hanoi") -> None:
+        for i in range(count):
+            self.fake.table("submissions").insert({
+                "created_at": f"2026-10-20T00:00:{i:02d}+00:00",
+                "problem": problem,
+                "language": "python",
+                "name": f"User {i}",
+                "user_email": f"user{i}@example.com",
+                "verdict": "AC" if i % 2 else "WA",
+                "accepted": bool(i % 2),
+                "passed": i, "total": count, "score": i * 10,
+                "counts": {"AC": i} if i % 2 else {"WA": 1},
+            }).execute()
+
+    def test_admin_submissions_paginates_with_exact_total(self):
+        self.login(ADMIN, "Admin")
+        self._seed_submissions(5)
+        body = self.client.get(
+            "/api/admin/submissions?page=1&per_page=20").json()
+        self.assertEqual(body["total"], 5)
+        self.assertEqual(body["pages"], 1)
+        self.assertEqual(body["per_page"], 20)
+        self.assertEqual([r["name"] for r in body["submissions"]],
+                         ["User 4", "User 3", "User 2", "User 1", "User 0"])
+        self.assertTrue(all("user_email" in r for r in body["submissions"]))
+        self.assertNotIn("code", body["submissions"][0])
+        self.assertNotIn("results", body["submissions"][0])
+
+        page2 = self.client.get(
+            "/api/admin/submissions?page=2&per_page=20").json()
+        self.assertEqual(page2["submissions"], [])
+
+    def test_admin_submissions_page_sizes_and_filters(self):
+        self.login(ADMIN, "Admin")
+        self._seed_submissions(5, "hanoi")
+        self._seed_submissions(3, "other")
+        two = self.client.get(
+            "/api/admin/submissions?page=1&per_page=50").json()
+        self.assertEqual((two["total"], len(two["submissions"])), (8, 8))
+        self.assertEqual(two["per_page"], 50)
+        # Only the three advertised sizes are accepted; anything else falls back.
+        odd = self.client.get(
+            "/api/admin/submissions?page=1&per_page=17").json()
+        self.assertEqual(odd["per_page"], 20)
+        filtered = self.client.get(
+            "/api/admin/submissions?page=1&per_page=20&problem=hanoi").json()
+        self.assertEqual(filtered["total"], 5)
+        self.assertTrue(all(r["problem"] == "hanoi"
+                            for r in filtered["submissions"]))
+        unknown = self.client.get(
+            "/api/admin/submissions?problem=no-such-problem").json()
+        self.assertEqual(unknown["total"], 0)
+
+    def test_admin_submissions_requires_admin(self):
+        self._seed_submissions(2)
+        self.assertIn(self.client.get("/api/admin/submissions").status_code,
+                      (401, 403))
+        self.login(STUDENT, "Student")
+        self.assertEqual(
+            self.client.get("/api/admin/submissions").status_code, 403)
+
 
 if __name__ == "__main__":
     unittest.main()

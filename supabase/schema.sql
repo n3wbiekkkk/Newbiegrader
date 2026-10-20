@@ -654,4 +654,5 @@ create table if not exists public.admins (
   created_by text not null default ''
 );
 alter table public.admins enable row level security;
+revoke all on public.admins from anon, authenticated;
 grant all on public.admins to service_role;
