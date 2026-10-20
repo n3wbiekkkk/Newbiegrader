@@ -79,7 +79,7 @@ logging.getLogger("uvicorn.access").addFilter(AuthQueryLogFilter())
 
 STATIC_DIR = ROOT / "static"
 
-BUILD_SOURCE_FILES = ("grader.py", "server.py", "judge_runner.py", "job_resources.py", "problem_store.py",
+BUILD_SOURCE_FILES = ("grader.py", "server.py", "judge_runner.py", "job_resources.py", "problem_store.py", "backend_problem_files.py",
                       "container_entrypoint.py", "worker.py", "job_sandbox.py", "email_auth.py")
 
 
@@ -786,6 +786,7 @@ def _judge_isolation_posture(*, role: str, strict: bool, acknowledged: bool,
 
 
 async def validate_runtime() -> None:
+    await asyncio.to_thread(problem_store.backend_problem_files.validate, GRADER_ROLE)
     if GRADER_ROLE != "api" and JUDGE_WORKERS < 1:
         raise RuntimeError("host RAM cannot safely fit a judge, compiler and API reserve")
     if QUEUE_MODE not in ("local", "database"):
@@ -1148,7 +1149,10 @@ async def _judge_worker(idx: int) -> None:
                                            p_lease_seconds=LEASE_SECONDS)
                     if job:
                         await _run_job(job)
-                    poll_delay = .25 if job else min(2.0, poll_delay * 2)
+                    # Idle wakeup is user-visible latency. Keep the fallback
+                    # poll reasonably responsive; the durable queue is shared,
+                    # so a claim is still the only authority.
+                    poll_delay = .25 if job else min(1.0, poll_delay * 2)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -1196,6 +1200,8 @@ async def _run_job(job: dict) -> None:
                 await _finish_job(jid, error="problem version changed; resubmit required")
                 return
             PROBLEMS[prob.pid] = prob
+            if problem_store.backend_problem_files.backend() != "local":
+                PROBLEMS[prob.pid] = prob
             _TESTS_HASH_CACHE[prob.pid] = actual_hash
         except problem_store.ProblemNotFound:
             await _finish_job(jid, error="unknown problem")
@@ -2239,17 +2245,31 @@ async def auth_password(request: Request):
 
 
 def _profile_display_name(email: str, fallback: str) -> str:
-    """Display name from profiles table, else Google name (blocking)."""
+    """Display name from profiles table, else Google name (blocking).
+
+    Cached briefly because submissions are the hot path and a display name is
+    not an authorization decision. Profile updates clear the entry.
+    """
+    now = time.monotonic()
+    if email:
+        hit = _PROFILE_NAME_CACHE.get(email)
+        if hit is not None and now - hit[1] < _PROFILE_NAME_TTL:
+            return hit[0]
+    name = (fallback or "")[:50]
     if _sb is not None and email:
         try:
             res = _sb.table("profiles").select("display_name").eq(
                 "user_email", email).limit(1).execute()
             rows = res.data or []
             if rows and (rows[0].get("display_name") or "").strip():
-                return rows[0]["display_name"].strip()[:50]
+                name = rows[0]["display_name"].strip()[:50]
         except Exception as e:
             print(f"[web] profile lookup failed: {e}", file=sys.stderr)
-    return (fallback or "")[:50]
+    if email:
+        if len(_PROFILE_NAME_CACHE) >= _PROFILE_NAME_MAX:
+            _PROFILE_NAME_CACHE.pop(next(iter(_PROFILE_NAME_CACHE)), None)
+        _PROFILE_NAME_CACHE[email] = (name, now)
+    return name
 
 
 @app.get("/api/profile")
@@ -2291,6 +2311,7 @@ async def update_profile(request: Request) -> dict:
         await asyncio.to_thread(lambda: _sb.table("profiles").upsert(row, on_conflict="user_email").execute())
     except Exception as e:
         raise _db_err(e)
+    _PROFILE_NAME_CACHE.pop(user["email"], None)
     return {"ok": True, "profile": {"email": user["email"], **row}}
 
 # Preload problems at startup (fail fast on broken tests, skip with warning).
@@ -2344,6 +2365,14 @@ _TESTS_HASH_CACHE: Dict[str, str] = {}
 # downloads (one SELECT per boot/refresh, not per request).
 _PROBLEM_EXTRA: Dict[str, dict] = {}
 _problems_refresh_at: float = time.monotonic()
+_problem_refresh_lock = threading.Lock()
+
+# Display names are not security-sensitive and change rarely; one query per
+# submit is avoidable. Bounded so a long-lived process cannot grow without
+# limit. Cleared on profile update.
+_PROFILE_NAME_CACHE: Dict[str, tuple] = {}
+_PROFILE_NAME_TTL = 60.0
+_PROFILE_NAME_MAX = 2048
 
 if PROBLEM_SOURCE == "supabase":
     if _sb is None:
@@ -2406,6 +2435,55 @@ def _tests_hash(pid: str) -> str:
     return hashed
 
 
+def _apply_problem_snapshot(meta: dict, hashmap: dict, extra: dict) -> None:
+    """Install a refreshed catalog without blanking unchanged statements.
+
+    The periodic refresh selects the lean metadata columns (no statement_md).
+    Carrying the old description forward for problems whose version did not
+    change keeps detail responses stable; changed problems fetch it lazily.
+    Updating the dicts in place avoids an empty-catalog window for concurrent
+    request threads.
+    """
+    for slug, prob in meta.items():
+        old = PROBLEMS.get(slug)
+        if old is None or prob.description:
+            continue
+        old_hash = _TESTS_HASH_CACHE.get(slug)
+        new_hash = hashmap.get(slug)
+        old_updated = (_PROBLEM_EXTRA.get(slug) or {}).get("updated_at")
+        new_updated = (extra.get(slug) or {}).get("updated_at")
+        if old_hash == new_hash and str(old_updated or "") == str(new_updated or ""):
+            prob.description = old.description
+    for slug in list(PROBLEMS):
+        if slug not in meta:
+            PROBLEMS.pop(slug, None)
+    PROBLEMS.update(meta)
+    _TESTS_HASH_CACHE.clear()
+    _TESTS_HASH_CACHE.update(hashmap)
+    _PROBLEM_EXTRA.clear()
+    _PROBLEM_EXTRA.update(extra)
+    _rebuild_problem_indexes()
+
+
+def _refresh_problems_background() -> None:
+    """Refresh the catalog off the request path; stale data stays readable."""
+    global _problems_refresh_at
+    try:
+        meta, hashmap, extra = problem_store.load_snapshot(client=_sb, lean=True)
+        dropped = problem_store.invalidate_stale(hashmap, extra)
+        if dropped:
+            print(f"[web] problem versions changed, dropped cache: {sorted(dropped)}",
+                  file=sys.stderr)
+        _apply_problem_snapshot(meta, hashmap, extra)
+    except Exception as e:
+        print(f"[web] problem refresh failed, keeping {len(PROBLEMS)} cached: {e}",
+              file=sys.stderr)
+    finally:
+        # Set the timestamp even on failure: do not hammer a failing database.
+        _problems_refresh_at = time.monotonic()
+        _problem_refresh_lock.release()
+
+
 def _ensure_problems_fresh() -> None:
     """TTL refresh for supabase mode (metadata-only, versioned by tests_hash).
 
@@ -2415,6 +2493,10 @@ def _ensure_problems_fresh() -> None:
     costs one small SELECT, never ~1700 file downloads — safe on the tiny
     prod box. Failures keep the stale cache and log; callers surface an empty
     store as an explicit 500, never silent fallback.
+
+    The refresh runs in a daemon thread so the request that notices the TTL
+    expiry is served from the current snapshot instead of blocking on a
+    Supabase round trip. Only one refresh can be in flight.
     """
     global _problems_refresh_at
     if PROBLEM_SOURCE != "supabase":
@@ -2424,25 +2506,17 @@ def _ensure_problems_fresh() -> None:
         return
     if _sb is None:
         return
-    try:
-        meta, hashmap, extra = problem_store.load_snapshot(client=_sb)
-    except Exception as e:
-        print(f"[web] problem refresh failed, keeping {len(PROBLEMS)} cached: {e}",
-              file=sys.stderr)
-        _problems_refresh_at = time.monotonic()
+    if not _problem_refresh_lock.acquire(blocking=False):
         return
-    dropped = problem_store.invalidate_stale(hashmap, extra)
-    if dropped:
-        print(f"[web] problem versions changed, dropped cache: {sorted(dropped)}",
-              file=sys.stderr)
-    PROBLEMS.clear()
-    PROBLEMS.update(meta)
-    _TESTS_HASH_CACHE.clear()
-    _TESTS_HASH_CACHE.update(hashmap)
-    _PROBLEM_EXTRA.clear()
-    _PROBLEM_EXTRA.update(extra)
-    _rebuild_problem_indexes()
+    # Claim the TTL before the thread starts so another request does not spawn
+    # a duplicate refresh while this one is connecting to Supabase.
     _problems_refresh_at = time.monotonic()
+    try:
+        threading.Thread(target=_refresh_problems_background,
+                         name="problem-refresh", daemon=True).start()
+    except Exception as e:
+        _problem_refresh_lock.release()
+        print(f"[web] cannot start problem refresh: {e}", file=sys.stderr)
 
 
 def _problem_total(pid: str, p: grader.Problem) -> int:
@@ -2452,6 +2526,24 @@ def _problem_total(pid: str, p: grader.Problem) -> int:
         if hit:
             return int(hit)
     return len(p.tests)
+
+
+def _problem_description(p: grader.Problem) -> str:
+    """Statement markdown, fetched lazily when a lean refresh omitted it."""
+    if p.description or PROBLEM_SOURCE != "supabase" or _sb is None:
+        return p.description
+    try:
+        p.description = problem_store.load_statement_md(p.pid, client=_sb)
+    except Exception as e:
+        print(f"[web] statement unavailable for {p.pid}: {e}", file=sys.stderr)
+    return p.description
+
+
+def _browse_cache_control(pid: str, email: str, ttl: int) -> str:
+    """Private browser cache; contest-hidden/admin responses get a short TTL."""
+    if _is_admin(email) or pid in _hidden_pids():
+        ttl = min(ttl, 30)
+    return f"private, max-age={ttl}"
 
 
 def _meta_or_404(pid: str) -> grader.Problem:
@@ -2497,7 +2589,7 @@ def _problem_or_404(pid: str) -> grader.Problem:
     slug = _resolve_pid(pid)
     p = PROBLEMS.get(slug)
     if p is not None:
-        if PROBLEM_SOURCE == "supabase" and len(p.tests) == len(p.samples):
+        if PROBLEM_SOURCE == "supabase" and len(p.tests) <= len(p.samples):
             # โหลดเมตาดาต้าแค่ตัวอย่างตอน boot — ตอนเข้าถึงจริงต้องโหลด
             # เทสต์ลับเต็มก่อนตัดสิน (fail closed ถ้าโหลดไม่ได้)
             try:
@@ -2655,6 +2747,7 @@ def _host_limits() -> dict:
             "compile_timeout_s": grader.COMPILE_TIMEOUT,
             "queue_mode": QUEUE_MODE, "role": GRADER_ROLE,
             "problem_source": PROBLEM_SOURCE,
+        "problem_file_storage": problem_store.backend_problem_files.backend(),
             "problems_count": len(PROBLEMS),
             "reserve_memory_mb": _capacity["reserve_mb"],
             "memory_per_job_mb": _capacity["per_job_mb"],
@@ -2919,6 +3012,9 @@ def list_problems(request: Request, response: Response, sort: str = "") -> dict:
             "memory_limit": p.memory_limit, "checker": p.checker,
             "difficulty": p.difficulty, "tags": p.tags,
             "tests": _problem_total(p.pid, p), "samples": len(p.samples),
+            "has_pdf": bool((_PROBLEM_EXTRA.get(p.pid) or {}).get("has_pdf", False))
+            if PROBLEM_SOURCE == "supabase"
+            else (grader.PROBLEMS_DIR / p.pid / "statement.pdf").is_file(),
         }
         if admin:
             item["hidden"] = is_hidden
@@ -2930,7 +3026,7 @@ def list_problems(request: Request, response: Response, sort: str = "") -> dict:
 
 
 @app.get("/api/problems/{pid}")
-def problem_detail(request: Request, pid: str) -> dict:
+def problem_detail(request: Request, pid: str, response: Response) -> dict:
     _ensure_problems_fresh()
     email = (request.session.get("user") or {}).get("email", "")
     if PROBLEM_SOURCE == "supabase":
@@ -2947,7 +3043,7 @@ def problem_detail(request: Request, pid: str) -> dict:
                 "time_limit": meta.time_limit,
                 "memory_limit": meta.memory_limit, "checker": meta.checker,
                 "difficulty": meta.difficulty, "tags": meta.tags,
-                "tests": total, "statement": meta.description,
+                "tests": total, "statement": _problem_description(meta),
                 "samples": samples,
                 "tests_hash": _tests_hash(meta.pid),
                 "has_pdf": has_pdf}
@@ -2956,6 +3052,8 @@ def problem_detail(request: Request, pid: str) -> dict:
             body["contest_only"] = meta.pid in listed
             body["config_hidden"] = meta.hidden
             body["contest_hidden"] = meta.pid in contest_hidden
+        response.headers["Cache-Control"] = _browse_cache_control(meta.pid, email, 60)
+        response.headers["Vary"] = "Cookie"
         return body
     p = _visible_problem_or_404(pid, email)
     listed, contest_hidden = _contest_problem_sets()
@@ -2972,11 +3070,13 @@ def problem_detail(request: Request, pid: str) -> dict:
         body["contest_only"] = p.pid in listed
         body["config_hidden"] = p.hidden
         body["contest_hidden"] = p.pid in contest_hidden
+    response.headers["Cache-Control"] = _browse_cache_control(p.pid, email, 60)
+    response.headers["Vary"] = "Cookie"
     return body
 
 
 @app.get("/api/problems/{pid}/sample/{name}")
-def problem_sample(request: Request, pid: str, name: str) -> dict:
+def problem_sample(request: Request, pid: str, name: str, response: Response) -> dict:
     """Public sample test data (statement examples) — hidden tests are never served."""
     _ensure_problems_fresh()
     email = (request.session.get("user") or {}).get("email", "")
@@ -2992,6 +3092,17 @@ def problem_sample(request: Request, pid: str, name: str) -> dict:
         if not _is_admin(email) and meta.pid in _live_hidden_pids():
             raise HTTPException(status_code=404,
                                 detail="not a public sample (hidden tests are not served)")
+        if problem_store.backend_problem_files.backend() == "local":
+            try:
+                inp = problem_store._download(_sb, problem_store.problem_bucket(),
+                                              f"{meta.pid}/tests/{name}.in").decode("utf-8")
+                out = problem_store._download(_sb, problem_store.problem_bucket(),
+                                              f"{meta.pid}/tests/{name}.out").decode("utf-8")
+            except (problem_store.ProblemUnavailable, UnicodeDecodeError):
+                raise HTTPException(status_code=503, detail="public sample file unavailable")
+            response.headers["Cache-Control"] = _browse_cache_control(meta.pid, email, 300)
+            response.headers["Vary"] = "Cookie"
+            return {"problem": meta.pid, "test": name, "input": inp, "output": out}
         try:
             row = problem_store.fetch_row(meta.pid, client=_sb)
         except problem_store.ProblemNotFound:
@@ -3001,6 +3112,8 @@ def problem_sample(request: Request, pid: str, name: str) -> dict:
             raise HTTPException(status_code=500, detail="problem store unavailable")
         for entry in (row.get("samples_data") or []):
             if str(entry.get("name")) == name:
+                response.headers["Cache-Control"] = _browse_cache_control(meta.pid, email, 300)
+                response.headers["Vary"] = "Cookie"
                 return {"problem": meta.pid, "test": name,
                         "input": str(entry.get("input", "")),
                         "output": str(entry.get("expected", ""))}
@@ -3015,6 +3128,8 @@ def problem_sample(request: Request, pid: str, name: str) -> dict:
                             detail="not a public sample (hidden tests are not served)")
     for tc in p.tests:
         if tc.name == name:
+            response.headers["Cache-Control"] = _browse_cache_control(p.pid, email, 300)
+            response.headers["Vary"] = "Cookie"
             return {"problem": p.pid, "test": tc.name,
                     "input": tc.input, "output": tc.expected}
     raise HTTPException(status_code=404, detail="sample not found")
@@ -3042,7 +3157,7 @@ def problem_pdf(request: Request, pid: str):
             raise HTTPException(status_code=500, detail="problem store unavailable")
         etag = '"' + hashlib.sha256(data).hexdigest() + '"'
         headers = {"Content-Disposition": f'inline; filename="{p.pid}.pdf"',
-                   "Cache-Control": "private, no-cache", "Vary": "Cookie",
+                   "Cache-Control": _browse_cache_control(p.pid, email, 600), "Vary": "Cookie",
                    "ETag": etag}
         candidates = [tag.strip().removeprefix("W/")
                       for tag in request.headers.get("if-none-match", "").split(",")]
@@ -3054,7 +3169,8 @@ def problem_pdf(request: Request, pid: str):
         raise HTTPException(status_code=404, detail="no PDF statement for this problem")
     return FileResponse(str(f), media_type="application/pdf", filename=f"{p.pid}.pdf",
                         content_disposition_type="inline",
-                        headers={"Cache-Control": "private, no-cache", "Vary": "Cookie"})
+                        headers={"Cache-Control": _browse_cache_control(p.pid, email, 600),
+                                 "Vary": "Cookie"})
 
 
 async def _read_source(language: str, code: str,
@@ -3139,6 +3255,12 @@ async def submit(
     display = await asyncio.to_thread(
         _profile_display_name, email, user.get("name") or email)
     reveal = await asyncio.to_thread(_effective_reveal, contest_obj, email, prob.pid)
+    # Two independent Supabase reads: overlap them instead of paying both
+    # round trips serially on the submit path.
+    display, reveal = await asyncio.gather(
+        asyncio.to_thread(_profile_display_name, email, user.get("name") or email),
+        asyncio.to_thread(_effective_reveal, contest_obj, email, prob.pid),
+    )
     tests_hash = (_TESTS_HASH_CACHE.get(prob.pid) if PROBLEM_SOURCE == "supabase"
                   else _tests_hash(prob.pid))
     if not tests_hash:
@@ -3237,7 +3359,13 @@ async def run_custom(
     await asyncio.to_thread(_ensure_problems_fresh)
     prob = None
     if problem:
-        prob = await asyncio.to_thread(lambda: _visible_problem_or_404(problem, user["email"]))
+        if PROBLEM_SOURCE == "supabase":
+            # A custom-input run needs limits/visibility, never private test bytes.
+            prob = await asyncio.to_thread(_meta_or_404, problem)
+            if not await asyncio.to_thread(_visible_to, prob.pid, user["email"]):
+                raise HTTPException(status_code=404, detail=f"unknown problem: {problem}")
+        else:
+            prob = await asyncio.to_thread(lambda: _visible_problem_or_404(problem, user["email"]))
     source, _filename = await _read_source(language, code, file)
     if len(input.encode("utf-8")) > RUN_INPUT_MAX:
         raise HTTPException(status_code=413,

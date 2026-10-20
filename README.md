@@ -89,10 +89,10 @@ Plain HTML, CSS and JavaScript. No bundler, no transpiler and no framework.
 | `server.py` | FastAPI application: authentication, job queue, quota and visibility policy, result redaction |
 | `judge_runner.py` · `worker.py` | Supervised bounded execution and the dedicated worker role |
 | `static/` | The web interface |
-| `problems/` | Local working copy of the problem set (configuration, statement, tests). Not versioned here — the source of truth is Supabase |
+| `problems/` | Local working copy of the problem set (configuration, statement, tests). Not versioned here — runtime files are published to protected backend storage; metadata lives in Supabase |
 | `supabase/` | Database schema with append-only, re-runnable migrations |
 
-Host capacity is read from the service or container at startup, and worker counts, memory ceilings, queue bounds and timeouts are derived from it automatically. Current production deployment and recovery procedures are in the [EC2 runbook](docs/EC2_MIGRATION.md).
+Host capacity is read from the service or container at startup, and worker counts, memory ceilings, queue bounds and timeouts are derived from it automatically. Current production is Cloudflare Pages + AWS EC2 t3.small with one worker; Vercel and JustRunMy are not used. Problem PDFs, public samples and private tests are served from backend disk (`GRADER_FILE_STORAGE=local`); Supabase holds metadata, auth and the durable queue. See [current architecture](docs/PRODUCTION_ARCHITECTURE.md), the [backend file release record](docs/releases/PRODUCTION_BACKEND_FILES_2026-10-19.md), the [earlier correctness/cache record](docs/releases/PRODUCTION_CORRECTNESS_RELEASE_2026-10-19.md), and the [EC2 runbook](docs/EC2_MIGRATION.md).
 
 ## Design Principles
 

@@ -97,7 +97,7 @@ def _upload_object(client, bucket_name: str, path: str, data: bytes,
         raise RuntimeError(f"upload {path!r}: {e}")
 
 
-def _upload_many(client, bucket_name: str, jobs: list, dry: bool) -> None:
+def _upload_many(client, bucket_name: str, jobs: list, dry: bool, public_samples=()) -> None:
     """Upload many objects concurrently (I/O-bound HTTPS). Bounded pool.
 
     storage3 handles are not shared across threads — each upload is an
@@ -107,6 +107,9 @@ def _upload_many(client, bucket_name: str, jobs: list, dry: bool) -> None:
     partial batches.
     """
     if dry or not jobs:
+        return
+    if problem_store.backend_problem_files.backend() == "local":
+        problem_store.backend_problem_files.publish(bucket_name, jobs, public_samples)
         return
     from concurrent.futures import ThreadPoolExecutor
     with ThreadPoolExecutor(max_workers=min(16, len(jobs))) as ex:
@@ -164,11 +167,7 @@ def import_one(client, bucket_name: str, slug: str, dry: bool) -> tuple[str, str
     if dry:
         detail = f"tests={len(prob.tests)} samples={len(samples_data)} hidden={len(hidden_manifest)} pdf={'yes' if has_pdf else 'no'}"
         return status, detail
-    # Write Postgres row first (upsert on slug PK), then Storage objects.
-    try:
-        client.table("problems").upsert(row, on_conflict="slug").execute()
-    except Exception as e:
-        return "failed", f"db upsert: {e}"
+    # Publish all file bytes before switching authoritative metadata.
     try:
         jobs = []
         for tc in prob.tests:
@@ -179,9 +178,17 @@ def import_one(client, bucket_name: str, slug: str, dry: bool) -> tuple[str, str
         if has_pdf:
             jobs.append((f"{slug}/statement.pdf", pdf_path.read_bytes(),
                          "application/pdf"))
-        _upload_many(client, bucket_name, jobs, dry)
+        _upload_many(client, bucket_name, jobs, dry, public_samples={
+            f"{slug}/tests/{name}.{suffix}" for name in prob.samples for suffix in ("in", "out")})
     except Exception as e:
         return "failed", f"storage upload: {e}"
+    if problem_store.backend_problem_files.backend() == "local":
+        row["samples_data"] = []  # canonical sample bytes live only in backend files
+    row["updated_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+    try:
+        client.table("problems").upsert(row, on_conflict="slug").execute()
+    except Exception as e:
+        return "failed", f"db upsert: {e}"
     problem_store.invalidate_cache(slug)
     return status, f"tests={len(prob.tests)} hash={tests_hash}"
 
@@ -300,6 +307,10 @@ def main(argv: list[str] | None = None) -> int:
                     help="also delete Storage test objects for this problem that no "
                          "longer exist locally (stale after a shrinking test set)")
     args = ap.parse_args(argv)
+    if not args.dry_run and problem_store.backend_problem_files.backend() != "local":
+        ap.error("production file publishing requires GRADER_FILE_STORAGE=local and private backend roots")
+    if args.prune and problem_store.backend_problem_files.backend() == "local":
+        ap.error("local immutable file versions cannot be pruned by this tool")
     if args.statements_only and (args.renumber or args.prune):
         ap.error("--statements-only cannot renumber or prune assets")
     slugs = _local_slugs(args.problems)

@@ -1,5 +1,14 @@
 # Newbiegrader production readiness — 2026-10-18
 
+## Latest scoped deployment evidence — 2026-10-19
+
+The approved correctness/cache release is deployed on Cloudflare Pages + AWS
+t3.small with one worker. Vercel and JustRunMy are not used. Actual public smoke
+15/15, cache/assets 7/7, three synthetic language runs and CE submit/poll/history
+passed; one job linked to one persisted CE submission. See [the complete record](../releases/PRODUCTION_CORRECTNESS_RELEASE_2026-10-19.md).
+This does not close S04, qualify two workers or establish sustained burstable-CPU
+capacity. Older audit dispositions below retain their original scope.
+
 2026-10-19 production update: see [EC2 migration evidence](../EC2_MIGRATION.md).
 The operator approved cutover/stopping JustRunMy. Production now uses AWS API
 and one database worker; real Google login, synthetic Python/C/C++ runs,

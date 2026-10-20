@@ -1,0 +1,193 @@
+{
+  "source_commit": "f88364747037d800ae1abf3bb799fdde450d7c33",
+  "source_archive_sha256": "8b43de1e19148b5eee934e6d14fea553d0e3c8e5072d51f89385bcac569bf170",
+  "previous_backend": "6cba18c68366993fed7fc7572c87368bbb773ea9",
+  "previous_pages": "d1b73f7f-f68e-46f7-8e3c-2cefc6482305",
+  "pages": "f826f65a-5f93-49f0-9ca5-4f2d286a2c85",
+  "app_version": "52",
+  "final": {
+    "admission": "1",
+    "api": {
+      "active": true,
+      "cpu_quota": "250ms",
+      "memory_events": {
+        "high": 0,
+        "low": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_group_kill": 0,
+        "oom_kill": 0,
+        "sock_throttled": 0
+      },
+      "memory_events_local": {
+        "high": 0,
+        "low": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_group_kill": 0,
+        "oom_kill": 0,
+        "sock_throttled": 0
+      },
+      "memory_max": "335544320"
+    },
+    "at": 1792407948.7121267,
+    "cgroup_jobs": 0,
+    "protected_configuration_unchanged": true,
+    "queue": {
+      "done": 52,
+      "error": 0,
+      "queued": 0,
+      "running": 0
+    },
+    "release": "/opt/newbiegrader/releases/f88364747037d800ae1abf3bb799fdde450d7c33",
+    "second_worker_active": false,
+    "tunnel_active": true,
+    "worker": {
+      "active": true,
+      "cpu_quota": "1s",
+      "memory_events": {
+        "high": 0,
+        "low": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_group_kill": 0,
+        "oom_kill": 0,
+        "sock_throttled": 0
+      },
+      "memory_events_local": {
+        "high": 0,
+        "low": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_group_kill": 0,
+        "oom_kill": 0,
+        "sock_throttled": 0
+      },
+      "memory_max": "1073741824"
+    },
+    "workspace_jobs": 0
+  },
+  "anonymous_https": {
+    "base": "https://newbiegrader.pages.dev",
+    "vantage": "operator host via curl, normal TLS validation",
+    "passed": 15,
+    "checks": [
+      "public GET health",
+      "AWS API/database role",
+      "anonymous identity and auth cache",
+      "anonymous admin denied",
+      "anonymous job lookup denied",
+      "anonymous execution denied /api/submit",
+      "anonymous execution denied /api/run",
+      "bounded request body",
+      "Google redirect remains manual/canonical",
+      "OAuth session cookie flags",
+      "cookie without Origin/Referer denied",
+      "untrusted Origin denied",
+      "wrong OAuth state denied before exchange",
+      "canonical logout",
+      "multiple cookie deletions survive both proxies"
+    ],
+    "real_login_verified": false,
+    "session_samesite": "none",
+    "authenticated_job_submitted": false
+  },
+  "runtime": {
+    "vantage": "macOS public network outside AWS VPC via ordinary curl/TLS",
+    "checks": [
+      {
+        "check": "static/index.html checksum",
+        "passed": true
+      },
+      {
+        "check": "static/app.js checksum",
+        "passed": true
+      },
+      {
+        "check": "static/styles.css checksum",
+        "passed": true
+      },
+      {
+        "check": "contest privacy anon",
+        "cache_control": [
+          "private, no-store"
+        ],
+        "passed": true
+      },
+      {
+        "check": "contest privacy cookie",
+        "cache_control": [
+          "private, no-store"
+        ],
+        "passed": true
+      },
+      {
+        "check": "contest privacy authorization",
+        "cache_control": [
+          "private, no-store"
+        ],
+        "passed": true
+      },
+      {
+        "check": "problem metadata varies on identity headers",
+        "passed": true
+      }
+    ]
+  },
+  "backup": {
+    "archive": "20261019T105234Z-postgres-snapshot.dump.age",
+    "manifest": "20261019T105234Z-postgres-manifest.json.age",
+    "encrypted_bytes": 795645,
+    "dump_seconds": 11.1,
+    "snapshot_read_only": true,
+    "source_tables": 51,
+    "source_rows": 3118,
+    "restore_verified": true,
+    "restore_seconds": 1.667,
+    "comparison": {
+      "tables": true,
+      "policies": true,
+      "relations": true,
+      "constraints": true
+    },
+    "table_count": 51,
+    "relation_count": 58,
+    "constraint_count": 150,
+    "isolated_network": "none"
+  },
+  "synthetic_persistence": {
+    "synthetic_ce_jobs": 1,
+    "attempt": 1,
+    "status": "done",
+    "linked_submissions": 1,
+    "owner_matches": true,
+    "verdict": "CE"
+  },
+  "browser_runs": [
+    {
+      "language": "python",
+      "wall_s": 0.2099,
+      "end_to_end_s": 8.64,
+      "expected_marker_matches": true
+    },
+    {
+      "language": "c",
+      "wall_s": 0.1923,
+      "end_to_end_s": 5.63,
+      "expected_marker_matches": true
+    },
+    {
+      "language": "cpp",
+      "wall_s": 0.1884,
+      "end_to_end_s": 9.11,
+      "expected_marker_matches": true
+    }
+  ],
+  "existing_browser_session_verified": true,
+  "fresh_google_otp_verified": false,
+  "database_schema_changed": false,
+  "private_routing_changed": false,
+  "second_worker_enabled": false,
+  "local_file_migration_deployed": false,
+  "accepted": true
+}

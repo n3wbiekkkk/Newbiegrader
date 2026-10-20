@@ -6,11 +6,13 @@ and test bytes. Compilation/execution stay in grader.py / judge_runner.py.
 
 Sources (explicit, no silent fallback):
   GRADER_PROBLEM_SOURCE=local    (default) read problems/ from disk via grader.load_problem
-  GRADER_PROBLEM_SOURCE=supabase read Postgres `problems` + private Storage bucket
-    `judge-assets` with the service_role key (server-side only).
+  GRADER_PROBLEM_SOURCE=supabase reads Postgres `problems` metadata.
+  GRADER_FILE_STORAGE=local reads PDF/sample/private test bytes from backend disk;
+    no network fallback. The legacy `supabase` file mode remains for recovery.
 
 Postgres holds queryable metadata + PUBLIC statement/samples.
-Storage holds hidden test files + statement PDFs (private bucket, no public URLs).
+Selected file storage holds test files/PDFs. In local mode the sample API and
+judge both read canonical filesystem bytes; legacy row sample copies are unused.
 Hidden test contents never appear in public rows: the `problems` row keeps only
 a manifest [{name, sha256, size_in, size_out}] for hidden tests.
 
@@ -33,6 +35,7 @@ ROOT = Path(__file__).parent
 sys.path.insert(0, str(ROOT))
 
 import grader  # noqa: E402
+import backend_problem_files  # noqa: E402
 
 
 class ProblemNotFound(Exception):
@@ -65,6 +68,16 @@ def cache_ttl_s() -> float:
 MAX_CACHED_PROBLEMS = 200
 MAX_CACHED_PDFS = 50
 PDF_CACHE_TTL_S = 300.0
+
+# Browsing metadata. The statement markdown is deliberately excluded from the
+# 30s refresh: it is the largest column and is only needed by detail pages
+# without a PDF. Keeping it out cuts the catalog response from ~300 KB to
+# ~90 KB, so a refresh does not compete with request handling on the tiny host.
+SNAPSHOT_COLUMNS = (
+    "slug,no,title,time_limit,memory_limit,checker,tolerance,difficulty,tags,"
+    "samples,samples_data,hidden,is_published,statement_pdf_path,tests_hash,"
+    "tests_count,hidden_tests,updated_at"
+)
 
 # slug -> (Problem, tests_hash, updated_at, fetched_monotonic)
 _PROBLEMS_CACHE: "OrderedDict[str, tuple]" = OrderedDict()
@@ -207,15 +220,19 @@ def load_tests_hash_map(client=None) -> Dict[str, str]:
     return load_snapshot(client)[1]
 
 
-def load_snapshot(client=None) -> tuple:
-    """One SELECT *: (meta, hashes, extra). No Storage access.
+def load_snapshot(client=None, *, lean: bool = False) -> tuple:
+    """One SELECT: (meta, hashes, extra). No Storage access.
 
     meta[slug] = Problem with samples-only tests (fast browsing);
     hashes[slug] = tests_hash; extra[slug] = {"tests": total count,
     "has_pdf": bool}. Powers boot/refresh/detail/version without downloads.
+
+    ``lean`` omits the large statement markdown column for the periodic
+    refresh. Callers keep the previous description for unchanged problems and
+    fetch it lazily for changed/no-PDF problems.
     """
     client = client if client is not None else _supabase_client()
-    rows = _fetch_all_rows(client)
+    rows = _fetch_all_rows(client, columns=SNAPSHOT_COLUMNS if lean else "*")
     meta: Dict[str, grader.Problem] = {}
     hashes: Dict[str, str] = {}
     extra: Dict[str, dict] = {}
@@ -366,6 +383,28 @@ def _fetch_all_rows(client) -> List[dict]:
     try:
         while len(rows) < 10000:
             res = client.table("problems").select("*", count="exact").order("no").order(
+def load_statement_md(slug: str, client=None) -> str:
+    """Fetch only the public statement markdown for a single problem.
+
+    The periodic catalog refresh omits this column to keep the payload small;
+    detail pages call this only when a Problem has no description cached.
+    """
+    try:
+        res = (client if client is not None else _supabase_client()).table(
+            "problems").select("statement_md").eq("slug", slug).limit(1).execute()
+    except Exception as e:
+        raise ProblemUnavailable(f"statement lookup failed for {slug!r}: {e}")
+    rows = getattr(res, "data", None) or []
+    if not rows:
+        raise ProblemNotFound(f"unknown problem: {slug}")
+    return str(rows[0].get("statement_md") or "")
+
+
+def _fetch_all_rows(client, columns: str = "*") -> List[dict]:
+    rows = []
+    try:
+        while len(rows) < 10000:
+            res = client.table("problems").select(columns, count="exact").order("no").order(
                 "slug").range(len(rows), len(rows) + 499).execute()
             batch = res.data or []
             rows.extend(dict(r) for r in batch)
@@ -391,6 +430,11 @@ def _download(client, bucket: str, path: str) -> bytes:
     thread forever, which wedges the whole server (only 1 worker on small hosts).
     In tests (FakeSupabase), use the in-memory storage directly.
     """
+    try:
+        if backend_problem_files.backend() == "local":
+            return backend_problem_files.download(bucket, path)
+    except (backend_problem_files.FilesUnavailable, OSError, ValueError, KeyError, TypeError) as exc:
+        raise ProblemUnavailable("backend problem file unavailable; verify publication") from exc
     # FakeSupabase (tests): in-memory storage, no HTTP needed.
     if getattr(client, "tables", None) is not None:
         try:
@@ -438,24 +482,26 @@ def _download(client, bucket: str, path: str) -> bytes:
 
 
 def load_problem_supabase(slug: str, client=None) -> grader.Problem:
-    """Load one problem (metadata from Postgres, hidden tests from Storage).
+    """Load one problem from Postgres metadata plus its selected file backend.
 
-    Samples come from the row's samples_data; hidden tests are downloaded from
-    the private bucket. Any missing asset or failure raises ProblemUnavailable
+    Local mode reads all cases, including samples, from disk. Legacy mode reads
+    row samples_data and private Storage. Missing assets raise ProblemUnavailable
     (never an empty suite).
     """
     client = client if client is not None else _supabase_client()
     bucket = problem_bucket()
     row = _fetch_row(client, slug)
     # TTL fast path: same version still cached.
-    cached = _cache_get(slug)
+    cached = _cache_get(slug) if backend_problem_files.backend() != "local" else None
     ttl = cache_ttl_s()
     if cached is not None:
         _prob, _hash, _updated, _at = cached
         if ttl > 0 and time.monotonic() - _at < ttl and _hash == (row.get("tests_hash") or "") \
                 and _updated == str(row.get("updated_at") or ""):
             return _prob
-    samples_data = row.get("samples_data") or []
+    local_files = backend_problem_files.backend() == "local"
+    samples_data = ([{"name": name} for name in (row.get("samples") or [])]
+                    if local_files else (row.get("samples_data") or []))
     sample_map: Dict[str, Tuple[str, str]] = {}
     try:
         for entry in samples_data:
@@ -472,11 +518,15 @@ def load_problem_supabase(slug: str, client=None) -> grader.Problem:
     tests: List[grader.TestCase] = []
     for entry in samples_data:
         try:
-            tests.append(grader.TestCase(name=str(entry["name"]),
-                                         input=str(entry.get("input", "")),
-                                         expected=str(entry.get("expected", ""))))
-        except (TypeError, KeyError, AttributeError) as e:
-            raise ProblemUnavailable(f"problem {slug!r} has corrupt sample {entry!r}: {e}")
+            name = str(entry["name"])
+            if local_files:
+                inp = _download(client, bucket, f"{slug}/tests/{name}.in").decode("utf-8")
+                expected = _download(client, bucket, f"{slug}/tests/{name}.out").decode("utf-8")
+            else:
+                inp, expected = str(entry.get("input", "")), str(entry.get("expected", ""))
+            tests.append(grader.TestCase(name=name, input=inp, expected=expected))
+        except (TypeError, KeyError, AttributeError, UnicodeDecodeError) as e:
+            raise ProblemUnavailable(f"problem {slug!r} has corrupt sample data") from e
     wanted = [n for n in hidden_names if n not in sample_map]
     if wanted:
         # I/O-bound: fetch hidden files concurrently (one HTTPS request per
@@ -512,7 +562,8 @@ def load_problem_supabase(slug: str, client=None) -> grader.Problem:
             raise ProblemUnavailable(
                 f"problem {slug!r} hash mismatch (row {stored_hash} != assembled {actual}): "
                 "re-run tools/import_problems_supabase.py")
-    _cache_put(slug, (prob, stored_hash, str(row.get("updated_at") or ""), time.monotonic()))
+    if backend_problem_files.backend() != "local":
+        _cache_put(slug, (prob, stored_hash, str(row.get("updated_at") or ""), time.monotonic()))
     return prob
 
 
@@ -550,7 +601,7 @@ def get_problem(slug: str, source: Optional[str] = None, client=None) -> grader.
     # revalidation happens on TTL expiry via load_problem_supabase.
     ttl = cache_ttl_s()
     cached = _cache_get(slug)
-    if cached is not None and ttl > 0 and time.monotonic() - cached[3] < ttl:
+    if backend_problem_files.backend() != "local" and cached is not None and ttl > 0 and time.monotonic() - cached[3] < ttl:
         return cached[0]
     return load_problem_supabase(slug, client=client)
 

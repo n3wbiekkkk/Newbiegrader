@@ -11,7 +11,8 @@ function harness() {
   const requests = [], elements = new Map(), rendered = [];
   const context = vm.createContext({
     Date: { now: () => now },
-    state: { detailCache: {}, jobResults: {}, user: null },
+    state: { detailCache: {}, jobResults: {}, user: null, problems: [] },
+    document: { getElementById: () => null },
     apiGet: (url) => new Promise((resolve, reject) => requests.push({ url, resolve, reject })),
     $: (id) => {
       if (!elements.has(id)) elements.set(id, { classList: { add() {}, remove() {} } });
@@ -23,7 +24,8 @@ function harness() {
     fillTaskDetail: (p) => rendered.push(p),
   });
   vm.runInContext(`const DETAIL_CACHE_TTL = 60000; const _detailInflight = new Map();
-    const _getCache = new Map(); const _getInflight = new Map(); let _getGen = 0;`, context);
+    const _getCache = new Map(); const _getInflight = new Map(); let _getGen = 0;
+    const _sampleInflight = new Map(); const _pdfPrefetched = new Set();`, context);
   vm.runInContext(source.slice(source.indexOf("function clearGetCache()"),
     source.indexOf("function apiPostJson")), context);
   vm.runInContext(source.slice(source.indexOf("function getProblemDetail("),

@@ -1,5 +1,14 @@
 # Two-GiB host: observed state and single-worker release gate
 
+## Subsequent approved application rollout
+
+The bounded qualification below was followed by successful backend/Pages rollout
+of source f883647 on the same t3.small and singleton budgets. Four authenticated
+synthetic jobs completed; final queue 52 done / 0 error / 0 queued / 0 running.
+See [executed release record](PRODUCTION_CORRECTNESS_RELEASE_2026-10-19.md).
+S04 and CPU-credit-exhaustion limitations remain open. Earlier statements that
+the artifact was merely staged describe the earlier qualification checkpoint.
+
 2026-10-19. The initial resize review was read-only. A subsequent explicitly
 approved bounded maintenance ran synthetic single-worker qualification and
 restored production. No instance, security rule, credit mode, route or

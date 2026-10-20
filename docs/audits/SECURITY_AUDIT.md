@@ -1,5 +1,11 @@
 # Newbiegrader security audit — 2026-10-18
 
+## Later correctness/cache deployment — 2026-10-19
+
+Admission-version validation, optional-diagnostics handling and browser/edge cache
+privacy corrections were deployed and scoped runtime checks passed. Existing
+engine/isolation and disclosure policies were preserved. See [release evidence](../releases/PRODUCTION_CORRECTNESS_RELEASE_2026-10-19.md); S04 remains open.
+
 2026-10-19 production update: [EC2 migration evidence](../EC2_MIGRATION.md)
 records the approved AWS cutover, stopped JustRunMy, enabled database worker,
 real Google login/synthetic jobs and actual reboot recovery. Kernel cgroup/tmpfs

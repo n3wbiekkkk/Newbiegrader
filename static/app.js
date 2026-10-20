@@ -30,6 +30,10 @@ const state = {
   filter: { q: "", diff: "", tag: "", status: "all", sort: "no" },
 };
 
+const _sampleInflight = new Map();   // "<pid>/<name>" -> Promise
+const _pdfPrefetched = new Set();
+let _pdfPrefetchTimer = 0;
+
 /* ---------------- theme ---------------- */
 function icon(n, cls) {
   return `<svg class="ic${cls ? " " + cls : ""}" aria-hidden="true"><use href="#i-${n}"/></svg>`;
@@ -648,6 +652,9 @@ function clearGetCache() {
   _getInflight.clear();
   state.detailCache = {};
   _detailInflight.clear();
+  state.samples = {};
+  _sampleInflight.clear();
+  _pdfPrefetched.clear();
   state.taskSeq = (state.taskSeq || 0) + 1;
 }
 
@@ -1079,8 +1086,15 @@ function renderTasksTable() {
       </div>
       <div class="tc-difficulty">${diffBadge(p.difficulty)}</div>
       <div class="tc-side score-wrap">${taskScoreHtml(p.id)}<span class="row-arrow" aria-hidden="true">↗</span></div>`;
-    card.onmouseenter = () => prefetchDetail(p.id);
-    card.onfocus = () => prefetchDetail(p.id);
+    card.onmouseenter = () => {
+      prefetchDetail(p.id);
+      if (p.has_pdf) schedulePdfPrefetch(p.id);
+    };
+    card.onfocus = () => {
+      prefetchDetail(p.id);
+      if (p.has_pdf) schedulePdfPrefetch(p.id);
+    };
+    card.onmouseleave = () => clearTimeout(_pdfPrefetchTimer);
     box.appendChild(card);
   });
   if (state.user && !state.myBestLoaded) {
@@ -1215,6 +1229,7 @@ function fillTaskDetail(p) {
   const nSamples = (p.samples || []).length;
   $("task-counts").textContent = `ตัวอย่างสาธารณะ ${nSamples} ข้อ`;
   renderSampleButtons(p);
+  prefetchSamples(p);
   const pdfUrl = `${API}/api/problems/${encodeURIComponent(p.id)}/pdf`;
   $("statement-open").classList.toggle("hidden", !p.has_pdf);
   if (p.has_pdf) $("statement-open").href = pdfUrl;
@@ -1232,7 +1247,55 @@ function fillTaskDetail(p) {
   }
 }
 
-/* ---------------- public sample viewer (fetched on click, never prefetched) */
+/* ---------------- public sample viewer ---------------- */
+function loadSample(pid, name) {
+  const key = `${pid}/${name}`;
+  if (state.samples[key]) return Promise.resolve(state.samples[key]);
+  if (_sampleInflight.has(key)) return _sampleInflight.get(key);
+  const gen = _getGen;
+  const p = apiGet(
+    `/api/problems/${encodeURIComponent(pid)}/sample/${encodeURIComponent(name)}`)
+    .then((d) => {
+      if (gen === _getGen) state.samples[key] = d;
+      return d;
+    })
+    .finally(() => {
+      if (_sampleInflight.get(key) === p) _sampleInflight.delete(key);
+    });
+  _sampleInflight.set(key, p);
+  return p;
+}
+
+function prefetchSamples(p) {
+  // Public samples are small and there are at most a few per problem. Warming
+  // them after detail render makes the first click instant without delaying
+  // the statement itself.
+  (p.samples || []).slice(0, 4).forEach((name) => {
+    loadSample(p.id, name).catch(() => { /* click retries or reports */ });
+  });
+}
+
+function prefetchPdf(pid) {
+  if (!pid || _pdfPrefetched.has(pid)) return;
+  _pdfPrefetched.add(pid);
+  const url = `${API}/api/problems/${encodeURIComponent(pid)}/pdf`;
+  // Consume the body so the private HTTP cache definitely retains it; the
+  // iframe request that follows the click can then finish from disk.
+  fetch(url, { credentials: "include" })
+    .then((r) => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.blob();
+    })
+    .catch(() => {
+      _pdfPrefetched.delete(pid);   // allow a later hover to retry
+    });
+}
+
+function schedulePdfPrefetch(pid) {
+  clearTimeout(_pdfPrefetchTimer);
+  _pdfPrefetchTimer = setTimeout(() => prefetchPdf(pid), 180);
+}
+
 function renderSampleButtons(p) {
   const box = $("sample-btns");
   const names = p.samples || [];
@@ -1252,6 +1315,7 @@ function renderSampleButtons(p) {
 
 async function showSample(pid, name, btn) {
   const view = $("sample-view");
+  const gen = _getGen;
   document.querySelectorAll("#sample-btns [data-sample]").forEach((b) =>
     b.classList.toggle("active", b === btn));
   const key = `${pid}/${name}`;
@@ -1261,10 +1325,8 @@ async function showSample(pid, name, btn) {
   }
   view.innerHTML = `<span class="dim">กำลังโหลดตัวอย่าง ${esc(name)}...</span>`;
   try {
-    const d = await apiGet(
-      `/api/problems/${encodeURIComponent(pid)}/sample/${encodeURIComponent(name)}`);
-    state.samples[key] = d;
-    if (state.current !== pid) return;
+    const d = await loadSample(pid, name);
+    if (gen !== _getGen || state.current !== pid) return;
     renderSample(d);
   } catch (e) {
     view.innerHTML = `<span class="dim">โหลดตัวอย่างไม่ได้: ${esc(e.message)}</span>`;
@@ -1338,6 +1400,18 @@ async function selectProblem(pid) {
   saveDraft();                      // keep the draft of the problem we are leaving
   state.current = pid;
   setTaskTab("statement");
+  // The list already knows whether a PDF exists. Start the frame immediately
+  // instead of waiting for the detail round trip; detail still has the final
+  // say and hides the frame if the row was stale.
+  const listed = state.problems.find((p) => p.id === pid);
+  const oldFrame = document.getElementById("pdf-frame");
+  if (listed && listed.has_pdf) {
+    showPdfFrame(`${API}/api/problems/${encodeURIComponent(pid)}/pdf`);
+    $("task-body").classList.add("hidden");
+  } else if (oldFrame) {
+    oldFrame.classList.add("hidden");
+    $("task-body").classList.remove("hidden");
+  }
   // Per-problem workspace: this problem's draft code, no leftover attached file.
   const draft = draftFor(pid);
   $("editor").value = draft;
@@ -2002,11 +2076,11 @@ $("template-btn").onclick = () => {
 };
 
 /* ---------------- judging jobs (async submit) ---------------- */
-// Base poll 1200ms (was 700ms): prod is 1 vCPU and every poll is a proxied
-// HTTPS round trip; backoff below stretches it further while queued.
-const POLL_MS = 1200;
-const POLL_MIN_MS = 1000;
-const POLL_CAP_MS = 5000;
+// Base poll 700ms: prod is 1 vCPU and every poll is a proxied HTTPS round
+// trip; backoff below stretches it further while queued or unchanged.
+const POLL_MS = 700;
+const POLL_MIN_MS = 600;
+const POLL_CAP_MS = 4000;
 const POLL_MAX_MS = 4 * 60 * 1000;
 const POLL_NET_RETRIES = 8;   // transient network blips: retry, don't drop the job id
 const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
@@ -3068,6 +3142,7 @@ function buildProblemSelect(sel, multiple) {
 
 /* ---------------- admin page (แยกจาก Settings, เห็นเฉพาะ admin) ---------------- */
 const ADMIN_TABS = ["overview", "contests", "reports", "admins", "tools"];
+const ADMIN_TABS = ["overview", "contests", "reports", "tools"];
 
 function showAdminTab(name) {
   if (!ADMIN_TABS.includes(name)) name = "overview";
@@ -3122,6 +3197,7 @@ function renderAdmin() {
       const jobs = [loadOverview(), loadAdminContests(), loadAdminReports()];
       if (state.adminAdminsLoaded) jobs.push(loadAdmins());
       await Promise.all(jobs);
+      await Promise.all([loadOverview(), loadAdminContests(), loadAdminReports()]);
       state.adminReportsLoaded = true;
       state.adminOverviewLoaded = true;
       if (label) label.textContent = "รีเฟรช";
@@ -3138,6 +3214,9 @@ function renderAdmin() {
   state.adminToolsBuilt = false;
   state.adminOverviewLoaded = false;
   state.adminAdminsLoaded = false;
+  state.adminReportsLoaded = false;
+  state.adminToolsBuilt = false;
+  state.adminOverviewLoaded = false;
   // The contest tab shows a count badge, so its list still starts immediately;
   // only the panel bodies wait until their tab is opened.
   loadAdminContests();
@@ -3639,7 +3718,7 @@ $("ct-save").onclick = async () => {
 };
 
 /* ---------------- init (cache-first, parallel, non-blocking) ---------------- */
-const PROBLEMS_CACHE_KEY = "ng_problems_v1";
+const PROBLEMS_CACHE_KEY = "ng_problems_v2";
 const PROBLEMS_CACHE_TTL = 3600 * 1000;
 
 function loadProblemsCache() {

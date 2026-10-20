@@ -33,6 +33,34 @@ OS file locks coordinate processes that share `GRADER_CAPACITY_DIR` (default: `n
 
 Keep one judge execution on the documented 0.5 vCPU/512 MB server. For a first capacity trial, use **2 vCPU/2 GB** with `GRADER_MEMORY_CAP_MB=512`, leave worker count automatic, and keep serial tests. For larger contest bursts, trial **4 vCPU/4 GB** with the same per-test cap after measuring. These are starting configurations, not measured production capacity guarantees. Increasing queue depth accommodates a backlog; adding usable CPU/RAM increases judging capacity.
 
+## Browsing latency and compile warmup
+
+The API serves the problem catalog from an in-process snapshot. A TTL refresh
+runs on a daemon thread and leaves the current snapshot readable while the
+Supabase query is in flight. The refresh selects the lean metadata columns
+(without `statement_md`); unchanged rows keep their cached statement, while a
+changed or no-PDF row fetches its statement once on detail. No refresh downloads
+problem files.
+
+Public detail responses are `private, max-age=60`, samples are
+`private, max-age=300`, and PDFs are `private, max-age=600`. Contest-hidden or
+admin-visible responses are shortened to 30 seconds. All remain `Vary: Cookie`;
+there is no shared/CDN cache of authenticated responses. The frontend also starts
+the PDF frame from the list's `has_pdf` flag and prefetches the PDF/samples after
+detail render, so repeated opens are served from the browser cache.
+
+Build the optional C++ PCH as root after a compiler/toolchain update:
+
+```sh
+sudo python3 tools/build_cxx_pch.py
+```
+
+The default destination is `/usr/local/lib/newbiegrader/pch/cxx`, which is
+readable by the Landlocked compile sandbox. The grader adds `-I` only when
+`bits/stdc++.h.gch` exists; a missing or rejected PCH falls back to a normal
+compile. Rebuild the PCH whenever `g++` or its headers change, and remove it if
+the toolchain becomes incompatible.
+
 ## Rollout order
 
 1. Complete the [Linux validation checklist](linux-validation-todo.md). Windows checks and embedded PostgreSQL assertions have been run locally; they do not validate the production Linux sandbox.

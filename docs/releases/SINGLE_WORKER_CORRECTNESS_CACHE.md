@@ -3,6 +3,9 @@
 2026-10-19. Branch `fix/single-worker-correctness-cache`, base `25523f7`.
 Implementation commits: `de34407` (backend), `837366c` (frontend/proxy).
 Status: reviewed, locally tested, committed for review; **not pushed or deployed**.
+Status: **DEPLOYED** after explicit approval; backend and Pages use source
+`f883647`. See [executed production record](PRODUCTION_CORRECTNESS_RELEASE_2026-10-19.md).
+No Git push/merge was used for this direct artifact deployment.
 The original dirty `perf/local-mirror-two-workers` tree remains untouched.
 
 ## Release boundary
@@ -38,6 +41,7 @@ Cloudflare behavior was reviewed against the official
 [Cache API documentation](https://developers.cloudflare.com/workers/runtime-apis/cache/).
 Proxy tests use Node's VM with mocked platform objects, not a deployed Workers
 runtime. Actual Cloudflare rollout/runtime smoke is still required.
+runtime. Actual Cloudflare rollout/runtime smoke subsequently passed as recorded above.
 
 ## Verification executed on this exact implementation
 
@@ -104,6 +108,7 @@ host observations below as historical, not current hardware proof. No instance
 or application release was changed.
 
 ## Production preparation: separate approval required
+## Production preparation (executed after separate approval)
 
 Read-only inventory still found API, the singleton worker and tunnel active,
 current backend release `6cba18c68366993fed7fc7572c87368bbb773ea9`. No service was
@@ -130,6 +135,8 @@ Approval must name the final reviewed commit/artifact and separately cover:
 4. Reopen admission only after acceptance checks; observe queue/errors/resources.
 
 No production approval is inferred from approval to review/prepare this release.
+The operator subsequently explicitly approved deployment; the executed record
+above supersedes this earlier preparation checkpoint.
 The separately approved native qualification paused/restored services as
 recorded above. It did not authorize or perform an application rollout.
 
