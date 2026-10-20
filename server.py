@@ -582,17 +582,21 @@ async def _store_submission(row: dict, target_id: Optional[str] = None) -> Optio
                                                        or "could not find" in low)))
             if not missing_column:
                 raise
-            if "contest_id" in low:
+            if "contest_id" in low and row.get("contest_id"):
                 # Never downgrade a contest submission to practice history by
                 # dropping its provenance. This is a schema incompatibility,
                 # not an excuse to silently change the feedback policy.
-                print("[web] refusing to drop contest_id from a submission; "
-                      "run supabase/schema.sql", file=sys.stderr)
+                print("[web] refusing to drop contest_id from a contest "
+                      "submission; run supabase/schema.sql", file=sys.stderr)
                 raise
-            # Preserve contest_id even when another traceability column is the
-            # one missing. If contest_id is also absent, the retry fails and
-            # the write is reported as failed rather than downgraded.
-            traceability = tuple(c for c in _NEW_SUB_COLS if c != "contest_id")
+            # Preserve contest_id when it carries provenance, even if another
+            # traceability column is the one reported missing. A practice row
+            # has no provenance to lose, so the legacy fallback may also drop
+            # contest_id when that column itself is absent.
+            if row.get("contest_id"):
+                traceability = tuple(c for c in _NEW_SUB_COLS if c != "contest_id")
+            else:
+                traceability = _NEW_SUB_COLS
             slim = {k: v for k, v in row.items() if k not in traceability}
             if len(slim) == len(row):
                 raise

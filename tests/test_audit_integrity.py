@@ -67,8 +67,9 @@ class SubmissionStoreRetry(unittest.TestCase):
 
     The retry exists for pre-2026-10 databases. It must not fire for integrity
     errors that merely mention a column. If contest_id itself is unavailable,
-    fail closed rather than persisting a contest submission as practice data
-    (visible to the all-time leaderboard and later practice feedback).
+    a contest row must fail closed rather than being persisted as practice data
+    (visible to the all-time leaderboard and later practice feedback). A
+    practice row has no provenance to lose and may use the legacy fallback.
     """
 
     def test_integrity_error_mentioning_a_column_is_not_retried(self):
@@ -101,6 +102,16 @@ class SubmissionStoreRetry(unittest.TestCase):
                 {"problem": "p", "contest_id": "c1", "kind": "submit"}))
         self.assertIsNone(sid)
         self.assertEqual(len(client.inserts), 1, "must not retry a contest row without contest_id")
+
+    def test_missing_contest_id_column_still_accepts_a_practice_row(self):
+        client = _RetryClient("Could not find the 'contest_id' column of "
+                              "'submissions' in the schema cache")
+        with patch.object(server, "_sb", client):
+            sid = asyncio.run(server._store_submission(
+                {"problem": "p", "contest_id": None, "kind": "submit"}))
+        self.assertEqual(sid, "retried")
+        self.assertEqual(len(client.inserts), 2)
+        self.assertNotIn("contest_id", client.inserts[1])
 
     def test_missing_relation_is_not_retried_as_a_missing_column(self):
         client = _RetryClient('relation "public.submissions" does not exist')
