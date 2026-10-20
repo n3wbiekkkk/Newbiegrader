@@ -5,6 +5,18 @@ const vm = require('node:vm');
 const { test } = require('node:test');
 const source = fs.readFileSync(path.join(__dirname, '../static/app.js'), 'utf8');
 
+function loadAppSection(context, start, end) {
+  const from = source.indexOf(start);
+  assert.notEqual(from, -1, `static/app.js: missing start boundary ${JSON.stringify(start)}`);
+  const to = source.indexOf(end, from + start.length);
+  assert.ok(to > from,
+    `static/app.js: missing end boundary ${JSON.stringify(end)} after ${JSON.stringify(start)}`);
+  vm.runInContext(source.slice(from, to), context, {
+    filename: `static/app.js [${start} -> ${end}]`,
+    lineOffset: source.slice(0, from).split('\n').length - 1,
+  });
+}
+
 // Keep navigation, workspace selection and result rendering real. Only browser
 // primitives and external reads are substituted: queued hashchange events are
 // essential to reproducing the cached-problem race that the old harness hid.
@@ -87,7 +99,7 @@ function harness(initialRoute = '#/history') {
     pollJob: async () => ({ status: 'done', result: { score: 100, accepted: true, results: [], code: 'NEW_OWN_SOURCE' } }),
   });
   function load(start, end) {
-    vm.runInContext(source.slice(source.indexOf(start), source.indexOf(end)), context);
+    loadAppSection(context, start, end);
   }
   load('function icon(', '/* Toasts:');
   load('function esc(', '/* ---------------- starter templates');
@@ -96,8 +108,8 @@ function harness(initialRoute = '#/history') {
   load('function clearGetCache(', 'function apiPostJson(');
   load('function show(view)', '/* ---------------- home');
   load('async function selectProblem(', 'async function refreshYourScore(');
-  load('function jobStateText(', '/* Verdicts read');
-  load('/* Verdicts read', '/* ---------------- playground');
+  load('function jobStateText(', 'const VERDICT_TH =');
+  load('const VERDICT_TH =', '/* ---------------- playground');
   load('function limitsMeta(', 'function renderRunResult(');
   load('function rowVerdictCode(', '/* ---------------- contests');
   load('async function loadTaskSubs(', 'function renderTopScores(');
@@ -117,6 +129,16 @@ const peer = { id: 'peer', problem: 'synthetic', verdict: 'REJECTED', passed: 0,
   created_at: '2026-10-20T03:00:00Z', name: 'Peer <Author>', language: 'python', filename: 'peer.py',
   code: 'print("<peer source>")\n# second line', counts: { WA: 1 }, peer_inspection: true,
   results: [{ verdict: 'WA', wall_s: 0.1, cpu_s: 0.05, peak_mb: 8, hidden: true }] };
+
+test('section loader rejects missing or reversed boundaries before evaluating app code', () => {
+  const context = vm.createContext({});
+  assert.throws(() => loadAppSection(context, 'MISSING_START_BOUNDARY', 'const VERDICT_TH ='),
+    /static\/app\.js: missing start boundary "MISSING_START_BOUNDARY"/);
+  assert.throws(() => loadAppSection(context, 'const VERDICT_TH =', 'MISSING_END_BOUNDARY'),
+    /static\/app\.js: missing end boundary "MISSING_END_BOUNDARY" after "const VERDICT_TH ="/);
+  assert.throws(() => loadAppSection(context, 'const VERDICT_TH =', 'function jobStateText('),
+    /static\/app\.js: missing end boundary "function jobStateText\(" after "const VERDICT_TH ="/);
+});
 
 test('cached task navigation cannot replace inspected peer with the viewer submission', async () => {
   const h = harness();
@@ -267,21 +289,34 @@ test('owners retain authorized failed-practice feedback in the dedicated inspect
   assert.match(h.source(), /OWNER_OUTPUT/);
 });
 
-test('per-problem submissions explain login, non-AC attempts and contest locks', async () => {
+test('per-problem submissions explain signed-in access and login or contest locks', async () => {
   const h = harness(), c = h.context;
   c.state.current = 'synthetic';
-  for (const [reason, expected] of [['login', /เข้าสู่ระบบ/], ['attempt', /CE.*RE.*WA/], ['contest', /การแข่งขัน/]]) {
+  c.state.jobResults = {}; // This viewer has no previous attempts.
+  for (const [access, expected] of [
+    [{ allowed: true, reason: '' }, /เข้าสู่ระบบแล้ว.*ทุกข้อที่เปิดอยู่/],
+    [{ allowed: false, reason: 'login' }, /เข้าสู่ระบบ/],
+    [{ allowed: false, reason: 'contest' }, /การแข่งขัน/],
+  ]) {
     c.apiGetCached = async () => ({ configured: true, submissions: [{ id: 'peer', name: 'Peer',
-      verdict: 'AC', created_at: '', passed: 1, total: 1, score: 100 }], peer_access: { allowed: false, reason } });
+      verdict: 'AC', accepted: true, language: 'python', created_at: '', passed: 1, total: 1, score: 100 }], peer_access: access });
     await c.loadTaskSubs();
     assert.match(c.$('task-all-body').innerHTML, expected);
+    if (access.allowed) {
+      const guidance = c.$('task-all-body').innerHTML.split('</p>')[0];
+      assert.doesNotMatch(guidance, /CE|RE|AC|ตรวจเสร็จ/);
+      await h.open('peer');
+      assert.match(h.source(), /&lt;peer source&gt;/);
+      assert.match(h.source(), /Peer &lt;Author&gt;/);
+      assert.equal(Object.keys(c.state.jobResults).length, 0);
+    }
   }
 });
 
 test('locked, unavailable and missing details clear prior code and explain the next step', async () => {
   const h = harness(), c = h.context;
   for (const [status, message, expected] of [
-    [403, 'qualifying attempt required', /CE.*RE.*WA/],
+    [403, 'policy denied', /ยังดูโค้ดของเพื่อนไม่ได้/],
     [403, 'contest protection', /การแข่งขัน/],
     [401, 'login first', /เข้าสู่ระบบ/],
     [503, 'unavailable', /ลองอีกครั้ง/],
