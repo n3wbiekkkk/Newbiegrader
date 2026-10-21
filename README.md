@@ -135,15 +135,9 @@ This program is free software, released under the **GNU Affero General Public Li
 
 Under AGPL §13, running a modified version for users over a network requires offering them the Corresponding Source. For this deployment, the source is available at <https://github.com/n3wbiekkkk/Newbiegrader>.
 
-### Problem statements
-
-Problem statements (โจทย์) are published under the **Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International** license (`CC BY-NC-SA 4.0`): <https://creativecommons.org/licenses/by-nc-sa/4.0/deed.th>.
-
-Problems that are not distributed in this repository are reserved. Their use is limited to what each problem's own PDF states.
-
 ### Name and logo
 
-The Newbiegrader name and logo are **not** covered by the code license or by the statement license. All rights reserved.
+The Newbiegrader name and logo are **not** covered by the code license. All rights reserved.
 
 ### Third-party typefaces
 
