@@ -82,6 +82,17 @@ class EmailAuth(unittest.TestCase):
     def start(self, email=EMAIL, **extra):
         return self.client.post("/api/auth/email/request", json={"email": email, **extra})
 
+    def test_restore_hint_skips_absent_cookie_without_trusting_present_cookie(self):
+        response = self.client.get('/api/auth/me')
+        self.assertFalse(response.json()['restore_available'])
+        self.assertEqual(response.headers['cache-control'], 'no-store')
+        self.client.cookies.set('ng_remember', 'synthetic-invalid-cookie')
+        data = self.client.get('/api/auth/me').json()
+        self.assertTrue(data['restore_available'])
+        self.assertIsNone(data['user'])
+        self.assertFalse(data['is_admin'])
+        self.assertFalse(self.client.get('/api/auth/restore').json()['restored'])
+
     def finish(self, **extra):
         return self.client.post("/api/auth/email/verify", json={
             "email": EMAIL, "code": "12345678", "password": PASSWORD, "name": "Owner", **extra})

@@ -1605,6 +1605,7 @@ async function refreshMe() {
   const seq = state.meSeq = (state.meSeq || 0) + 1;
   const previousIdentity = JSON.stringify([state.user && state.user.email, !!state.is_admin]);
   let embedded = null;
+  let restoreAvailable;
   try {
     const me = await apiGet("/api/auth/me");
     if (seq !== state.meSeq) return;
@@ -1612,6 +1613,7 @@ async function refreshMe() {
     state.user = (me && me.user) || null;
     state.is_admin = state.isAdmin = !!(me && me.is_admin);
     embedded = me && me.profile ? me : null;
+    restoreAvailable = me && me.restore_available;
   } catch (e) {
     if (seq !== state.meSeq) return;
     state.authError = true;
@@ -1653,12 +1655,14 @@ async function refreshMe() {
     chip.textContent = display;
     chip.title = state.user.email || "";
   }
+  return { restore_available: restoreAvailable };
 }
 
 async function restoreInitialSession() {
-  await refreshMe();
+  const me = await refreshMe();
   // A missing session cookie is not a final denial until remember-me is checked.
-  if (!state.user) {
+  // Older backends omit the hint: retain their existing restoration flow.
+  if (!state.user && (!me || me.restore_available !== false)) {
     try {
       const r = await apiGet("/api/auth/restore");
       if (r && r.restored) await refreshMe();
@@ -4266,6 +4270,9 @@ async function init() {
   // to gate everything, so a slow proxy cost two round trips before the list
   // was even requested; now it only drives the status label.
   const problemsFresh = problemsCacheAgeMs() < 60 * 1000 && state.problems.length > 0;
+  // Stats contain only public aggregates and need not wait for identity or
+  // remember-me. Start their network round trip alongside the catalog.
+  const statsP = fetchStats();
   let healthErr = null;
   const healthP = apiGet("/api/health").then(() => {
     $("health").textContent = "online";
@@ -4311,7 +4318,7 @@ async function init() {
   }
 
   // 4. stats never block rendering
-  fetchStats().then(() => {
+  statsP.then(() => {
     if (document.querySelector("#view-home.active")) renderHome();
     else if (document.querySelector("#view-tasks.active")) renderTasksTable();
   });

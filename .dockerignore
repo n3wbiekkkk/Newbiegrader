@@ -5,3 +5,14 @@ examples/
 .DS_Store
 .env
 .gitignore
+# Runtime data, local skills and review artifacts are not image inputs.
+problems/
+output/
+.agent/
+.agents/
+.venv/
+venv/
+docs/
+tests/
+tools/fonts/
+tools/templates/

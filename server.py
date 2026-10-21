@@ -501,6 +501,8 @@ async def _csrf_origin_check(request: Request, call_next):
 # Tiny in-memory cache for slow aggregate endpoints (Supabase RTT dominates).
 # Invalidated on every stored submission.
 _cache: dict = {}
+_cache_inflight: dict = {}
+_cache_generation = 0
 CACHE_TTL = {"stats": 30}
 
 
@@ -515,18 +517,39 @@ def _cached(key: str, ttl: int, build):
 
 
 async def _acached(key: str, ttl: int, build):
-    """Async twin of _cached: cache check on the loop, blocking DB build in a
-    thread so aggregate endpoints never stall judging or other requests."""
+    """Share one aggregate read on a cold cache, without blocking the loop.
+
+    A cancelled HTTP request must not cancel the shared read. Invalidation
+    starts a new generation so an older read cannot repopulate stale stats.
+    """
     now = time.monotonic()
     hit = _cache.get(key)
     if hit and now - hit[0] < ttl:
         return hit[1]
-    val = await asyncio.to_thread(build)  # raises HTTPException: never cached
-    _cache[key] = (time.monotonic(), val)
-    return val
+    generation = _cache_generation
+    slot = (asyncio.get_running_loop(), key, generation)
+    task = _cache_inflight.get(slot)
+    if task is None:
+        async def refresh():
+            try:
+                val = await asyncio.to_thread(build)  # errors are never cached
+                if generation == _cache_generation:
+                    _cache[key] = (time.monotonic(), val)
+                return val
+            finally:
+                _cache_inflight.pop(slot, None)
+
+        task = asyncio.create_task(refresh())
+        _cache_inflight[slot] = task
+        # Retrieve failures even if every HTTP waiter disconnects. Awaiters
+        # still receive the same exception and the next request can retry.
+        task.add_done_callback(lambda done: None if done.cancelled() else done.exception())
+    return await asyncio.shield(task)
 
 
 def _bust_cache() -> None:
+    global _cache_generation
+    _cache_generation += 1
     _cache.pop("stats", None)
 
 # Split deployment: same-origin via frontend /api proxy (Cloudflare Pages
@@ -1988,7 +2011,10 @@ def auth_me(request: Request) -> dict:
         except Exception:
             pass
     return {"user": user, "is_admin": _is_admin(email), "profile": profile,
-            "profile_configured": _sb is not None}
+            "profile_configured": _sb is not None,
+            # Presence is a request hint, never proof of identity. Only the
+            # restore endpoint validates the signed cookie and live account.
+            "restore_available": bool(request.cookies.get(_REMEMBER_COOKIE))}
 
 
 @app.get("/api/auth/restore")

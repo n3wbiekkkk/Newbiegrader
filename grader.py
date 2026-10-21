@@ -571,6 +571,10 @@ def _linewise_exact(expected: str, actual: str) -> bool:
     return True
 
 def check_token(expected: str, actual: str) -> bool:
+    # Most accepted outputs are byte-for-byte identical. Avoid allocating two
+    # token lists for them; differently spaced answers still use token rules.
+    if expected == actual:
+        return True
     return expected.split() == actual.split()
 
 def check_float(expected: str, actual: str, tol: float) -> bool:
@@ -605,6 +609,10 @@ def check_decimal2(expected: str, actual: str, tol: float = 1e-6) -> bool:
     """Line-locked 2-decimal checker: same line/token counts, every token must
     look like setprecision(2) output, values within tolerance. Leading/trailing
     spaces per line (and multi-space gaps) are forgiven."""
+    if expected == actual and tol >= 0:
+        # Equality alone is insufficient: "1" must still fail this checker.
+        # Validate the format once; equal valid decimals need no float parsing.
+        return all(DECIMAL2_RE.fullmatch(token) for token in expected.split())
     e = expected.rstrip("\r\n").split("\n")
     a = actual.rstrip("\r\n").split("\n")
     if len(e) != len(a):
