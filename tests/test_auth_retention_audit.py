@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Newbiegrader contributors
 """Synthetic OAuth verification and terminal-job memory regressions."""
 import asyncio
 import io

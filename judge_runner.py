@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Newbiegrader contributors
 """Supervised, bounded execution using only the Python standard library.
 
 Linux supervisors are subreapers: descendants remain owned even after setsid

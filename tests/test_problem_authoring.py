@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Newbiegrader contributors
 """Authoring contract regressions; synthetic data only, no local problems/ needed."""
 from contextlib import ExitStack, redirect_stdout, redirect_stderr
 import io

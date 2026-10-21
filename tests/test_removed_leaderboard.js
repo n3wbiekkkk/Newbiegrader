@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 Newbiegrader contributors
 /* Retired global ranking: navigation must not fetch or render the old board. */
 const assert = require("node:assert/strict");
 const fs = require("node:fs");

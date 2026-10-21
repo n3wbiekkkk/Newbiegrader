@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Newbiegrader contributors
 """Generate a Thai statement.pdf from problems/<id>/statement.md
 using LaTeX (tectonic + TH Sarabun New).
 

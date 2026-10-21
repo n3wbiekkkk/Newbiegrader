@@ -1,5 +1,3 @@
--- SPDX-License-Identifier: AGPL-3.0-or-later
--- Copyright (C) 2026 Newbiegrader contributors
 -- Run only against the disposable CI database after applying schema.sql twice.
 begin;
 do $$

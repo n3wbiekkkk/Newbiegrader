@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Newbiegrader contributors
 """Approved, credential-free single-worker native qualification; fixed fixtures.
 
 Refuses ordinary shells and active production workers. Never claims a queue job.

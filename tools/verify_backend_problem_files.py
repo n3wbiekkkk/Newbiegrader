@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Newbiegrader contributors
 """Offline full asset/parity verification against a private read-only catalog export.
 
 No network credentials, reference programs or submitted programs are used. Reuses

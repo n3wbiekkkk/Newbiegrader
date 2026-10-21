@@ -1,5 +1,3 @@
--- SPDX-License-Identifier: AGPL-3.0-or-later
--- Copyright (C) 2026 Newbiegrader contributors
 -- Read-only schema preflight for Newbiegrader.
 --
 -- Run in the Supabase SQL Editor (or psql) BEFORE deploying the backend.

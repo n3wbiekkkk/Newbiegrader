@@ -1,5 +1,3 @@
--- SPDX-License-Identifier: AGPL-3.0-or-later
--- Copyright (C) 2026 Newbiegrader contributors
 -- HIGHLY SENSITIVE, TARGET-SPECIFIC historical feedback remediation template.
 --
 -- Do NOT run a blanket predicate against production. Fill the target list only

@@ -1,6 +1,4 @@
 #!/bin/sh
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Newbiegrader contributors
 # Run as root on the authorized Ubuntu 24.04 instance; no secrets as arguments.
 set -eu
 test "$(id -u)" = 0

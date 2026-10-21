@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Newbiegrader contributors
 """Synthetic backend-file confidentiality/integrity; no private problem packages."""
 import asyncio
 from contextlib import ExitStack

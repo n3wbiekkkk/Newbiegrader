@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Newbiegrader contributors
 """Synthetic checker/cache benchmark; no problems, credentials, or live DB.
 
 Optional --baseline-grader/--baseline-server accept trusted local repository

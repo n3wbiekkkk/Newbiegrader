@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Newbiegrader contributors
 """Single-worker correctness gates; synthetic fixtures, no live services."""
 import asyncio
 from contextlib import ExitStack

@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Newbiegrader contributors
 """Opt-in native filesystem canaries plus existing isolation/verdict suite.
 
 Requires the same approved idle singleton gate as ec2_single_canary. No queue,

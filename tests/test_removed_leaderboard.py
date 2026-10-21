@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Newbiegrader contributors
 """Retired global rankings; synthetic data only, no private problems required."""
 import unittest
 from unittest.mock import Mock, patch

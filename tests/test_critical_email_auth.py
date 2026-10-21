@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Newbiegrader contributors
 """Synthetic identity proofs only: no real SMTP, credentials, users or problems."""
 import base64
 import copy

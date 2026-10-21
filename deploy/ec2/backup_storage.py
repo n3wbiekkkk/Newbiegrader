@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Newbiegrader contributors
 """Encrypted read-only judge-assets backup and isolated file-byte recovery check.
 
 Not a database backup or a Supabase Storage service restore. Source credentials

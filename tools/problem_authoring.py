@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Newbiegrader contributors
 """Create consistent private problem packages and sync public sample blocks.
 
 No database access, PDF styling options, test generation or overwrite mode.

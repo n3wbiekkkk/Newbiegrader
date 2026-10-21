@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Newbiegrader contributors
 """Per-job Linux identities; only bounded synthetic processes and files."""
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack

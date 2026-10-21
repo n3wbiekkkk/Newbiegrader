@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Newbiegrader contributors
 """Mark a problem as contest-only (kept out of the public Task list) or public.
 
 Contest problems are normal problem folders (statement.md/pdf + tests + a ref

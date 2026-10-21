@@ -1,6 +1,4 @@
 #!/usr/bin/env node
-// SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 Newbiegrader contributors
 // Static check: every DOM id referenced from static/app.js must actually be
 // created somewhere (static/index.html markup or app.js template literals),
 // and every icon referenced by icon("name") / href="#i-name" must have a

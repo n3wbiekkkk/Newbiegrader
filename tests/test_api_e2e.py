@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Newbiegrader contributors
 """End-to-end API tests: judge queue, feedback policy, quota, contests, admin.
 
 Runs the real FastAPI app with the real judge engine; only Supabase is replaced

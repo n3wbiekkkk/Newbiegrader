@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Newbiegrader contributors
 """Regression tests for the low-risk performance quick wins."""
 from contextlib import ExitStack
 import os

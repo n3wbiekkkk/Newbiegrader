@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Newbiegrader contributors
 """Concurrency and ownership regressions; no external database is contacted."""
 import asyncio
 import concurrent.futures

@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Newbiegrader contributors
 """Read-only S04 host preflight; never enables controllers or moves processes.
 
 Exit 2 means host prerequisites are blocked. Exit 0 means a candidate delegation

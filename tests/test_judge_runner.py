@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Newbiegrader contributors
 """Real process regressions for the execution boundary and output collector."""
 import asyncio
 import ctypes

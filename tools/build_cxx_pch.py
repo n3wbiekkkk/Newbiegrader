@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Newbiegrader contributors
 """Build a GCC precompiled header for <bits/stdc++.h>.
 
 Run this once per judge image/toolchain update, as root:

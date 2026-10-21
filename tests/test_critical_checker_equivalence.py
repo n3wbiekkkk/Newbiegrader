@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Newbiegrader contributors
 """Checker optimization must preserve formatting and tolerance contracts."""
 import random
 import re

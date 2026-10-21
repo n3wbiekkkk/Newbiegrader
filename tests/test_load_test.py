@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Newbiegrader contributors
 """Safety and measurement regressions for the opt-in load harness."""
 import json
 import contextlib

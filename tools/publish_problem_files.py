@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Newbiegrader contributors
 """Publish a verified private Storage backup onto backend disk, no network/writes to Supabase.
 
 Use root-owned/private source files outside Git/static/workspaces. The source

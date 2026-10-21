@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Newbiegrader contributors
 """Manage the numeric problem ids (problems/<id>/config.json -> "no").
 
 The number is data, not order: it lives in the problem folder so it survives

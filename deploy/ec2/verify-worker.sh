@@ -1,6 +1,4 @@
 #!/bin/sh
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Newbiegrader contributors
 # Validate the actual worker unit/credentials without claiming a production job.
 set -eu
 test "$(id -u)" = 0

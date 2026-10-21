@@ -1,6 +1,4 @@
 #!/bin/sh
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Newbiegrader contributors
 # Staging health endpoint only. Quick Tunnel is not a stable production origin.
 set -eu
 test "$(id -u)" = 0

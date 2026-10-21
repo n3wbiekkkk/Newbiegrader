@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Newbiegrader contributors
 """Memory-limit semantics of the judge.
 
 RLIMIT_AS limits *virtual* address space, not resident memory, and it is enforced

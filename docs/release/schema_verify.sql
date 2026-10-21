@@ -1,5 +1,3 @@
--- SPDX-License-Identifier: AGPL-3.0-or-later
--- Copyright (C) 2026 Newbiegrader contributors
 -- Post-migration assertions for Newbiegrader.
 --
 -- Run AFTER applying supabase/schema.sql (twice for idempotence) in the

@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Newbiegrader contributors
 """The production smoke CLI must never read or send staging credentials."""
 import contextlib
 import importlib.util

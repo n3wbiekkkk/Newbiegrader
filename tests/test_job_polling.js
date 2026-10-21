@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 Newbiegrader contributors
 /* Run with node --test tests/test_job_polling.js; no browser or dependency. */
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
