@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Newbiegrader contributors
 """Synthetic read-only preflight tests; candidate status is never enforcement."""
 from pathlib import Path
 import tempfile

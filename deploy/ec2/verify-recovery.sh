@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Newbiegrader contributors
 # Synthetic canary service only. Never stop or start the production worker.
 set -eu
 test "$(id -u)" = 0

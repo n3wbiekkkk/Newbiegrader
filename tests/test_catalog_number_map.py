@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Newbiegrader contributors
 """Public numbering manifest; no fixtures, references, credentials or live DB."""
 import csv
 from pathlib import Path

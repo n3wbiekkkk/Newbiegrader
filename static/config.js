@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Newbiegrader contributors
 /* Runtime config for split deployment.
  * Leave as "" (same origin). The static host proxies /api/* to the
  * backend (Cloudflare Pages Function in functions/, vercel.json legacy

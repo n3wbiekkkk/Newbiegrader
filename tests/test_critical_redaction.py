@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Newbiegrader contributors
 """Synthetic F3 regressions across engine, queue, API, and persistence."""
 import asyncio
 import contextlib

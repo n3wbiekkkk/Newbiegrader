@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Newbiegrader contributors
 """Bounded anonymous/synthetic probes of AWS staging or approved production.
 
 Never follows OAuth redirects, signs in, sends email or executes a job. Keys,

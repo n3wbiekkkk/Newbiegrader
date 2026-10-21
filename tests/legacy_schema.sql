@@ -1,3 +1,5 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 Newbiegrader contributors
 -- Minimal pre-2026-10 schema used by the CI upgrade test.
 -- It intentionally omits traceability columns so schema.sql must add them
 -- without losing the existing history row. This file is never run against

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Newbiegrader contributors
 """Concurrent queue/lease rehearsal against disposable PostgreSQL only.
 
 python tests/queue_concurrency.py --container newbiegrader-ec2-sql

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Newbiegrader contributors
 """Local age-encrypted EC2 configuration/UID backup over authenticated SSH.
 
 No plaintext archive is written. The private backup identity stays on this Mac;

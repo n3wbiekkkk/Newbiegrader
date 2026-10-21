@@ -1,3 +1,5 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 Newbiegrader contributors
 -- READ-ONLY historical feedback inspection for Newbiegrader.
 --
 -- DO NOT update or delete rows from this file. Run it only with a read-only

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Newbiegrader contributors
 // Private Pages service-binding bridge to a fixed VPC Service. No public route.
 // Default is health-only. Full API access requires the separate cutover gate
 // AND a server-side shared key from the Pages Function; never a browser key.

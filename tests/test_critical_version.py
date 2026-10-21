@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Newbiegrader contributors
 """Deployment verification using public code hashes, without real data."""
 import hashlib
 from pathlib import Path

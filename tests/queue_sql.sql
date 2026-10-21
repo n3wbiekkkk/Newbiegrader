@@ -1,3 +1,5 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 Newbiegrader contributors
 -- Run only against an empty disposable test database after applying schema.sql.
 -- CI uses PostgreSQL 17. Each assertion raises on failure; fixtures roll back.
 begin;

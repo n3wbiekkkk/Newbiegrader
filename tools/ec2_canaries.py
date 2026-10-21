@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Newbiegrader contributors
 """Bounded synthetic S04 integration tests in a delegated systemd unit only.
 
 No production problem, database, user workload, real credential or network

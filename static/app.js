@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Newbiegrader contributors
 /* Newbiegrader SPA — hash-routed views (home / tasks / task / history), no build step. */
 "use strict";
 

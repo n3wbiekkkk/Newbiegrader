@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Newbiegrader contributors
 """Synthetic DeepSeek review: query budgets, parity and fail-closed reads."""
 from contextlib import ExitStack
 import copy

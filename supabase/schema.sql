@@ -1,3 +1,5 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 Newbiegrader contributors
 -- Supabase schema for Newbiegrader submission history.
 -- Run once in Supabase Dashboard -> SQL Editor -> New query.
 -- Backend uses the service_role key, so no public policies are created

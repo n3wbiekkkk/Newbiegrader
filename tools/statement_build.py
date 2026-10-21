@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Newbiegrader contributors
 """Offline PDF provenance: detect stale source/layout/fonts without reading PDF text.
 
 Hashes detect accidental drift, not a malicious author or rendering defects.

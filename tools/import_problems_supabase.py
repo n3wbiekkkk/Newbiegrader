@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Newbiegrader contributors
 """Import local problems/ packages into Supabase (Postgres + private Storage).
 
 Reads the existing on-disk format (config.json + statement.md + tests/*.in/.out

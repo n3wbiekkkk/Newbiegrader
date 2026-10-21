@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Newbiegrader contributors
 """Synthetic-only helpers; never load .env, real problems, or a live database."""
 from pathlib import Path
 import os

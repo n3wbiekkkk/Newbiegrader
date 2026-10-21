@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Newbiegrader contributors
 """Synthetic S04 capacity arithmetic; no private problem set or live services."""
 import os
 import unittest

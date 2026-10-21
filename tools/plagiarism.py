@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Newbiegrader contributors
 """ตรวจการคัดลอกโค้ด (plagiarism / similarity) ของ submission — stdlib ล้วน
 ไม่มีผลข้างเคียงตอน import (ใช้เป็น module ได้ทันที)
 

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Newbiegrader contributors
 """Socket creation only: no Internet/host connections or real user workloads."""
 from contextlib import ExitStack
 import errno

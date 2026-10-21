@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Newbiegrader contributors
 """Linux web-job identity allocation and inherited filesystem confinement.
 
 No UID is recycled while the root-owned append-only allocation ledger survives.

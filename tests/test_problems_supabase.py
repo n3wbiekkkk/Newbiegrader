@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Newbiegrader contributors
 """Supabase problem storage: import, repository, security, verdict parity.
 
 Uses tests/fake_supabase.py (tables + private Storage mock), never production.

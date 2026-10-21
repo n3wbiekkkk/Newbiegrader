@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Newbiegrader contributors
 """Minimal in-memory stand-in for the Supabase client used by server.py.
 
 Enough of the PostgREST query builder to run the API end-to-end without a

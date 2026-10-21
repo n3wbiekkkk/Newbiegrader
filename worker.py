@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Newbiegrader contributors
 """Run dedicated database-backed judge workers without an HTTP listener."""
 from __future__ import annotations
 

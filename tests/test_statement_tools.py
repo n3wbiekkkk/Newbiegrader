@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Newbiegrader contributors
 """Statement layout and safe publishing, with synthetic public data only."""
 import copy
 from contextlib import ExitStack

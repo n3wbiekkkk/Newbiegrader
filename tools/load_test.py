@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Newbiegrader contributors
 """Opt-in HTTP load measurement for a disposable Newbiegrader test installation.
 
 No database connection or third-party dependency. Run --help for safeguards and

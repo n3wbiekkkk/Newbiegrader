@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Newbiegrader contributors
 """Stateless email proof through Supabase Auth; never mutate the DB client.
 
 Only the verified subject is returned. Provider access/refresh tokens and error

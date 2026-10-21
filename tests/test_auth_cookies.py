@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Newbiegrader contributors
 """Authentication-cookie regressions using synthetic identities and in-memory DB."""
 from contextlib import ExitStack
 from http.cookies import SimpleCookie

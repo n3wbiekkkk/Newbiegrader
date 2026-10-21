@@ -1,3 +1,5 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 Newbiegrader contributors
 -- Assertions after applying supabase/schema.sql twice to tests/legacy_schema.sql.
 -- Run in the disposable legacy database from the queue-sql CI job.
 do $$

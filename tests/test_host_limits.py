@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Newbiegrader contributors
 """Unit tests for the container-capability detection that drives judge capacity.
 
 Prod runs on a fractional vCPU / small-RAM container, so grading concurrency and

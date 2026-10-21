@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Newbiegrader contributors
 /* Synthetic browser primitives and identities only; no real sessions or API. */
 const assert = require('node:assert/strict');
 const fs = require('node:fs');

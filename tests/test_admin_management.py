@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Newbiegrader contributors
 """Realtime admin management: DB-backed admins + immutable env bootstrap.
 
 Runs the real FastAPI app against tests/fake_supabase.py only.

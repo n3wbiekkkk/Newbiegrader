@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Newbiegrader contributors
 """Problem repository: local problems/ directory or Supabase (Postgres + Storage).
 
 Supabase is storage, not execution: this module only resolves problem metadata

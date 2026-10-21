@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Newbiegrader contributors
 """Synthetic control/gate regressions; real kernel tests are ec2_canaries.py."""
 import asyncio
 from pathlib import Path

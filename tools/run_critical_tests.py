@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Newbiegrader contributors
 """Run synthetic P0 tests; any skip or empty discovery fails this CI gate."""
 from pathlib import Path
 import sys

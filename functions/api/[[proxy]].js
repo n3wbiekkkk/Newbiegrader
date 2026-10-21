@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Newbiegrader contributors
 // Cloudflare Pages Function: same-origin /api proxy to the judge backend.
 // File placement matters: functions/api/[[proxy]].js handles /api/*.
 // Why proxy: keeps login cookies first-party, so auth works even when
