@@ -2,6 +2,10 @@
 -- CI uses PostgreSQL 17. Each assertion raises on failure; fixtures roll back.
 begin;
 
+-- Exercise the full lifecycle with the role used by the API/worker. Running
+-- only as postgres would hide missing grants after switching to invoker RPCs.
+set local role service_role;
+
 do $test$
 declare
     first_job jsonb;
@@ -29,7 +33,10 @@ begin
         if not has_function_privilege('service_role', queue_function.oid, 'EXECUTE') then
             raise exception '% is not callable by service_role', queue_function.proname;
         end if;
-        if queue_function.prosecdef and not exists (
+        if queue_function.prosecdef then
+            raise exception '% unnecessarily runs as its owner', queue_function.proname;
+        end if;
+        if not exists (
             select 1 from unnest(queue_function.proconfig) setting
             where setting like 'search_path=%'
         ) then
@@ -53,6 +60,12 @@ begin
         2, true, 0, 0);
     second_job := answer->'job';
     if second_job->>'id' is null then raise exception 'second admission failed: %', answer; end if;
+
+    answer := public.judge_queue_diagnostics();
+    if (answer->>'queued')::int is distinct from 2
+       or (answer->>'running')::int is distinct from 0 then
+        raise exception 'backend queue diagnostics failed: %', answer;
+    end if;
 
     answer := public.judge_queue_admit(
         '{"kind":"submit","user_email":"sql-c@example.test","problem":"thai_time","language":"python"}',

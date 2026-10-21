@@ -660,3 +660,16 @@ create table if not exists public.admins (
 alter table public.admins enable row level security;
 revoke all on public.admins from public, anon, authenticated;
 grant all on public.admins to service_role;
+
+-- ============================================================================
+-- 2026-10-21: queue RPCs use the caller's existing backend privileges.
+-- Only service_role can execute these functions; it already has the required
+-- table grants and BYPASSRLS. Running as the function owner adds unnecessary
+-- privileges. Keep the fixed search_path and the server-only EXECUTE grants.
+-- Append-only and re-runnable; review before applying in Supabase SQL Editor.
+-- ============================================================================
+alter function public.judge_queue_admit(jsonb,integer,boolean,integer,integer) security invoker;
+alter function public.judge_queue_claim(text,integer) security invoker;
+alter function public.judge_queue_heartbeat(uuid,text,integer,integer) security invoker;
+alter function public.judge_queue_finish(uuid,text,integer,jsonb,jsonb,text) security invoker;
+alter function public.judge_queue_diagnostics() security invoker;
