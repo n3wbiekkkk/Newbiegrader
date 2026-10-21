@@ -127,8 +127,26 @@ Contributions are welcome. You can suggest features or report bugs by opening an
 
 ## License
 
-This program is free software, released under the [GNU Affero General Public License v3.0 or later](LICENSE).
+Copyright (C) 2026 Newbiegrader contributors. Source code: <https://github.com/n3wbiekkkk/Newbiegrader>.
+
+### Code
+
+This program is free software, released under the **GNU Affero General Public License v3.0 or later** (`AGPL-3.0-or-later`). The full license text is in [LICENSE](LICENSE).
 
 Under AGPL §13, running a modified version for users over a network requires offering them the Corresponding Source. For this deployment, the source is available at <https://github.com/n3wbiekkkk/Newbiegrader>.
 
-Statement-PDF typefaces (Sarabun, Prompt and Anuphan) are bundled under SIL OFL 1.1. No warranty is provided and no trademark rights are granted.
+### Problem statements
+
+Problem statements (โจทย์) are published under the **Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International** license (`CC BY-NC-SA 4.0`): <https://creativecommons.org/licenses/by-nc-sa/4.0/deed.th>.
+
+Problems that are not distributed in this repository are reserved. Their use is limited to what each problem's own PDF states.
+
+### Name and logo
+
+The Newbiegrader name and logo are **not** covered by the code license or by the statement license. All rights reserved.
+
+### Third-party typefaces
+
+Statement PDFs embed typefaces that keep their own licenses and are not covered by the licenses above: Anuphan and Inconsolata under SIL OFL 1.1, Latin Modern Roman under the GUST Font License, and TH Sarabun New under GPL-2.0-or-later with the font-embedding exception (so the rendered PDFs are not covered by the GPL). See `tools/fonts/`.
+
+No warranty is provided and no trademark rights are granted.
