@@ -43,6 +43,9 @@ import grader  # noqa: E402
 
 
 def load_all() -> list:
+    # problems/ is a private working copy and is absent from a public checkout.
+    if not grader.PROBLEMS_DIR.is_dir():
+        return []
     probs = []
     for pdir in sorted(grader.PROBLEMS_DIR.iterdir()):
         if not pdir.is_dir():
@@ -196,13 +199,18 @@ def cmd_order(csv_path: str, dry_run: bool = False) -> int:
 
     local = {p.pid for p in load_all()}
     mapped = [str(r.get("slug") or "") for r in rows]
-    unknown = sorted(set(mapped) - local)
-    if unknown:
-        print(f"FAIL แมประบุโจทย์ที่ไม่มีใน problems/: {', '.join(unknown)}", file=sys.stderr)
-        return 1
-    absent = sorted(local - set(mapped))
-    if absent:
-        print(f"FAIL แมปไม่ครอบคลุมโจทย์ {len(absent)} ข้อ: {', '.join(absent)}", file=sys.stderr)
+    if local:
+        unknown = sorted(set(mapped) - local)
+        if unknown:
+            print(f"FAIL แมประบุโจทย์ที่ไม่มีใน problems/: {', '.join(unknown)}", file=sys.stderr)
+            return 1
+        absent = sorted(local - set(mapped))
+        if absent:
+            print(f"FAIL แมปไม่ครอบคลุมโจทย์ {len(absent)} ข้อ: {', '.join(absent)}", file=sys.stderr)
+            return 1
+    elif not dry_run:
+        # Without the private packages there is nothing to write the map into.
+        print("FAIL ไม่มี problems/ ในที่นี้ — แมปตรวจได้อย่างเดียว (ใช้ --dry-run)", file=sys.stderr)
         return 1
 
     seen: dict = {}
@@ -246,7 +254,8 @@ def cmd_order(csv_path: str, dry_run: bool = False) -> int:
         if not dry_run:
             write_config(slug, cfg)
     verb = "dry-run: " if dry_run else ""
-    print(f"{verb}ใช้แมป {path.name} — เขียน no/level/difficulty ให้ {len(rows)} ข้อ")
+    scope = f"{len(rows)} ข้อ" if local else f"{len(rows)} ข้อ (ไม่มี problems/ จึงตรวจแผนที่อย่างเดียว)"
+    print(f"{verb}ใช้แมป {path.name} — เขียน no/level/difficulty ให้ {scope}")
     return 0
 
 

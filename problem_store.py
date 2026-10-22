@@ -318,7 +318,8 @@ def serialize_problem(prob: grader.Problem) -> dict:
         "description": prob.description,
         "tests": [{"name": t.name, "input": t.input, "expected": t.expected}
                   for t in prob.tests],
-        "difficulty": prob.difficulty, "tags": list(prob.tags),
+        "difficulty": prob.difficulty, "level": int(prob.level),
+        "tags": list(prob.tags),
         "samples": list(prob.samples), "hidden": bool(prob.hidden),
         "no": int(prob.no), "is_published": bool(getattr(prob, "is_published", True)),
     }
@@ -344,6 +345,7 @@ def deserialize_problem(data: dict) -> grader.Problem:
         description=str(data.get("description") or ""),
         tests=tests,
         difficulty=str(data.get("difficulty") or ""),
+        level=int(data.get("level") or 0),
         tags=list(data.get("tags") or []),
         samples=list(data.get("samples") or []),
         hidden=bool(data.get("hidden", False)),

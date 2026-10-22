@@ -313,8 +313,13 @@ class SupabaseProblems(unittest.TestCase):
         self.fake.storage_fail.add(f"{slug}/tests/1001.in")
         with self.assertRaises(problem_store.ProblemUnavailable):
             problem_store.load_problem_supabase(slug, client=self.fake)
-        # run_submission guards the empty-suite path too.
-        empty = grader.Problem(slug, "t", 1.0, 64, "token", 1e-6, "", [], "", [], [], False, 1, True)
+        # run_submission guards the empty-suite path too. Keyword arguments:
+        # the field order of the dataclass is not a stable contract.
+        empty = grader.Problem(
+            pid=slug, title="t", time_limit=1.0, memory_limit=64,
+            checker="token", tolerance=1e-6, description="", tests=[],
+            difficulty="", level=1, tags=[], samples=[], hidden=False, no=1,
+            is_published=True)
         res = server.run_submission(empty, ".py", "print(1)")
         self.assertIn("error", res)
 
