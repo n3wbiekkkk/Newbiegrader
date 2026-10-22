@@ -4,7 +4,7 @@ Updated 2026-10-22 for the four-worker PC deployment. This describes verified
 controls and their limits; each release must repeat the applicable checks.
 See [current architecture](PRODUCTION_ARCHITECTURE.md),
 [host deployment](HOST_DEPLOYMENT.md) and the
-[latest measured qualification](releases/pc-latency-2026-10-22.json).
+[latest measured qualification](releases/pc-execution-performance-2026-10-22.json).
 
 ## Execution and identity controls
 
@@ -25,6 +25,9 @@ See [current architecture](PRODUCTION_ARCHITECTURE.md),
 - Trusted Python bytecode is prepared before activation. Runtime services cannot
   replace the root-owned caches. Private fixtures, credentials and references
   remain outside application releases and sandbox filesystem allowances.
+- Isolated execution imports the standard-library `judge_execution.py` module,
+  not the HTTP app or database clients. Budgets are passed explicitly and the
+  shared feedback helpers remain the same on API, persistence and runner paths.
 - Session authorization requires a currently verified, versioned identity.
   Password/OTP and Google provider linking use the existing identity contract;
   the PC move preserved identities and `SESSION_SECRET`. That move tested an
@@ -47,7 +50,7 @@ canaries, cleanup recovery, file-access/verdict checks and read-only worker
 preflights. Test all four allocations concurrently before changing their budgets.
 Use the reviewed host runbook to pause/drain when a check requires idle workers.
 
-The latest code release passed 297 critical tests and 493 full Linux tests with
+The latest code release passed 301 critical tests and 497 full Linux tests with
 zero skips, 127 frontend tests, native isolation canaries and public HTTPS checks.
 These counts describe that checkpoint, not a substitute for future validation.
 

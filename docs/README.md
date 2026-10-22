@@ -3,7 +3,7 @@
 Current production is Cloudflare Pages with a private tunnel to the Ubuntu PC.
 The PC runs four isolated workers and a separate API; Supabase retains metadata,
 identities, history and the durable queue. The current verified application code
-is `2ae8aedd40c4ff4ef0ef267ab7c78f8d2c44ef09` (2026-10-22). Documentation-only
+is `91d81a0942e0bf1b4e9debe92487ec1fad109ccf` (2026-10-22). Documentation-only
 updates can follow that release without changing the running application.
 
 ## Operating the current deployment
@@ -36,6 +36,9 @@ updates can follow that release without changing the running application.
   records the initial migration and recovery checks.
 - [PC latency qualification](releases/pc-latency-2026-10-22.json) records the
   later runtime optimization, public HTTPS timings and 493-test Linux gate.
+- [Credential-free execution qualification](releases/pc-execution-performance-2026-10-22.json)
+  records the current release, roughly 20% shorter synthetic jobs, public before/after
+  timings and the 497-test Linux gate.
 - [Earlier single-worker benchmark](releases/single-worker-benchmark.json) is
   historical synthetic evidence and does not describe current PC capacity.
 - [Codex MCP setup](CODEX_MCP_SETUP.md) is a dated operator integration record;

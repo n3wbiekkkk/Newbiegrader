@@ -89,7 +89,7 @@ Plain HTML, CSS and JavaScript. No bundler, no transpiler and no framework.
 | --- | --- |
 | `grader.py` | The single judging engine, built on the Python standard library only |
 | `server.py` | FastAPI application: authentication, job queue, quota and visibility policy, result redaction |
-| `judge_runner.py` · `worker.py` | Supervised bounded execution and the dedicated worker role |
+| `judge_execution.py` · `judge_runner.py` · `worker.py` | Supervised bounded execution and the dedicated worker role |
 | `static/` | The web interface |
 | `problems/` | Local working copy of the problem set (configuration, statement, tests). Not versioned here — runtime files are published to protected backend storage; metadata lives in Supabase |
 | `supabase/` | Database schema with append-only, re-runnable migrations |
@@ -99,11 +99,14 @@ Host capacity is read from the service or container at startup, and worker count
 The four workers execute four jobs concurrently, with up to 25 additional
 queued jobs. The API has one CPU / 320 MiB; judging has a separate four-CPU /
 four-GiB budget and a 128 MiB declared-memory cap. For the measured 17-case
-short-job workload, trusted runtime precompilation reduced worker time from
-about eight seconds to 3.4–3.8 seconds; public submit-to-result checks took
-5.53–5.60 seconds. These measurements do not establish all-problem latency or
-simultaneous-user capacity. See [load handling](docs/load-handling.md) and the
-[measurement record](docs/releases/pc-latency-2026-10-22.json).
+short-job workload, trusted runtime precompilation first reduced worker time
+from about eight seconds to 3.4–3.8 seconds. Removing web-stack startup and
+redundant exited-process sampling reduced the same synthetic workload by a
+further 20%, to 2.82–3.03 seconds. Public Python/C/C++ checks took 3.75–4.81
+seconds from submit to observed result. These scoped measurements do not
+establish all-problem latency or simultaneous-user capacity. See
+[load handling](docs/load-handling.md) and the
+[current measurement record](docs/releases/pc-execution-performance-2026-10-22.json).
 
 ## Design Principles
 

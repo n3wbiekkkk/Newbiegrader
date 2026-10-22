@@ -80,11 +80,19 @@ off to one second and outages to 30 seconds. Browser polls for active/head-of-qu
 jobs cap their scheduled interval at one second, while deeper queues retain
 backoff. Network request time is additional to the scheduled polling interval.
 
-On the same synthetic 17-case workload, precompilation reduced worker wall time
-from 7.6–8.3 seconds to 3.4–3.8 seconds. Public Python/C/C++ acceptance/history
-checks subsequently observed 0.34–0.42 seconds to admit and 5.53–5.60 seconds
-from submission to an observed result. See the
-[measurement record](releases/pc-latency-2026-10-22.json).
+On the same synthetic 17-case workload, precompilation first reduced worker
+wall time from 7.6–8.3 seconds to 3.4–3.8 seconds. The current isolated runner
+imports `judge_execution.py`, which uses the canonical grader without loading
+the HTTP/database stack. Execution settings are passed explicitly; feedback,
+limit and isolation logic are preserved. Linux sampling avoids launching `ps`
+after the supervised process is gone or has no resident address space.
+
+A fresh comparison measured 3.51–3.85 seconds before and 2.82–3.03 seconds after
+these changes, with the same one-CPU/one-GiB allocation and serial cases. Public
+Python/C/C++ checks measured 2.90–3.28 seconds in the worker and 3.75–4.81 seconds
+from submission to observed result. One C request had a longer observed result
+wait despite faster worker execution; network and polling variance still matter.
+See the [before/after record](releases/pc-execution-performance-2026-10-22.json).
 
 These are scoped short-job measurements. The eight-job fleet probe confirms four
 overlapping workers; neither probe establishes sustained capacity for 30–50

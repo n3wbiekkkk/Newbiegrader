@@ -105,7 +105,12 @@ Precompile each reviewed release and the dedicated runtime before activation.
 The same synthetic 17-case workload took 7.6–8.3 seconds before preparation and
 3.4–3.8 seconds afterward on this PC (two runs each for Python/C++). This is
 startup evidence for short programs; expensive solutions and deep queues still
-need their actual runtime. See the [measurement record](releases/pc-latency-2026-10-22.json).
+need their actual runtime. The subsequent execution-only refactor avoids
+loading the HTTP/database stack for each isolated job and redundant Linux `ps`
+samples after process exit. The same bounded workload now takes 2.82–3.03 seconds,
+about 20% less than the already-precompiled baseline. Include `judge_execution.py`
+in every application snapshot and container; it shares the existing grader and
+feedback logic. See the [current measurement record](releases/pc-execution-performance-2026-10-22.json).
 
 Workers immediately attempt the next durable claim after completing work, while
 idle/outage backoff remains bounded. Browser polls for running jobs and the head

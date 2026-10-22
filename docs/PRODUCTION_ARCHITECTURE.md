@@ -1,7 +1,7 @@
 # Current production architecture
 
 Updated 2026-10-22 after the PC migration and submission-startup optimization.
-Verified application release: `2ae8aedd40c4ff4ef0ef267ab7c78f8d2c44ef09`.
+Verified application release: `91d81a0942e0bf1b4e9debe92487ec1fad109ccf`.
 Documentation-only updates do not change that running application release.
 
 - **Frontend:** Cloudflare Pages, `https://newbiegrader.pages.dev`, vanilla SPA.
@@ -22,11 +22,12 @@ Documentation-only updates do not change that running application release.
 - **Admission:** four executing jobs plus up to 25 queued jobs; one active job
   per ordinary account. Queue size and measured job throughput do not establish
   a tested number of simultaneous users.
-- **Startup/feedback latency:** precompiled trusted runtime, immediate next-job
-  claim and one-second scheduled polling cap for active/head-of-queue jobs.
-  The public 17-case Python/C/C++ checks took 5.53–5.60 seconds from submit to
-  observed result; larger jobs retain their actual runtime. See the
-  [measurement record](releases/pc-latency-2026-10-22.json).
+- **Startup/feedback latency:** precompiled trusted runtime, a credential-free
+  executor that avoids web/database imports, immediate next-job claim and a
+  one-second scheduled polling cap for active/head-of-queue jobs. Synthetic
+  17-case jobs take 2.82–3.03 seconds; public Python/C/C++ checks observed
+  3.75–4.81 seconds from submit to result. Larger jobs retain their actual
+  runtime; see the [scoped measurements](releases/pc-execution-performance-2026-10-22.json).
 - **Availability:** boot-enabled Tailscale, API, tunnel and all four workers;
   actual reboot recovery was verified. A dedicated sleep configuration disables
   suspend/hibernation. Tailnet device-key expiry is managed separately in its
