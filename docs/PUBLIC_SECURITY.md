@@ -86,6 +86,11 @@ remember cookie is not individually revoked by logout and can remain valid
 until expiry or an account-version change. Server-side session revocation or
 account-wide logout requires a separate product decision.
 
+The host's cached package upgrade simulation reported 37 upgrades, no additions
+or removals, and two packages held back. The operator explicitly deferred OS
+updates to a later maintenance window. This release did not install those
+updates or reboot the PC, and does not claim that the OS is fully patched.
+
 Judging shares the PC's host kernel; no VM boundary was added. Per-job cgroups
 bound whole-job memory but do not establish exact descendant memory accounting
 for each test. Distributed abuse, sustained user capacity and every possible

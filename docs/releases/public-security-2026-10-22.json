@@ -134,7 +134,8 @@
   "operator_choices": {
     "sandbox_api_restrictions": "Explicitly approved after compatibility impact explained",
     "ssh": "Explicitly retained existing configuration; all-interface SSH with passwords remains, Internet reachability depends on router/network",
-    "logout": "Explicitly retained browser-only logout; copied valid session/remember cookies are not individually revoked by logout"
+    "logout": "Explicitly retained browser-only logout; copied valid session/remember cookies are not individually revoked by logout",
+    "ubuntu_updates": "Explicitly deferred: cached upgrade simulation showed 37 upgrades, zero additions/removals, two not upgraded. No OS update or reboot performed in this release."
   },
   "rollout": {
     "queued_running_live_leases_drained_to_zero": true,
@@ -153,6 +154,7 @@
     "Judge processes share the host kernel; no VM boundary added",
     "Public abuse and sustained-user load were not exhaustively tested",
     "Per-test descendant memory attribution remains distinct from whole-job cgroup containment",
-    "SSH and copied-cookie logout risks were retained by explicit operator choice"
+    "SSH and copied-cookie logout risks were retained by explicit operator choice",
+    "Pending Ubuntu updates were explicitly deferred by the operator; OS patch completeness is not claimed"
   ]
 }
