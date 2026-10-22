@@ -65,13 +65,18 @@ class DatabaseWorkerBackoff(unittest.IsolatedAsyncioTestCase):
 
     async def test_claimed_work_resets_the_poll_delay(self):
         delays, runs = await self.delays([None, None, {"id": "synthetic"}, None], 4)
-        self.assertEqual(delays, [.5, 1, .25, .5])
+        self.assertEqual(delays, [.5, 1, 0, .5])
         self.assertEqual(runs, 1)
+
+    async def test_ready_backlog_has_no_artificial_gap_between_jobs(self):
+        delays, runs = await self.delays([{"id": str(i)} for i in range(3)] + [None], 4)
+        self.assertEqual(delays, [0, 0, 0, .5])
+        self.assertEqual(runs, 3)
 
     async def test_outage_backs_off_and_recovery_resets_delay(self):
         delays, runs = await self.delays([RuntimeError("synthetic outage")] * 8 +
                                        [{"id": "synthetic"}], 9)
-        self.assertEqual(delays, [1, 2, 4, 8, 16, 30, 30, 30, .25])
+        self.assertEqual(delays, [1, 2, 4, 8, 16, 30, 30, 30, 0])
         self.assertEqual(runs, 1)
 
 

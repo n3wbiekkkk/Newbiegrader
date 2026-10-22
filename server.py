@@ -133,11 +133,10 @@ MAX_CODE_BYTES = 256 * 1024   # 256 KB source cap
 DETAIL_HEAD = 4000            # max chars of detail/diff sent to frontend
 
 # ---- capacity, derived from the host/container this runs in ----
-# Prod is a small container (currently 1 CPU / 1.5 GB): judging two submissions
-# at once, or running 4 tests of one submission in parallel, oversubscribes the
-# core and produces wall-clock TLEs that have nothing to do with the student's
-# code. Everything below is auto-derived from cgroup limits (see grader.cpu_quota
-# / grader.ram_limit_mb) and overridable by env when the host changes.
+# Each production worker has one CPU and its own bounded allocation. Running
+# tests of one submission in parallel would oversubscribe that quota and can
+# create unrelated wall-clock TLEs. Capacity below comes from cgroup limits
+# (grader.cpu_quota / grader.ram_limit_mb), with explicit host overrides.
 CPU_QUOTA = grader.CPU_QUOTA
 RAM_MB = grader.RAM_MB
 
@@ -231,9 +230,9 @@ print(f"[web] host: cpu={CPU_QUOTA:g} core(s), ram={RAM_MB}MB -> "
 
 # ---- async judging (B9) ----
 # The HTTP path never judges inline: it queues a job and the client polls
-# /api/jobs/{id}. Workers live in the same process (one container deploy), each
-# running a job in a thread so uvicorn's loop stays responsive. Concurrency and
-# limits are host derived — see the capacity block above.
+# /api/jobs/{id}. Production uses dedicated database worker processes. Local
+# combined mode runs worker tasks alongside the API, with blocking execution
+# delegated to threads. Concurrency and limits come from the capacity block.
 JOB_TTL_S = 3600              # in-memory job records kept this long (no-DB mode)
 JOB_MAX_AGE_S = 24 * 3600     # queued jobs older than this are dropped, not run
 REJUDGE_MAX = 200             # cap per /api/admin/rejudge call
@@ -1228,9 +1227,9 @@ async def _judge_worker(idx: int) -> None:
                     if job:
                         await _run_job(job)
                     # Idle wakeup is user-visible latency. Keep the fallback
-                    # poll reasonably responsive; the durable queue is shared,
-                    # so a claim is still the only authority.
-                    poll_delay = .25 if job else min(1.0, poll_delay * 2)
+                    # poll reasonably responsive; drain ready work without an
+                    # extra sleep. The durable claim remains the only authority.
+                    poll_delay = 0.0 if job else min(1.0, max(.5, poll_delay * 2))
             except asyncio.CancelledError:
                 raise
             except Exception as e:

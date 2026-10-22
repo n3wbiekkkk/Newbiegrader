@@ -18,7 +18,7 @@ time. Each unit has one CPU, 1 GiB memory, no swap and a private 128 MiB /
 4096-inode workspace tmpfs. `newbiegrader-judge.slice` caps the entire fleet at
 four CPUs / 4 GiB / 512 tasks. Tests within a submission remain serial, with the
 existing language memory allowances, 128 MiB declared-memory cap and 240-second
-overall timeout. The API has its own 320 MiB / quarter-CPU budget.
+overall timeout. The API has its own 320 MiB / one-CPU budget.
 
 Each instance reads `/etc/newbiegrader/worker-N.env`, with:
 
@@ -37,7 +37,11 @@ worker slots; this changes neither its own cgroup budget nor judging semantics.
 
 1. Install a reviewed source snapshot in a new root-owned release directory.
    Exclude credentials, private problems, reference solutions and operator notes.
-   Install the pinned `requirements.lock` into the project venv.
+   Install the pinned `requirements.lock` into the project venv, then run
+   `deploy/host/precompile_runtime.py --release /opt/newbiegrader/releases/<release>`
+   using `/usr/local/lib/newbiegrader/venv/bin/python` from the reviewed release.
+   Precompiling the trusted runtime avoids parsing the same Python modules for
+   every sandbox launch; runtime services continue to disallow bytecode writes.
 2. Transfer configuration privately. Preserve `SESSION_SECRET`, OAuth settings,
    Supabase credentials and cookie settings. Set `GRADER_ACCEPT_JOBS=0` in API and
    worker configuration. Keep `/etc/newbiegrader/worker-enabled` absent.
@@ -78,3 +82,17 @@ For an always-on desktop host, install `server-sleep.conf.example` as
 suspend/hibernation. Power must remain available; service startup does not turn
 a physically powered-off PC on. Preserve existing Tailscale authentication and
 verify device-key expiry policy separately from service enablement.
+
+## Submission startup latency
+
+Precompile each reviewed release and the dedicated runtime before activation.
+The same synthetic 17-case workload took 7.6–8.3 seconds before preparation and
+3.4–3.8 seconds afterward on this PC (two runs each for Python/C++). This is
+startup evidence for short programs; expensive solutions and deep queues still
+need their actual runtime. See the [measurement record](releases/pc-latency-2026-10-22.json).
+
+Workers immediately attempt the next durable claim after completing work, while
+idle/outage backoff remains bounded. Browser polls for running jobs and the head
+of the queue stay within one second; deeper queues retain traffic backoff. The
+API has one CPU independently of the unchanged four-CPU judge slice. All test
+cases, sandbox boundaries, language allowances and declared limits are preserved.

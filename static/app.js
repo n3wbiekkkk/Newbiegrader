@@ -2192,11 +2192,11 @@ $("template-btn").onclick = () => {
 };
 
 /* ---------------- judging jobs (async submit) ---------------- */
-// Base poll 700ms: prod is 1 vCPU and every poll is a proxied HTTPS round
-// trip; backoff below stretches it further while queued or unchanged.
+// Keep active jobs responsive; deep queues still back off to reduce API load.
 const POLL_MS = 700;
 const POLL_MIN_MS = 600;
 const POLL_CAP_MS = 4000;
+const POLL_ACTIVE_CAP_MS = 1000;
 const POLL_MAX_MS = 4 * 60 * 1000;
 const POLL_NET_RETRIES = 8;   // transient network blips: retry, don't drop the job id
 const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
@@ -2244,14 +2244,17 @@ async function pollJob(jid, onTick) {
     // checks don't add load to the judging host.
     const progressed = previous && (job.status !== previous.status ||
       (job.status === "queued" && Number(job.queued_ahead) < Number(previous.queued_ahead)));
-    delay = !previous || progressed ? POLL_MS : Math.min(POLL_CAP_MS, delay * 1.5);
+    const cap = job.status === "running" ||
+      (job.status === "queued" && !(Number(job.queued_ahead) > 0))
+      ? POLL_ACTIVE_CAP_MS : POLL_CAP_MS;
+    delay = !previous || progressed ? POLL_MS : Math.min(cap, delay * 1.5);
     if (job.status === "queued" && (Number(job.queued_ahead) || 0) > 0) {
       delay = Math.max(delay, 1500);
       if ((Number(job.queued_ahead) || 0) >= 5) delay = Math.max(delay, 3000);
     }
     previous = job;
     // Jitter prevents clients submitted together from polling in lockstep.
-    const jittered = Math.max(POLL_MIN_MS, Math.min(POLL_CAP_MS, delay * (0.8 + Math.random() * 0.4)));
+    const jittered = Math.max(POLL_MIN_MS, Math.min(cap, delay * (0.8 + Math.random() * 0.4)));
     await sleep(Math.min(remaining, jittered));
   }
 }
