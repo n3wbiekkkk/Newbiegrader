@@ -1,0 +1,36 @@
+[Unit]
+Description=Newbiegrader encrypted host backup (configuration, UID ledger, application data)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/newbiegrader/current
+Environment=PYTHONDONTWRITEBYTECODE=1
+EnvironmentFile=-/etc/newbiegrader/backup.env
+ExecStart=/usr/local/lib/newbiegrader/venv/bin/python -u deploy/ec2/newbiegrader-backup.py --bucket judge-backups
+TimeoutStartSec=900
+TimeoutStopSec=60
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+ReadWritePaths=/var/lib/newbiegrader
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=50
+
+[Install]
+WantedBy=multi-user.target

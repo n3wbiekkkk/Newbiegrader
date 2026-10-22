@@ -1,0 +1,14 @@
+[Unit]
+Description=Newbiegrader encrypted host backup schedule
+
+[Timer]
+OnCalendar=*-*-* 03:17:00
+# Spread the load and the off-host upload away from the hour boundary.
+RandomizedDelaySec=30m
+# A run that was missed because the machine was off happens right after it
+# comes back.
+Persistent=true
+Unit=newbiegrader-backup.service
+
+[Install]
+WantedBy=timers.target
