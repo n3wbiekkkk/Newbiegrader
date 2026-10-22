@@ -350,7 +350,7 @@ async def _security_headers(request: Request, call_next):
         resp.headers["Cache-Control"] = "private, no-store"
         resp.headers["Vary"] = "Cookie"
     resp.headers["Content-Security-Policy"] = (
-        "default-src 'self'; script-src 'self'; "
+        "default-src 'self'; base-uri 'none'; object-src 'none'; script-src 'self'; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
         "font-src https://fonts.gstatic.com; img-src 'self' data: https:; "
         "frame-src 'self'; frame-ancestors 'self'; "

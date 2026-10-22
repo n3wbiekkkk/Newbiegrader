@@ -40,12 +40,25 @@ class CriticalNetworkPolicy(unittest.TestCase):
             for number in (socket, socketpair, 425, 426, 427):
                 with self.subTest(machine=machine, syscall=number):
                     self.assertEqual(self.evaluate(machine, arch, number), 0x50000 | errno.EPERM)
-            for number in (0, 1, 57, 59, 60, 63, 64, 93, 221):
+            ordinary = ((0, 1, 9, 56, 57, 59, 60, 63, 202, 231)
+                        if machine == 'x86_64' else (63, 64, 93, 94, 98, 220, 221, 222))
+            for number in ordinary:
                 self.assertEqual(self.evaluate(machine, arch, number), 0x7fff0000)
             for flags in (0, 0x80000, 0x800, 0x80800):
                 self.assertEqual(self.evaluate(machine, arch, socketpair, 1, 1 | flags), 0x7fff0000)
             for domain, kind in ((2, 1), (10, 1), (1, 2), (1, 3), (1, 5)):
                 self.assertEqual(self.evaluate(machine, arch, socketpair, domain, kind), 0x50001)
+
+    def test_persistent_ipc_keyrings_bpf_and_perf_are_denied_on_both_abis(self):
+        calls = {
+            'x86_64': (0xc000003e, (29, 30, 31, 64, 65, 66, 67, 68, 69, 70, 71,
+                                   220, 248, 249, 250, 298, 321)),
+            'aarch64': (0xc00000b7, (*range(186, 198), 217, 218, 219, 241, 280)),
+        }
+        for machine, (arch, numbers) in calls.items():
+            for number in numbers:
+                with self.subTest(machine=machine, syscall=number):
+                    self.assertEqual(self.evaluate(machine, arch, number), 0x50001)
 
     def test_critical_foreign_abi_and_x32_cannot_bypass_filter(self):
         for machine, arch in (("x86_64", 0xc000003e), ("aarch64", 0xc00000b7)):
@@ -67,6 +80,19 @@ SOCKET_PROBE = (
     'try:\n'
     ' a,b=socket.socketpair(type=socket.SOCK_DGRAM);a.close();b.close();raise AssertionError("datagram pair allowed")\n'
     'except OSError as e:assert e.errno==errno.EPERM,e\n'
+)
+
+# Invalid IDs/keys/pointers: even if the filter regresses, this probe does not
+# create IPC resources, load BPF programs or install keys in the host kernel.
+SENSITIVE_PROBE = (
+    'import ctypes,errno,platform\n'
+    'calls={"x86_64":(29,30,31,64,65,66,67,68,69,70,71,220,248,249,250,298,321),'
+    '"aarch64":(*range(186,198),217,218,219,241,280)}[platform.machine()]\n'
+    'libc=ctypes.CDLL(None,use_errno=True)\n'
+    'for nr in calls:\n'
+    ' ctypes.set_errno(0)\n'
+    ' rc=libc.syscall(ctypes.c_long(nr),ctypes.c_long(-1),0,0,0,0,0)\n'
+    ' assert rc==-1 and ctypes.get_errno()==errno.EPERM,(nr,rc,ctypes.get_errno())\n'
 )
 
 
@@ -107,6 +133,30 @@ class CriticalNetworkExecution(unittest.TestCase):
             result = grader._compile([sys.executable, "-c", SOCKET_PROBE + 'print("denied")\n'], workspace)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "denied\n")
+
+    def test_persistent_resources_are_denied_in_runtime_and_exec_descendant(self):
+        server = test_server()
+        source = SENSITIVE_PROBE + (
+            'import subprocess,sys,threading,os\n'
+            f'subprocess.run([sys.executable,"-c",{SENSITIVE_PROBE!r}],check=True)\n'
+            'values=[]\n'
+            't=threading.Thread(target=lambda:values.append(42));t.start();t.join()\n'
+            'assert values==[42]\n'
+            'pid=os.fork()\n'
+            'if pid==0:os._exit(0)\n'
+            'assert os.waitpid(pid,0)[1]==0\n'
+            'print("persistent-resources-denied")\n')
+        result = server._run_playground(None, '.py', source, '', 5, 128)
+        self.assertEqual(result.get('verdict'), 'OK', result)
+        self.assertEqual(result['stdout'], 'persistent-resources-denied\n')
+
+    def test_persistent_resources_are_denied_in_compile_launcher(self):
+        with job_sandbox.scope():
+            workspace = self.base / 'compile-ipc'
+            workspace.mkdir()
+            grader.prepare_workspace(workspace)
+            result = grader._compile([sys.executable, '-c', SENSITIVE_PROBE], workspace)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_critical_filter_installation_failure_refuses_execution(self):
         from judge_runner import run_bounded

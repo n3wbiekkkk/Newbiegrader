@@ -197,14 +197,19 @@ def _network_filter_program(machine: str) -> list[tuple[int, int, int, int]]:
 
     Numbers follow Linux's x86 syscall_64.tbl and asm-generic/unistd.h.
     Anonymous AF_UNIX stream pairs support Python asyncio and local IPC; named
-    sockets, datagram pairs, new endpoints and io_uring are unavailable.
+    sockets, datagram pairs, new endpoints and io_uring are unavailable. SysV
+    IPC can outlive a reaped process tree, so reject it along with keyrings,
+    BPF and performance tracing in web jobs (including their compilers).
     """
     if machine == "x86_64":
         arch, pair = 0xc000003e, 53  # AUDIT_ARCH_X86_64
         denied = (41, 42, 43, 49, 50, 101, 288, 425, 426, 427)
+        denied += (29, 30, 31, 64, 65, 66, 67, 68, 69, 70, 71, 220,
+                   248, 249, 250, 298, 321)
     elif machine == "aarch64":
         arch, pair = 0xc00000b7, 199  # AUDIT_ARCH_AARCH64, little endian
         denied = (117, 198, 200, 201, 202, 203, 242, 425, 426, 427)
+        denied += tuple(range(186, 198)) + (217, 218, 219, 241, 280)
     else:
         raise OSError("network syscall filter needs Linux arm64 or x86_64")
     allow, kill, refused = 0x7fff0000, 0x80000000, 0x50001  # ERRNO(EPERM)

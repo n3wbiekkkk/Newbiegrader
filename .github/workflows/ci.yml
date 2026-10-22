@@ -32,6 +32,7 @@ jobs:
         run: |
           pip install pip-audit==2.10.1
           pip-audit -r requirements.txt
+          pip-audit -r deploy/host/requirements.lock
 
       - name: Byte-compile Python sources
         run: python3 -m compileall -q grader.py server.py judge_runner.py judge_execution.py worker.py container_entrypoint.py job_sandbox.py job_resources.py email_auth.py problem_store.py tools deploy/host

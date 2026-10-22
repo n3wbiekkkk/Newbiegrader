@@ -78,6 +78,22 @@ class KernelIsolation(unittest.TestCase):
         for line in caps["stdout"].splitlines():
             self.assertEqual(int(line.split()[1], 16), 0)
 
+    def test_persistent_ipc_and_kernel_interfaces_are_denied(self):
+        # No allocation even if denial regresses: invalid IDs/keys/pointers.
+        source = (
+            'import ctypes,errno,platform\n'
+            'calls={"x86_64":(29,30,31,64,65,66,67,68,69,70,71,220,248,249,250,298,321),'
+            '"aarch64":(*range(186,198),217,218,219,241,280)}[platform.machine()]\n'
+            'libc=ctypes.CDLL(None,use_errno=True)\n'
+            'for nr in calls:\n'
+            ' ctypes.set_errno(0)\n'
+            ' rc=libc.syscall(ctypes.c_long(nr),ctypes.c_long(-1),0,0,0,0,0)\n'
+            ' assert rc==-1 and ctypes.get_errno()==errno.EPERM,(nr,rc,ctypes.get_errno())\n'
+            'print("denied")\n')
+        result = playground(source)
+        self.assertEqual(result['verdict'], 'OK', result)
+        self.assertEqual(result['stdout'], 'denied\n')
+
     def test_cpp_standard_headers_and_stl(self):
         result = playground('#include <iostream>\n#include <vector>\n#include <numeric>\nint main(){std::vector<int> v{1,2,3};std::cout<<std::accumulate(v.begin(),v.end(),0);}', '.cpp')
         self.assertEqual(result["verdict"], "OK", result)

@@ -1,6 +1,6 @@
 # Dependency licences
 
-Audit date: 2026-10-21. Scope: everything this repository ships or links —
+Audit date: 2026-10-21; certifi security-version update verified 2026-10-22. Scope: everything this repository ships or links —
 Python packages, LaTeX packages, fonts, container base images, OS packages and
 third-party images.
 
@@ -24,6 +24,7 @@ PyPI JSON API for the exact pinned version.
 | python-multipart | 0.0.32 | Apache-2.0 | Yes (permissive) |
 | supabase | 2.7.1 | MIT | Yes (permissive) |
 | itsdangerous | 2.2.0 | BSD-3-Clause | Yes (permissive) |
+| certifi | 2026.10.19 | MPL-2.0 | Yes (unmodified, file-level copyleft) |
 
 ### Full production tree (`deploy/host/requirements.lock`)
 
@@ -32,7 +33,7 @@ PyPI JSON API for the exact pinned version.
 | annotated-doc | 0.0.5 | MIT | permissive |
 | annotated-types | 0.8.0 | MIT | permissive |
 | anyio | 4.15.1 | MIT | permissive |
-| certifi | 2026.7.22 | MPL-2.0 | weak copyleft, file-level |
+| certifi | 2026.10.19 | MPL-2.0 | weak copyleft, file-level |
 | click | 8.5.0 | BSD-3-Clause | permissive |
 | deprecation | 2.1.0 | Apache-2.0 | permissive |
 | fastapi | 0.143.3 | MIT | permissive |
