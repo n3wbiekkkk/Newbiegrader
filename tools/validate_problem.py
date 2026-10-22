@@ -225,6 +225,20 @@ def validate_problem(pid: str, strict: bool = False) -> dict:
             fail(f"config.checker must be one of {sorted(VALID_CHECKERS)} (got {cfg.get('checker')!r})")
         if cfg.get("difficulty") not in VALID_DIFFICULTIES:
             fail(f"config.difficulty must be one of {sorted(VALID_DIFFICULTIES)} (got {cfg.get('difficulty')!r})")
+        # Calibrated difficulty: level 1..5 is the real ordering, the coarse
+        # badge must be the band that level falls in. A drifted badge is how an
+        # easy problem ends up behind a hard one in the catalog.
+        level = cfg.get("level")
+        if level is None:
+            fail("config.level is missing — set the calibrated difficulty 1..5 "
+                 "(see docs/catalog/problem-numbers-*.csv)")
+        elif not isinstance(level, int) or isinstance(level, bool) or level not in grader.VALID_LEVELS:
+            fail(f"config.level must be an integer in {list(grader.VALID_LEVELS)} (got {level!r})")
+        else:
+            band = grader.band_for_level(level)
+            if cfg.get("difficulty") != band:
+                fail(f"config.difficulty {cfg.get('difficulty')!r} does not match level {level} "
+                     f"(expected {band!r})")
         tags = cfg.get("tags")
         if not isinstance(tags, list) or not tags:
             fail("config.tags must be a non-empty list")

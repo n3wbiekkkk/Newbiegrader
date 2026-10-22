@@ -47,7 +47,7 @@ Practice submissions show input, expected output and actual output for failed ca
 
 </div>
 
-The catalog contains 89 problems, numbered by difficulty under an explicit operator-approved migration. Stable slug IDs and submission history are preserved; the [number map](docs/catalog/problem-numbers-2026-10-20.csv) records previous numbers.
+The catalog contains 89 problems, numbered by a calibrated difficulty order under an explicit operator-approved migration. Every problem carries a `level` (1–5) that reflects the technique it actually demands, and the coarse easy/medium/hard badge is derived from it. Stable slug IDs and submission history are preserved; the [number map](docs/catalog/problem-numbers-2026-10-22.csv) records previous numbers.
 
 Every problem ships with a reference solution, and every recorded verdict can be traced to the exact test set and grader version that produced it.
 

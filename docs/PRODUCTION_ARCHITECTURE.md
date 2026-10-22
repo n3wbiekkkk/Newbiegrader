@@ -25,7 +25,7 @@ application code.
   only as historical recovery evidence. Current application rollback stays on
   AWS. There is no automatic legacy-origin retry/fallback.
 
-See the [catalog number map](catalog/problem-numbers-2026-10-20.csv),
+See the [catalog number map](catalog/problem-numbers-2026-10-22.csv),
 [backend file-storage guide](BACKEND_PROBLEM_FILES.md), and
 [backup and restore guide](EC2_BACKUP_RESTORE.md). Detailed commands, tests and
 release evidence are retained privately.

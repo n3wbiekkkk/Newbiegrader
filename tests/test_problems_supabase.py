@@ -240,6 +240,24 @@ class SupabaseProblems(unittest.TestCase):
         row = [r for r in self.fake.rows("problems") if r["slug"] == slug][0]
         self.assertEqual(int(row["no"]), target)
 
+    def test_parking_survives_a_table_that_already_holds_negatives(self):
+        """An interrupted renumber can leave rows parked on negatives. Parking
+        again must still produce unique negative values instead of colliding
+        with the ones that are already there."""
+        import tools.import_problems_supabase as imp
+        rows = list(self.fake.rows("problems"))
+        self.assertTrue(rows)
+        # Half-way state of an interrupted run: some rows still parked.
+        for row in rows[:2]:
+            self.fake.table("problems").update({"no": -7}).eq("slug", row["slug"]).execute()
+
+        parked = imp._park_numbers(self.fake)
+        self.assertEqual(parked, len(rows))
+        nos = [int(r["no"]) for r in self.fake.rows("problems")]
+        self.assertTrue(all(n < 0 for n in nos), "every parked number must be negative")
+        self.assertEqual(len(set(nos)), len(nos), "parked numbers must stay unique")
+        self.assertNotIn(-7, nos, "a parked row must not keep its own value")
+
     def test_prune_removes_only_stale_test_objects(self):
         """Uploads are upserts, so a shrunken test set leaves stale objects.
         _prune_storage removes exactly those, and never a live object."""

@@ -3133,7 +3133,8 @@ def list_problems(request: Request, response: Response, sort: str = "") -> dict:
     hidden = _hidden_pids()
     listed, contest_hidden = _contest_problem_sets()
     ranked = grader.sort_problems(PROBLEMS.values()) if not sort_by_difficulty else sorted(
-        PROBLEMS.values(), key=lambda p: (order.get((p.difficulty or "").lower(), 99), p.pid))
+        PROBLEMS.values(), key=lambda p: (order.get((p.difficulty or "").lower(), 99),
+                                           p.no if p.no > 0 else 0, p.pid))
     out = []
     for p in ranked:
         is_hidden = p.pid in hidden

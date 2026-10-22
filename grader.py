@@ -226,6 +226,7 @@ class Problem:
     description: str
     tests: list[TestCase]
     difficulty: str = ""        # easy | medium | hard (ไว้ filter)
+    level: int = 0              # 1..5 ความยากละเอียด (ใช้เรียงเลขโจทย์ให้เรียงง่าย->ยาก)
     tags: list[str] = field(default_factory=list)
     samples: list[str] = field(default_factory=list)  # ชื่อ test ที่เป็น "ตัวอย่างสาธารณะ" (ที่เหลือ = hidden)
     hidden: bool = False        # true = โจทย์ชุดคอนเทสต์: ไม่โชว์ในหน้า Task (admin/คอนเทสต์เห็น)
@@ -319,14 +320,44 @@ def load_problem(pid: str) -> Problem:
     if no < 0:
         print(c(f"WARNING: problem '{pid}' has a negative 'no' ({no})", C.YELLOW))
         no = 0
+    level = _load_level(pid, cfg)
     # Local packages are always published; Supabase rows carry is_published
     # separately (unpublished = admin-only). Keep the default True here so
     # existing callers and tests are unaffected.
     return Problem(pid, title, time_limit, memory_limit, checker, tolerance, description, tests,
-                   difficulty, tags, samples, hidden, no, True)
+                   difficulty, level, tags, samples, hidden, no, True)
 
 
 DIFFICULTY_RANK = {"easy": 0, "medium": 1, "hard": 2}
+
+# Fine-grained curriculum level (1..5) -> the coarse badge the UI shows.
+# level 1-2 = easy, 3 = medium, 4-5 = hard. The level is the calibrated
+# difficulty; the badge is only a three-way summary of it.
+VALID_LEVELS = (1, 2, 3, 4, 5)
+LEVEL_BANDS = {1: "easy", 2: "easy", 3: "medium", 4: "hard", 5: "hard"}
+# Fallback level per coarse badge, used only when config.level is missing.
+BAND_DEFAULT_LEVEL = {"easy": 2, "medium": 3, "hard": 4}
+
+
+def band_for_level(level: int) -> str:
+    return LEVEL_BANDS.get(int(level or 0), "")
+
+
+def _load_level(pid: str, cfg: dict) -> int:
+    """Read config.level (1..5). Missing or invalid falls back to the band of
+    the coarse difficulty label so an un-updated package still sorts sanely."""
+    raw = cfg.get("level")
+    if raw is None:
+        return BAND_DEFAULT_LEVEL.get(str(cfg.get("difficulty", "")).lower(), 0)
+    try:
+        level = int(raw)
+    except (TypeError, ValueError):
+        print(c(f"WARNING: problem '{pid}' has a non-numeric 'level' ({raw!r})", C.YELLOW))
+        return 0
+    if level not in VALID_LEVELS:
+        print(c(f"WARNING: problem '{pid}' has an out-of-range 'level' ({level})", C.YELLOW))
+        return 0
+    return level
 
 
 def order_key(prob: "Problem") -> tuple:

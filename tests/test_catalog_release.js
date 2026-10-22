@@ -30,3 +30,18 @@ test('numeric ordering respects migrated numbers and keeps input objects and slu
   assert.deepEqual(input.map(p => p.no), [3, 1, 2]);
   assert.equal(output[0], input[1]);
 });
+
+test('a task token resolves by slug first and by current number second', () => {
+  const resolveStart = app.indexOf('function resolveTaskToken(');
+  const resolveEnd = app.indexOf('\nfunction ', resolveStart + 1);
+  assert.ok(resolveStart >= 0 && resolveEnd > resolveStart);
+  const context = vm.createContext({
+    state: { problems: [{ id: 'count_even_odd', no: 2 }, { id: 'hanoi', no: 41 }] },
+  });
+  vm.runInContext(`${app.slice(resolveStart, resolveEnd)};globalThis.resolveTaskToken = resolveTaskToken;`, context);
+  assert.equal(context.resolveTaskToken('hanoi'), 'hanoi');
+  assert.equal(context.resolveTaskToken('41'), 'hanoi');
+  // A retired number now names the problem that holds it today.
+  assert.equal(context.resolveTaskToken('22'), null);
+  assert.equal(context.resolveTaskToken('9999'), null);
+});

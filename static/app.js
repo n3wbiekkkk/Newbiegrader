@@ -4034,7 +4034,7 @@ $("ct-save").onclick = async () => {
 
 /* ---------------- init (cache-first, parallel, non-blocking) ---------------- */
 // Catalog numbers changed in the approved difficulty-order migration.
-const PROBLEMS_CACHE_KEY = "ng_problems_v3";
+const PROBLEMS_CACHE_KEY = "ng_problems_v4";
 const PROBLEMS_CACHE_TTL = 3600 * 1000;
 
 function loadProblemsCache() {
