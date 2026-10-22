@@ -18,7 +18,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anuphan:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600;700&display=swap">
-<link rel="stylesheet" href="/styles.css?v=46">
+<link rel="stylesheet" href="/styles.css?v=47">
 </head>
 <body>
 <a class="skip-link" href="#main">ข้ามไปเนื้อหา</a>
@@ -280,7 +280,10 @@
             <button id="file-clear" type="button" title="remove attached file">ลบออก</button>
           </div>
           <label class="editor-label" for="editor">โค้ดของคุณ</label>
-          <textarea id="editor" spellcheck="false" aria-label="โค้ดที่จะส่ง" placeholder="วางโค้ดที่นี่ หรือแนบไฟล์ด้านบน"></textarea>
+          <div class="editor-wrap">
+            <div class="editor-gutter" id="editor-gutter" aria-hidden="true"></div>
+            <textarea id="editor" spellcheck="false" aria-label="โค้ดที่จะส่ง" placeholder="วางโค้ดที่นี่ หรือแนบไฟล์ด้านบน"></textarea>
+          </div>
         </div>
       </div>
       <div class="submit-row submit-bar">
@@ -763,6 +766,6 @@
 </div>
 
 <script src="/config.js?v=6"></script>
-<script src="/app.js?v=72"></script>
+<script src="/app.js?v=73"></script>
 </body>
 </html>

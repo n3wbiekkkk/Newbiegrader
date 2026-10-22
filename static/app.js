@@ -225,8 +225,34 @@ function lastLang() {
  * fastest way to make a beginner give up. Shift+Tab outdents, Enter keeps the
  * current indentation (and opens a block after `:` or `{`), Cmd/Ctrl+Enter
  * submits, Cmd/Ctrl+/ comments the selection out.
+ *
+ * The line numbers live in a gutter beside the textarea: a textarea cannot
+ * render one element per line. The gutter is positioned rather than laid out,
+ * so it always covers exactly the textarea's box, and it scrolls with it.
+ * The editor does not soft-wrap: a wrapped line occupies two visual rows and
+ * the numbers would drift out of step. Code scrolls sideways instead.
  */
 const INDENT = "    ";
+
+function syncEditorGutter() {
+  const ed = $("editor"), g = $("editor-gutter");
+  if (!ed || !g || typeof ed.value !== "string" || !g.dataset) return;
+  const lines = (ed.value.match(/\n/g) || []).length + 1;
+  if (g.dataset.lines !== String(lines)) {
+    g.dataset.lines = String(lines);
+    g.textContent = Array.from({ length: lines }, (_, i) => i + 1).join("\n");
+  }
+  g.scrollTop = ed.scrollTop;
+}
+
+/* Every write to the editor goes through here so the gutter never drifts:
+ * a programmatic value change does not fire `input`. */
+function setEditorValue(value, ed) {
+  const target = ed || $("editor");
+  if (!target) return;
+  target.value = value;
+  syncEditorGutter();
+}
 
 function commentToken() {
   return state.lang === "python" ? "#" : "//";
@@ -241,7 +267,7 @@ function lineRange(value, start, end) {
 function applyIndent(ed, outdent) {
   const v = ed.value, s = ed.selectionStart, e = ed.selectionEnd;
   if (s === e && !outdent) {                    // Tab with no selection: 4 spaces
-    ed.value = v.slice(0, s) + INDENT + v.slice(s);
+    setEditorValue(v.slice(0, s) + INDENT + v.slice(s), ed);
     ed.selectionStart = ed.selectionEnd = s + INDENT.length;
     return;
   }
@@ -253,7 +279,7 @@ function applyIndent(ed, outdent) {
     }
     return INDENT + line;
   }).join("\n");
-  ed.value = v.slice(0, from) + block + v.slice(to);
+  setEditorValue(v.slice(0, from) + block + v.slice(to), ed);
   if (s === e) {
     // Caret only: keep the caret where the student left it (no selection — a
     // selected block would be replaced by the very next keystroke).
@@ -281,7 +307,7 @@ function toggleComment(ed) {
     const pad = (line.match(/^\s*/) || [""])[0];
     return pad + tok + " " + line.slice(pad.length);
   }).join("\n");
-  ed.value = v.slice(0, from) + block + v.slice(to);
+  setEditorValue(v.slice(0, from) + block + v.slice(to), ed);
   ed.selectionStart = from;
   ed.selectionEnd = from + block.length;
 }
@@ -292,7 +318,7 @@ function newlineIndent(ed) {
   let pad = (line.match(/^[ \t]*/) || [""])[0];
   if (/[:{]\s*$/.test(line)) pad += INDENT;      // new block: indent one level
   const ins = "\n" + pad;
-  ed.value = v.slice(0, s) + ins + v.slice(ed.selectionEnd);
+  setEditorValue(v.slice(0, s) + ins + v.slice(ed.selectionEnd), ed);
   ed.selectionStart = ed.selectionEnd = s + ins.length;
 }
 
@@ -301,9 +327,12 @@ function bindEditorKeys() {
   if (!ed) return;
   let pending = null;
   ed.addEventListener("input", () => {           // autosave, debounced
+    syncEditorGutter();                          // numbers first: no visible lag
     clearTimeout(pending);
     pending = setTimeout(saveDraft, 400);
   });
+  ed.addEventListener("scroll", syncEditorGutter);
+  ed.addEventListener("focus", syncEditorGutter);
   ed.addEventListener("blur", saveDraft);
   ed.addEventListener("keydown", (ev) => {
     const meta = ev.metaKey || ev.ctrlKey;
@@ -317,6 +346,13 @@ function bindEditorKeys() {
       ev.preventDefault(); toggleComment(ed); saveDraft();
     }
   });
+  syncEditorGutter();
+  // A resized editor (the student drags the handle) changes the gutter's box.
+  if (typeof ResizeObserver === "function") {
+    try {
+      new ResizeObserver(syncEditorGutter).observe(ed);
+    } catch (e) { /* no observer: input/scroll/focus still keep it right */ }
+  }
 }
 
 /* ---------------- task tabs ---------------- */
@@ -1459,7 +1495,7 @@ async function selectProblem(pid) {
   }
   // Per-problem workspace: this problem's draft code, no leftover attached file.
   const draft = draftFor(pid);
-  $("editor").value = draft;
+  setEditorValue(draft);
   setDraftHint(!!draft.trim());
   state.file = null;
   fi.value = "";
@@ -1696,7 +1732,7 @@ async function signOut() {
   try { localStorage.removeItem(PROBLEMS_CACHE_KEY); } catch (e) { /* ignore */ }
   clearGetCache();   // GET cache holds per-user answers (history?mine=1): must not leak to the next login
   clearLocalWorkspace();
-  $("editor").value = "";
+  setEditorValue("");
   $("run-input").value = "";
   fi.value = "";
   state.file = null;
@@ -2141,14 +2177,14 @@ $("file-clear").onclick = () => {
 
 $("file-load").onclick = async () => {
   if (!state.file) return;
-  $("editor").value = await state.file.text();
+  setEditorValue(await state.file.text());
   $("submit-status").textContent = "โหลดเนื้อหาไฟล์ลง editor แล้ว";
 };
 
 $("template-btn").onclick = () => {
   const t = (TEMPLATES[state.current] || {})[state.lang];
   if (t) {
-    $("editor").value = t;
+    setEditorValue(t);
     $("submit-status").textContent = `โหลด template แล้ว (${state.current} / ${state.lang})`;
   } else {
     $("submit-status").textContent = "ข้อนี้ยังไม่มี template";
