@@ -1,0 +1,8 @@
+[Unit]
+Description=Newbiegrader four-worker aggregate execution budget
+
+[Slice]
+CPUQuota=400%
+MemoryMax=4G
+MemorySwapMax=0
+TasksMax=512

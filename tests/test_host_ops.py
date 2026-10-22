@@ -9,7 +9,9 @@ import os
 import stat
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -21,11 +23,33 @@ def _load(name, relative):
     return module
 
 
-alert = _load("ng_alert", "deploy/ec2/newbiegrader-alert.py")
-backup = _load("ng_backup", "deploy/ec2/newbiegrader-backup.py")
+alert = _load("ng_alert", "deploy/host/newbiegrader-alert.py")
+backup = _load("ng_backup", "deploy/host/newbiegrader-backup.py")
 
 
 class AlertWatchdog(unittest.TestCase):
+    def test_journal_checks_every_configured_worker(self):
+        units = [f"newbiegrader-worker@{i}.service" for i in range(1, 5)]
+        with patch.dict(os.environ, {"NEWBIEGRADER_WORKER_UNITS": " ".join(units)}), \
+                patch.object(alert.subprocess, "run", return_value=SimpleNamespace(
+                    stdout="", returncode=0)) as run:
+            self.assertEqual(alert._journal_hits(60), [])
+        command = run.call_args.args[0]
+        for unit in units + ["newbiegrader-api.service"]:
+            self.assertIn(unit, command)
+
+    def test_all_configured_workers_are_required(self):
+        units = [f"newbiegrader-worker@{i}.service" for i in range(1, 5)]
+        for failed in (None, units[-1]):
+            with self.subTest(failed=failed), patch.dict(os.environ, {
+                    "NEWBIEGRADER_WORKER_UNITS": " ".join(units)}), \
+                    patch.object(alert, "_service_state", side_effect=lambda unit:
+                                 "inactive" if unit == failed else "active"):
+                check = next(c for c in alert.collect_checks() if c["name"] == "judge worker")
+                self.assertEqual(check["ok"], failed is None)
+                for unit in units:
+                    self.assertIn(unit, check["detail"])
+
     def test_every_check_is_reported_and_never_raises(self):
         checks = alert.collect_checks()
         self.assertTrue(checks)
@@ -125,7 +149,7 @@ class EncryptedBackup(unittest.TestCase):
         self.assertIn("tunnel-token", " ".join(backup.CONFIG_FILES))
 
     def test_the_private_identity_is_never_read_by_the_host_script(self):
-        source = (ROOT / "deploy/ec2" / "newbiegrader-backup.py").read_text(encoding="utf-8")
+        source = (ROOT / "deploy/host" / "newbiegrader-backup.py").read_text(encoding="utf-8")
         self.assertNotIn("identity.txt", source)
         self.assertNotIn("age-keygen -o", source)
         self.assertIn("backup-recipient", source)
@@ -145,7 +169,7 @@ class EncryptedBackup(unittest.TestCase):
 class HostUnits(unittest.TestCase):
     def test_backup_and_alert_units_exist_and_are_hardened(self):
         for name in ("newbiegrader-backup.service", "newbiegrader-alert.service"):
-            path = ROOT / "deploy" / "ec2" / name
+            path = ROOT / "deploy" / "host" / name
             self.assertTrue(path.is_file(), f"missing {name}")
             text = path.read_text(encoding="utf-8")
             self.assertIn("[Unit]", text)
@@ -154,7 +178,7 @@ class HostUnits(unittest.TestCase):
             self.assertIn("CapabilityBoundingSet=", text)
             self.assertIn("ReadWritePaths=/var/lib/newbiegrader", text)
         for name in ("newbiegrader-backup.timer", "newbiegrader-alert.timer"):
-            path = ROOT / "deploy" / "ec2" / name
+            path = ROOT / "deploy" / "host" / name
             self.assertTrue(path.is_file(), f"missing {name}")
             text = path.read_text(encoding="utf-8")
             self.assertIn("[Unit]", text)
@@ -162,17 +186,17 @@ class HostUnits(unittest.TestCase):
 
     def test_the_units_run_the_scripts_from_the_repository(self):
         self.assertIn("newbiegrader-backup.py",
-                      (ROOT / "deploy/ec2/newbiegrader-backup.service").read_text())
+                      (ROOT / "deploy/host/newbiegrader-backup.service").read_text())
         self.assertIn("newbiegrader-alert.py",
-                      (ROOT / "deploy/ec2/newbiegrader-alert.service").read_text())
+                      (ROOT / "deploy/host/newbiegrader-alert.service").read_text())
 
     def test_the_backup_timer_runs_daily_and_survives_a_restart(self):
-        text = (ROOT / "deploy/ec2/newbiegrader-backup.timer").read_text(encoding="utf-8")
+        text = (ROOT / "deploy/host/newbiegrader-backup.timer").read_text(encoding="utf-8")
         self.assertIn("OnCalendar=", text)
         self.assertIn("Persistent=true", text)
 
     def test_the_alert_timer_runs_often(self):
-        text = (ROOT / "deploy/ec2/newbiegrader-alert.timer").read_text(encoding="utf-8")
+        text = (ROOT / "deploy/host/newbiegrader-alert.timer").read_text(encoding="utf-8")
         self.assertIn("OnUnitActiveSec=", text)
         self.assertIn("Persistent=true", text)
 

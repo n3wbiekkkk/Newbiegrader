@@ -1,0 +1,15 @@
+{
+  "name": "newbiegrader-host-staging",
+  "main": "worker.js",
+  "compatibility_date": "2026-10-22",
+  // Pages calls this Worker through a service binding. No public Worker route.
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": { "enabled": true, "traces": { "enabled": true } },
+  "vars": { "API_ENABLED": "0" },
+  // Keep API_ENABLED=0 until the separate gated transport is verified.
+  // Register the service for loopback 127.0.0.1:8081, never a public address.
+  "vpc_services": [
+    { "binding": "PRIVATE_API", "service_id": "REPLACE_WITH_PRIVATE_API_VPC_SERVICE_ID" }
+  ]
+}

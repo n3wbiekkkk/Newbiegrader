@@ -79,7 +79,7 @@ class CatalogNumberMap(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_https_smoke_rejects_invalid_count_before_any_request(self):
-        result = subprocess.run([sys.executable, str(ROOT / 'deploy/ec2/smoke_https.py'),
+        result = subprocess.run([sys.executable, str(ROOT / 'deploy/host/smoke_https.py'),
                                  '--production', '--expected-problems', '0'],
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 2)

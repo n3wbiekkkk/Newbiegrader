@@ -1,4 +1,4 @@
-"""Synthetic control/gate regressions; real kernel tests are ec2_canaries.py."""
+"""Synthetic control/gate regressions; real kernel tests are host_canaries.py."""
 import asyncio
 from pathlib import Path
 import os

@@ -10,7 +10,7 @@ be compatible with distributing the combined work under AGPL-3.0-or-later.
 
 ## Python packages
 
-`requirements.txt` pins the direct dependencies; `deploy/ec2/requirements.lock`
+`requirements.txt` pins the direct dependencies; `deploy/host/requirements.lock`
 pins the full production tree (uv-generated). Licence data comes from the
 PyPI JSON API for the exact pinned version.
 
@@ -25,7 +25,7 @@ PyPI JSON API for the exact pinned version.
 | supabase | 2.7.1 | MIT | Yes (permissive) |
 | itsdangerous | 2.2.0 | BSD-3-Clause | Yes (permissive) |
 
-### Full production tree (`deploy/ec2/requirements.lock`)
+### Full production tree (`deploy/host/requirements.lock`)
 
 | Package | Version | Licence | Verdict |
 | --- | --- | --- | --- |
@@ -110,8 +110,8 @@ The OFL fonts require the licence text to ship with them; it does, in
 | Component | Licence | Note |
 | --- | --- | --- |
 | `python:3.11-slim` (Dockerfile) | PSF-2.0 | Permissive. |
-| `gcc`, `g++` (Dockerfile, `deploy/ec2/bootstrap.sh`) | GPL-3.0-with-GCC-exception | Used as unmodified toolchain binaries; the runtime exception permits linking. Separate processes, never linked into the AGPL work. |
-| `nginx` (`deploy/ec2/bootstrap.sh`) | BSD-2-Clause | Reverse proxy only; runs as a separate service. |
+| `gcc`, `g++` (Dockerfile, `deploy/host/bootstrap.sh`) | GPL-3.0-with-GCC-exception | Used as unmodified toolchain binaries; the runtime exception permits linking. Separate processes, never linked into the AGPL work. |
+| `nginx` (`deploy/host/bootstrap.sh`) | BSD-2-Clause | Reverse proxy only; runs as a separate service. |
 | `python3-venv`, `curl`, `ca-certificates`, `rsync` | PSF-2.0 / curl / MPL-2.0 / GPL-3.0 | Unmodified OS tooling, separate processes. |
 
 ## Third-party images

@@ -22,7 +22,7 @@ privately before adding one `cloudflare` entry; no duplicate was created.
 - Safe integration calls actually succeeded: documentation search, authenticated
   identity lookup, API schema search and a read-only account tunnel inventory
   returning HTTP 200. Later staging-only resource changes are recorded in the
-  EC2 migration log; this authentication does not approve production cutover.
+  private migration record; this authentication does not approve production cutover.
 - Requested OAuth scopes cover account/user read, Workers scripts read/write/
   bind, Pages metadata/read/write, tunnel read/write and connectivity directory
   read/bind/admin, plus offline refresh. Default broad authorization was stopped

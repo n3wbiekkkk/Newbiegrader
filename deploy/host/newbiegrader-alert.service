@@ -1,0 +1,40 @@
+[Unit]
+Description=Newbiegrader host health watchdog
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/newbiegrader/current
+Environment=PYTHONDONTWRITEBYTECODE=1
+EnvironmentFile=-/etc/newbiegrader/host.env
+ExecStart=/usr/local/lib/newbiegrader/venv/bin/python -u deploy/host/newbiegrader-alert.py
+TimeoutStartSec=120
+TimeoutStopSec=30
+MemoryMax=128M
+MemorySwapMax=0
+CPUQuota=10%
+TasksMax=32
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+ReadWritePaths=/var/lib/newbiegrader
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=50
+
+[Install]
+WantedBy=multi-user.target

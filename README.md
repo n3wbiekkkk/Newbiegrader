@@ -94,7 +94,7 @@ Plain HTML, CSS and JavaScript. No bundler, no transpiler and no framework.
 | `problems/` | Local working copy of the problem set (configuration, statement, tests). Not versioned here — runtime files are published to protected backend storage; metadata lives in Supabase |
 | `supabase/` | Database schema with append-only, re-runnable migrations |
 
-Host capacity is read from the service or container at startup, and worker counts, memory ceilings, queue bounds and timeouts are derived from it automatically. Current production is Cloudflare Pages + AWS EC2 t3.small with one worker; Vercel and JustRunMy are not used. Problem PDFs, public samples and private tests are served from backend disk (`GRADER_FILE_STORAGE=local`); Supabase holds metadata, auth and the durable queue. See [current architecture](docs/PRODUCTION_ARCHITECTURE.md), [backend file storage](docs/BACKEND_PROBLEM_FILES.md), and the [EC2 runbook](docs/EC2_MIGRATION.md).
+Host capacity is read from the service or container at startup, and worker counts, memory ceilings, queue bounds and timeouts are derived from it automatically. Current production is Cloudflare Pages + an Ubuntu PC with four isolated judge workers. Problem PDFs, public samples and private tests are served from backend disk (`GRADER_FILE_STORAGE=local`); Supabase holds metadata, auth and the durable queue. See [current architecture](docs/PRODUCTION_ARCHITECTURE.md), [backend file storage](docs/BACKEND_PROBLEM_FILES.md), and the [host runbook](docs/HOST_DEPLOYMENT.md).
 
 ## Design Principles
 
@@ -109,7 +109,7 @@ Host capacity is read from the service or container at startup, and worker count
 | API | FastAPI |
 | Database | PostgreSQL via Supabase |
 | Frontend | HTML, CSS and JavaScript on Cloudflare Pages |
-| Production backend | AWS EC2 / Ubuntu, Python 3.11 and separate systemd API/worker services |
+| Production backend | Ubuntu PC, Python 3.11, separate systemd API and four worker services |
 | Local packaging | Docker |
 
 ## Contributing

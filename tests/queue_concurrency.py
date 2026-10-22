@@ -1,6 +1,6 @@
 """Concurrent queue/lease rehearsal against disposable PostgreSQL only.
 
-python tests/queue_concurrency.py --container newbiegrader-ec2-sql
+python tests/queue_concurrency.py --container newbiegrader-host-sql
 Never point this at production. No program is executed by these fixtures.
 """
 import argparse

@@ -1,48 +1,40 @@
 # Current production architecture
 
-Updated 2026-10-22 after the difficulty renumbering, the EC2 application
-release and the addition of the scheduled backup and the health watchdog.
+Updated 2026-10-22 after migration to the native PC backend.
 
-- **Frontend:** Cloudflare Pages, `https://newbiegrader.pages.dev`; vanilla SPA.
-- **API route:** same-origin Pages Function → private Cloudflare Worker/service
-  binding → specific VPC Service → outbound Tunnel → loopback Nginx/FastAPI.
-- **Backend:** AWS EC2 Sydney, Ubuntu 24.04 x86_64, **t3.small (2 vCPU / 2 GiB)**.
-  Separate systemd API and **one** judge worker. Public FastAPI HTTP is not used.
-  The instance exposes 2 vCPU on **one physical core**: two judge workers would
-  share that core and each run about 2.1x slower, so the worker count stays at
-  one and the unit allows it a single CPU.
-- **Deployed release:** `d63e8dd6c4a519c81eb337b1a6d5cedf38189983`, source
-  fingerprint `ffd2a32edbc212eaca7216d51d168726210ef0613bbaf1433a024dcb82a4b014`.
-  The previous release is retained as the rollback target.
-- **Database, auth and durable queue:** existing Supabase project. No migration
-  of user identities or relational data is part of the file-storage work.
-- **Problem files:** problem PDFs, public samples and private tests are stored on
-  backend disk under `/var/lib/newbiegrader/problem-files/g1-4e9ba14273bc/`
-  and read with `GRADER_FILE_STORAGE=local`. Supabase Storage objects are
-  retained only as an explicitly selected recovery source; there is no runtime
-  cloud-file fallback in local mode.
-- **Catalog:** 89 problems / 1,594 cases / 89 selected PDFs. The numbers follow
-  the calibrated level of each package: **easy 1–40, medium 41–78, hard 79–89**.
-  Slug IDs remain stable; relational metadata remains in Supabase.
-- **Scheduled backup:** `newbiegrader-backup.timer` runs daily and writes one
-  age-encrypted archive to the private `judge-backups` Storage bucket. The
-  archive holds the configuration, the sandbox UID ledger and every public
-  table read through the service key; the schema, policies and grants come from
-  the committed `supabase/schema.sql`. The age **private** identity stays on the
-  operator machine, so the host only holds the recipient public key.
-- **Health watchdog:** `newbiegrader-alert.timer` runs every five minutes and
-  checks the API, the worker, the tunnel, the durable queue, the disk, the age
-  of the last backup and the journal. It posts one message per transition into
-  a broken state to a Discord bot channel. The webhook configuration is a
-  root-owned 0600 file and never appears in the argument vector or the journal.
-- **Vercel:** not used in this production architecture.
-- **JustRunMy:** retired from production; stopped legacy material is retained
-  only as historical recovery evidence. Current application rollback stays on
-  AWS. There is no automatic legacy-origin retry/fallback.
+- **Frontend:** Cloudflare Pages, `https://newbiegrader.pages.dev`, vanilla SPA.
+- **Transport:** same-origin Pages Function → private `newbiegrader-pc-production`
+  Worker → VPC service `newbiegrader-pc-api` → named `newbiegrader-pc` QUIC tunnel
+  → loopback Nginx port 8081 → FastAPI port 8000. The origin has no public HTTP
+  listener and no retired-host fallback.
+- **Backend:** Ubuntu 26.04 x86_64 PC, Intel i5-10400T (6 physical cores /
+  12 threads), about 7.1 GiB RAM and SSD storage; dedicated Python 3.11 venv.
+  API and judging use separate systemd services.
+- **Judging:** exactly four `newbiegrader-worker@N.service` instances, one job
+  per unit and serial tests within each job. Each has one CPU / 1 GiB, with an
+  aggregate four-CPU / 4 GiB slice. Private workspace tmpfs, per-job cgroups,
+  unique reserved UIDs, Landlock and seccomp remain mandatory. Per-problem limits
+  and language memory allowances are unchanged; declared memory is capped at
+  128 MiB and the overall submission deadline remains 240 seconds.
+- **Database, identities and durable queue:** the existing Supabase project;
+  no database migration or identity rewrite was needed to move hosts.
+- **Files:** protected local public/private roots under
+  `/var/lib/newbiegrader/problem-files/g1-4e9ba14273bc/`. Public files are
+  root:newbiegrader-api with 0750 directories / 0440 files; private files are
+  root:root with 0700 directories / 0400 files. No runtime cloud-file fallback.
+- **Catalog:** 89 problems / 1,594 cases / 89 selected PDFs. Permanent slugs and
+  submission history remain intact. The calibrated catalog number map is
+  unchanged.
+- **Backup:** the active PC runs the daily encrypted configuration/UID/table-row
+  export to the private Supabase backup bucket. Protected file bytes have a
+  separate verified encrypted off-host backup. The age private identity stays
+  off-host. See the recovery guide for the exact coverage and limits.
+- **Watchdog:** the PC checks API, all four workers, tunnel, queue, disk, backup
+  age and journal every five minutes. Its existing bot token stays in root-only
+  configuration; validation uses check-only mode without sending messages.
 
-See the [catalog number map](catalog/problem-numbers-2026-10-22.csv),
-[backend file-storage guide](BACKEND_PROBLEM_FILES.md), and
-[backup and restore guide](EC2_BACKUP_RESTORE.md). Detailed commands, tests and
-release evidence are retained privately.
-Historical migration checkpoints in other documents describe their original
-observation time; they do not override this current topology.
+See [deployment](HOST_DEPLOYMENT.md), [private transport](HOST_CLOUDFLARE_SETUP.md),
+[file storage](BACKEND_PROBLEM_FILES.md) and [backup/recovery](HOST_BACKUP_RESTORE.md).
+Private release records retain measured test results and host configuration.
+Application rollback uses a verified compatible release on this PC, retaining
+current files and the newest append-only UID ledger.

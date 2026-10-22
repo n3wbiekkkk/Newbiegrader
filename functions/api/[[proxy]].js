@@ -86,7 +86,7 @@ export async function onRequest(context) {
       service = context.env?.BACKEND_SERVICE;
       if (typeof service?.fetch !== "function") throw new Error("missing service binding");
       // A service binding fixes the destination; this hostname is not resolved.
-      backend = "https://newbiegrader-aws.internal";
+      backend = "https://newbiegrader-backend.internal";
     } else if (transport === "https") {
       backend = backendOrigin(context.env);
     } else {
