@@ -306,12 +306,12 @@ def run_bounded(command: list[str], stdin_data: str, timeout: float, *,
 
 
 def _runner_env() -> dict:
-    # Server import must neither read .env nor create a database client.
+    # The isolated executor receives no credentials or database client.
     import site
     import grader
 
     # judge_env() clears HOME so untrusted code cannot read the real one; this
-    # child is our own runner and imports the server, so it needs the
+    # child is our own runner and imports the executor, so it needs the
     # interpreter's package directories — which on a development machine may be
     # the user site (`pip install --user`), unreachable without HOME.
     package_dirs = [p for p in (*site.getsitepackages(), site.getusersitepackages())
@@ -378,10 +378,11 @@ def _job() -> int:
     with contextlib.redirect_stdout(sys.stderr):
         import grader
         import problem_store
-        import server
-        server.MEMORY_CAP_MB = max(1, int(payload["memory_cap_mb"]))
-        server.JUDGE_JOBS = max(1, int(payload["judge_jobs"]))
-        grader.COMPILE_MEMORY_MB = max(256, server.MEMORY_CAP_MB)
+        import judge_execution
+        settings = judge_execution.Settings(
+            max(1, int(payload["memory_cap_mb"])),
+            max(1, int(payload["judge_jobs"])), grader.CPU_QUOTA, grader.RAM_MB)
+        grader.COMPILE_MEMORY_MB = max(256, settings.memory_cap_mb)
         if payload.get("problem_data"):
             # Supabase mode: trusted embedded tests from the backend (no disk
             # or Storage access here). Client-supplied paths are never trusted.
@@ -391,10 +392,12 @@ def _job() -> int:
         if message["kind"] == "submission":
             if problem is None:
                 raise ValueError("submission requires a problem")
-            result = server.run_submission(problem, payload["ext"], payload["source"], payload["reveal"])
+            result = judge_execution.run_submission(
+                problem, payload["ext"], payload["source"], payload["reveal"], settings=settings)
         else:
-            result = server._run_playground(problem, payload["ext"], payload["source"],
-                                            payload["stdin_data"], payload["time_limit"], payload["memory_mb"])
+            result = judge_execution._run_playground(
+                problem, payload["ext"], payload["source"], payload["stdin_data"],
+                payload["time_limit"], payload["memory_mb"], settings=settings)
     json.dump(result, sys.stdout, ensure_ascii=True)
     return 0
 

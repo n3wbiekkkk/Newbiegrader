@@ -738,6 +738,15 @@ def _sample_rss_mb(pid: int) -> float:
             for line in f:
                 if line.startswith("VmHWM:"):
                     return int(line.split()[1]) / 1024.0
+        if sys.platform.startswith("linux"):
+            # Zombies have no resident address space (and no VmHWM). Running
+            # ps here adds a subprocess on almost every completed short test.
+            return 0.0
+    except FileNotFoundError:
+        if sys.platform.startswith("linux"):
+            # The supervised child has already been reaped. Keep the peak
+            # gathered while it was alive; ps cannot recover an exited RSS.
+            return 0.0
     except Exception:
         pass
     try:
