@@ -3,7 +3,7 @@
 Current production is Cloudflare Pages with a private tunnel to the Ubuntu PC.
 The PC runs four isolated workers and a separate API; Supabase retains metadata,
 identities, history and the durable queue. The current verified application code
-is `91d81a0942e0bf1b4e9debe92487ec1fad109ccf` (2026-10-22). Documentation-only
+is `b290e8ca074e77b6ea681551fa74ed572e0cad8b` (2026-10-22). Documentation-only
 updates can follow that release without changing the running application.
 
 ## Operating the current deployment
@@ -15,6 +15,7 @@ updates can follow that release without changing the running application.
 | Pages/Worker/VPC/tunnel transport and staging boundary | [Private Cloudflare transport](HOST_CLOUDFLARE_SETUP.md) |
 | Encrypted backup coverage, restore and UID preservation | [Backup and recovery](HOST_BACKUP_RESTORE.md) |
 | Queue bounds, scheduling, latency and load testing | [Load handling](load-handling.md) |
+| Public website security scope and accepted limitations | [Public security](PUBLIC_SECURITY.md) |
 | Release validation and remaining accounting limits | [Security readiness](SECURITY_READINESS.md) |
 | Routine release and recovery gates | [Release checklist](release/README.md) |
 
@@ -32,6 +33,8 @@ updates can follow that release without changing the running application.
 
 ## Checkpoint records
 
+- [Public website security qualification](releases/public-security-2026-10-22.json)
+  records the current security release, actual HTTPS checks and operator decisions.
 - [PC migration qualification](releases/pc-host-qualification-2026-10-22.json)
   records the initial migration and recovery checks.
 - [PC latency qualification](releases/pc-latency-2026-10-22.json) records the

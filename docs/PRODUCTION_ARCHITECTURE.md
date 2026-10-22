@@ -1,7 +1,7 @@
 # Current production architecture
 
 Updated 2026-10-22 after the PC migration and submission-startup optimization.
-Verified application release: `91d81a0942e0bf1b4e9debe92487ec1fad109ccf`.
+Verified application release: `b290e8ca074e77b6ea681551fa74ed572e0cad8b`.
 Documentation-only updates do not change that running application release.
 
 - **Frontend:** Cloudflare Pages, `https://newbiegrader.pages.dev`, vanilla SPA.

@@ -4,7 +4,7 @@ Updated 2026-10-22 for the four-worker PC deployment. This describes verified
 controls and their limits; each release must repeat the applicable checks.
 See [current architecture](PRODUCTION_ARCHITECTURE.md),
 [host deployment](HOST_DEPLOYMENT.md) and the
-[latest measured qualification](releases/pc-execution-performance-2026-10-22.json).
+[latest measured qualification](releases/public-security-2026-10-22.json).
 
 ## Execution and identity controls
 
@@ -50,8 +50,8 @@ canaries, cleanup recovery, file-access/verdict checks and read-only worker
 preflights. Test all four allocations concurrently before changing their budgets.
 Use the reviewed host runbook to pause/drain when a check requires idle workers.
 
-The latest code release passed 301 critical tests and 497 full Linux tests with
-zero skips, 127 frontend tests, native isolation canaries and public HTTPS checks.
+The latest code release passed 306 critical tests and 502 full Linux tests with
+zero skips, 127 frontend tests, 12 native isolation canaries and public HTTPS checks.
 These counts describe that checkpoint, not a substitute for future validation.
 
 ## Verify the deployed backend
@@ -84,6 +84,14 @@ four worker slots, durable queue and protected local-file mode. Separately
 check the installed release, units, limits, ownership and actual host probes.
 The fingerprint identifies public source bytes; it does not attest to dependency
 versions, configuration, credentials, file contents or sandbox posture.
+
+## Public website qualification
+
+See [public security](PUBLIC_SECURITY.md) for the current release, browser CSP,
+certificate patch, live database grants and explicitly retained SSH/logout risks.
+The operator approved denying SysV IPC, keyring, BPF and performance tracing in
+sandboxed compiler/runtime processes. Ordinary threads/processes remain supported
+under the existing budgets; programs relying on the denied APIs receive EPERM.
 
 ## Remaining limits
 

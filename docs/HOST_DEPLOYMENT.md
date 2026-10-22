@@ -42,6 +42,15 @@ worker slots; this changes neither its own cgroup budget nor judging semantics.
    using `/usr/local/lib/newbiegrader/venv/bin/python` from the reviewed release.
    Precompiling the trusted runtime avoids parsing the same Python modules for
    every sandbox launch; runtime services continue to disallow bytecode writes.
+   Install public runtime packages with umask `0022`; an operator's private
+   `0077` umask can make packages unreadable by the API account. Keep credentials
+   and operator reports explicitly private. Before activation, verify dependency
+   imports and CA loading as the actual unprivileged API user, for example:
+
+   ```sh
+   runuser -u newbiegrader-api -- /usr/local/lib/newbiegrader/venv/bin/python -c 'import fastapi, supabase, certifi, ssl; ssl.create_default_context(cafile=certifi.where())'
+   ```
+
 2. Transfer configuration privately. Preserve `SESSION_SECRET`, OAuth settings,
    Supabase credentials and cookie settings. Set `GRADER_ACCEPT_JOBS=0` in API and
    worker configuration. Keep `/etc/newbiegrader/worker-enabled` absent.

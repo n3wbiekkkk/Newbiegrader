@@ -108,6 +108,10 @@ establish all-problem latency or simultaneous-user capacity. See
 [load handling](docs/load-handling.md) and the
 [current measurement record](docs/releases/pc-execution-performance-2026-10-22.json).
 
+The current [public website security qualification](docs/PUBLIC_SECURITY.md)
+records the browser protections, sandbox restrictions, patched CA bundle and
+live checks, together with retained SSH/session limitations.
+
 ## Design Principles
 
 1. **One judging engine.** Every verdict flows through the same grader entry points, and no judging logic is duplicated in request handlers.
