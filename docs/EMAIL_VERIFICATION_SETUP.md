@@ -12,15 +12,23 @@ flow OTP ใหม่ทำงานบน production แล้ว
 และยืนยันว่าได้รับอีเมลทดสอบแล้ว การตั้ง SMTP อย่างเดียวไม่ปิดช่องโหว่: `/api/auth/register` และ `/api/auth/password` บน release เดิม
 ตรวจรหัสผ่านเอง release ใหม่ใช้ Supabase Auth ยืนยันอีเมลก่อนออกสิทธิ์แล้ว
 
-## วิธีที่แนะนำ
+## สถานะหลังย้าย PC — 2026-10-22
 
-ใช้ Resend SMTP เป็นช่องทางส่งของ Supabase Auth และใช้ email OTP เป็นหลักฐาน
+ย้าย configuration เดิมและรักษา `SESSION_SECRET` / รุ่น identity ไว้ ทดสอบ session
+ของผู้ดูแลที่ verified อยู่แล้วผ่านเว็บจริง พร้อมส่งงานและเปิดประวัติสำเร็จ
+รอบย้ายเครื่องไม่ได้ส่ง OTP หรือทำ Google/password login ใหม่ จึงไม่ใช้ผลนี้
+รับรองความพร้อมของผู้ให้บริการอีเมลหรือทุก flow การสมัครในปัจจุบัน
+ดู [สถาปัตยกรรมปัจจุบัน](PRODUCTION_ARCHITECTURE.md)
+
+## ตัวอย่างการตั้ง Custom SMTP
+
+ตัวอย่างด้านล่างใช้ Resend SMTP เป็นช่องทางส่งของ Supabase Auth และใช้ email OTP เป็นหลักฐาน
 เจ้าของอีเมลใน backend เดิม ไม่ต้องเปลี่ยน SPA, judge หรือฐานข้อมูลทั้งระบบ
 โค้ดเชื่อม OTP ติดตั้งแล้ว ส่วนโดเมนผู้ส่งและการส่งถึงผู้รับหลากหลายยังต้องเตรียม
 
-Resend Free ระบุ 3,000 อีเมล/เดือน และ 100/วัน ณ วันที่ตรวจ ต้องประเมินทั้ง
-การสมัคร ส่งซ้ำ และกู้บัญชี รวมถึงค่าโดเมนแยกต่างหาก ไม่ได้สมัครแผนเสียเงิน
-หรือเปิด overage ให้ในรอบนี้ ดู [ราคาปัจจุบัน](https://resend.com/pricing)
+ตรวจโควตา ราคา และโดเมนผู้ส่งกับผู้ให้บริการในวันที่จะเปลี่ยนจริง โดยนับทั้ง
+การสมัคร ส่งซ้ำ และกู้บัญชี การย้าย PC ไม่ได้เปลี่ยนผู้ให้บริการ SMTP หรือสมัคร
+แพ็กเกจใหม่ ดู [ข้อมูลผู้ให้บริการ](https://resend.com/pricing)
 
 ### 1. เตรียมโดเมนผู้ส่ง
 
@@ -36,7 +44,8 @@ Resend Free ระบุ 3,000 อีเมล/เดือน และ 100/ว
 
 ### 2. ตั้ง Custom SMTP ใน Supabase
 
-เลือกโครงการ **qblnlfzjublfnnsasgpe** แล้วเปิด Authentication → Emails → SMTP
+เลือกโครงการที่ตรงกับ `SUPABASE_URL` ใน configuration ของ production
+อย่าใช้ project ref ของ MCP/local development เป็นตัวตัดสิน แล้วเปิด Authentication → Emails → SMTP
 Settings (ชื่อเมนูอาจเปลี่ยน) ตั้งค่าตามนี้ใน dashboard:
 
 | ช่อง | ค่า |
@@ -119,4 +128,5 @@ SMTP ที่ส่งถึงจริงยังไม่รับรอง
 เฉพาะจำนวน/boolean พบ identity ครบและผูก Auth user ที่ยืนยันอีเมลตรงกัน
 ไม่อ่านหรือพิมพ์ OTP/รหัสผ่าน/hash/provider subject ส่วน OTP หมดอายุหรือใช้ซ้ำ
 กับ provider จริงยังไม่ได้ตรวจ มีผลผ่านเฉพาะ synthetic regression
-ดูรายละเอียด commit, build, ACL, CI, ขอบเขต backup และข้อจำกัดในรายงานที่ลิงก์ด้านบน
+ดู build/CI และการตรวจปัจจุบันใน [security readiness](SECURITY_READINESS.md)
+และขอบเขตการกู้คืนใน [คู่มือ backup](HOST_BACKUP_RESTORE.md)

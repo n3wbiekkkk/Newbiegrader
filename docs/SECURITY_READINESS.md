@@ -1,51 +1,74 @@
 # Security release checks
 
-This is a record of verified safeguards and remaining launch work, not a claim
-that executing public submissions is fully contained.
+Updated 2026-10-22 for the four-worker PC deployment. This describes verified
+controls and their limits; each release must repeat the applicable checks.
+See [current architecture](PRODUCTION_ARCHITECTURE.md),
+[host deployment](HOST_DEPLOYMENT.md) and the
+[latest measured qualification](releases/pc-latency-2026-10-22.json).
 
-## Execution safeguards
+## Execution and identity controls
 
-- `grader._compile` uses the sandbox launcher on Linux/root, including when the
-  compile memory limit is disabled. Compilers and descendants drop UID/GID.
-- `grader.prepare_workspace` transfers a caller-created workspace and source to
-  the sandbox identity using file descriptors, refusing symlinks. The directory
-  stays `0700` and the source `0600`; no world-writable workspace is required.
-- `grader.build_limits` enables and verifies Linux `no_new_privs` before dropping
-  identity. A hardening or identity-drop failure refuses execution. The flag is
-  inherited by compiler/runtime children and prevents exec from adding setuid,
-  setgid or file-capability privileges. See the
-  [Linux kernel documentation](https://docs.kernel.org/userspace-api/no_new_privs.html).
-- Hidden execution diagnostics are engine-generated. User-controlled streams
-  are redacted at engine, API, history, queue-result and persistence boundaries;
-  public sample diagnostics remain available under the reveal policy.
+- API and worker roles are separate. The API accepts durable jobs and serves
+  authorized results; it cannot execute submissions or read private test files.
+- Each job reserves a unique numeric UID/GID in a root-controlled append-only
+  ledger. Compiler/runtime processes drop supplementary groups, identity and
+  capabilities. Workspaces are private to that identity; UID reservations are
+  shared across the four worker instances and never reset during a release.
+- The launcher verifies `no_new_privs`, applies resource limits, Landlock
+  filesystem rules and seccomp endpoint denial. Production uses the explicitly
+  declared non-netns posture with these mandatory controls. No `CAP_SYS_ADMIN`
+  or privileged container is added to make isolation pass.
+- Per-job cgroups contain descendants, with 640 MiB memory, no swap, 64 tasks
+  and one CPU. Each worker has a separate one-CPU / one-GiB unit and private
+  128 MiB / 4,096-inode workspace tmpfs; the four-worker slice caps aggregate
+  judging at four CPUs / four GiB. Slot release waits for process-tree cleanup.
+- Trusted Python bytecode is prepared before activation. Runtime services cannot
+  replace the root-owned caches. Private fixtures, credentials and references
+  remain outside application releases and sandbox filesystem allowances.
+- Session authorization requires a currently verified, versioned identity.
+  Password/OTP and Google provider linking use the existing identity contract;
+  the PC move preserved identities and `SESSION_SECRET`. That move tested an
+  existing verified session, without claiming a fresh OTP/Google login.
+- Visibility, CSRF, proxy-header trust, body bounds and result allowlists remain
+  enforced. Owner practice feedback and peer/contest restrictions follow the
+  [feedback policy](submission-feedback-policy.md).
 
 ## Required validation
 
-Run the commands in `.github/workflows/ci.yml` before merging. In particular,
-`python tools/run_critical_tests.py` must run inside Linux/root with GCC/G++,
-the application requirements and `httpx` installed. Any skip is a failure.
-The gate includes synthetic compiler/redaction canaries, process-tree cleanup,
-queue admission/lease ownership and proxy-header trust checks. It requires no
-private `problems/`, database credentials, or production network access.
+Run applicable commands in `.github/workflows/ci.yml`. The Linux/root critical
+suite requires GCC/G++, application dependencies and `httpx`; any skip fails.
+It uses synthetic compiler/redaction fixtures, cleanup/ownership canaries and
+fake services, without production credentials or private problem data.
 
-Run the ordinary unittest suite as well. Where a local trusted problem set is
-available, run `tools/validate_problem.py` to verify reference-solution parity.
-Queue SQL tests belong in an empty disposable PostgreSQL database; the workflow
-applies the schema twice before executing `tests/queue_sql.sql`.
+Run ordinary unittests and private reference validation in an authorized
+checkout. SQL/queue concurrency checks run only against an empty disposable
+PostgreSQL database. Production host qualification also requires native kernel
+canaries, cleanup recovery, file-access/verdict checks and read-only worker
+preflights. Test all four allocations concurrently before changing their budgets.
+Use the reviewed host runbook to pause/drain when a check requires idle workers.
 
-### Verify the deployed backend
+The latest code release passed 297 critical tests and 493 full Linux tests with
+zero skips, 127 frontend tests, native isolation canaries and public HTTPS checks.
+These counts describe that checkpoint, not a substitute for future validation.
 
-`GET /api/version` returns `build_sha256`, computed once at process startup from
-the six public backend source files in `server.BUILD_SOURCE_FILES`. Compare it
-with the expected hash from the exact checkout being deployed:
+## Verify the deployed backend
+
+`GET /api/version` returns `build_sha256`, computed at startup from every path in
+`server.BUILD_SOURCE_FILES`. Read that tuple from the exact checkout instead of
+maintaining a separate list that can become stale. This command parses source
+without importing the application, reading `.env` or creating a database client:
 
 ```sh
 python3 - <<'PY'
+import ast
 import hashlib
 from pathlib import Path
+module = ast.parse(Path('server.py').read_text())
+assignment = next(node for node in module.body if isinstance(node, ast.Assign)
+                  and any(isinstance(t, ast.Name) and t.id == 'BUILD_SOURCE_FILES'
+                          for t in node.targets))
 digest = hashlib.sha256()
-for name in ('grader.py', 'server.py', 'judge_runner.py', 'problem_store.py',
-             'container_entrypoint.py', 'worker.py'):
+for name in ast.literal_eval(assignment.value):
     digest.update(name.encode('ascii') + b'\0')
     digest.update(Path(name).read_bytes())
     digest.update(b'\0')
@@ -53,30 +76,22 @@ print(digest.hexdigest())
 PY
 ```
 
-Use an uncached request to the backend after its rebuild, then verify health.
-The hash identifies these source bytes; it does not attest to dependencies,
-container capabilities, configuration, secrets or the actual sandbox posture.
-The calculation excludes environment variables, `.env`, and problem data.
+Compare against an uncached deployed version request and verify health, role,
+four worker slots, durable queue and protected local-file mode. Separately
+check the installed release, units, limits, ownership and actual host probes.
+The fingerprint identifies public source bytes; it does not attest to dependency
+versions, configuration, credentials, file contents or sandbox posture.
 
-## Remaining priorities
+## Remaining limits
 
-1. **Per-job identity and filesystem containment:** compile/runtime jobs still
-   share `nobody`. `0700` does not isolate jobs with the same UID, and
-   `RLIMIT_NPROC` counts processes per UID. `no_new_privs` does not fix either
-   issue or provide mount, PID or syscall isolation.
-2. **Verified identity:** password registration immediately trusts an unverified
-   email, while authorization/data ownership use that email. Email ownership and
-   safe provider linking need a dedicated change, including session migration.
-3. **Network isolation:** compilation deliberately does not require a network
-   namespace. Runtime isolation depends on the configured boot posture and host
-   support. Do not add `CAP_SYS_ADMIN` or privileged mode to satisfy the probe.
-4. **Durability and resource accounting:** local queue mode is process-local;
-   review durable queue cutover, aggregate process-tree memory and quotas before
-   relying on public concurrency. No production schema or queue-mode change was
-   performed as part of these code changes.
+Per-job cgroups enforce whole-job containment, including compiler/runner memory.
+They do not prove exact descendant memory attribution for each individual test.
+The engine's parent-process RSS sampling and per-process address-space limits
+remain distinct from that aggregate containment. Do not claim complete per-test
+memory accounting or blanket closure of earlier audit findings.
 
-An unauthenticated read from the development Mac on 2026-10-17 observed the
-production backend reporting `combined`, queue `local`, problem source
-`supabase`, 68 problems, 0.5 vCPU and 512 MB. These values do not establish its
-capabilities, isolation flags, secret mounts, or worker effectiveness. Verify
-those on the host before a public launch; do not infer them from a healthy API.
+Local combined queue mode remains a development option with process-local state;
+production uses durable database leases and atomic completion/history. A healthy
+API alone proves neither worker effectiveness nor recovery. The file/configuration
+restore rehearsals do not prove complete hosted Database/Auth/Storage recovery;
+see [backup coverage](HOST_BACKUP_RESTORE.md).

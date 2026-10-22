@@ -18,11 +18,12 @@ private identity or publish configuration, catalogs, test bytes or backups.
 - Keep a matching private catalog export and source release. The committed SQL
   defines schema/policies; table exports alone do not restore hosted Auth,
   Storage configuration, database roles or all database service behavior.
-- `backup_state.py --host <verified-host> --ssh-key <key> --include-tunnel
-  --include-problem-files-config` is an additional configuration/UID snapshot;
-  it does not include protected file bytes. The separate `backup_storage.py`
-  reads an explicitly selected Storage recovery source, not the active local
-  file backend.
+- `backup_state.py` is a compatibility tool for a singleton layout. It does not
+  collect all four instance env files or the complete current unit set, and it
+  assumes noninteractive remote sudo. Do not use it as the current PC's complete
+  recovery backup or broaden sudo privileges to make it run. The installed
+  scheduled backup covers the fleet configuration. `backup_storage.py` reads an
+  explicitly selected legacy Storage recovery source, not active local file bytes.
 
 Private operator artifacts default to `~/.local/share/newbiegrader-private/host-backups/`.
 Preserve the existing identity when changing directories; a newly generated key
@@ -54,3 +55,8 @@ off-host backup after each operational or problem-file change.
 durable queue, disk and backup age. Its root-only webhook configuration retains
 the existing token and host label. Use `--check-only` for validation without
 sending a message; schedule the watchdog only on the intended active host.
+
+The latest post-optimization scheduled export was downloaded and decrypted
+off-host: the one-CPU API unit, UID ledger and 12 application table exports were
+readable. This supplements the earlier protected-file restore rehearsal; it
+does not extend the stated Database/Auth/Storage recovery coverage.

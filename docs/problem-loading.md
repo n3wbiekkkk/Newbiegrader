@@ -1,40 +1,51 @@
 # Problem browsing and PDF caching
 
-Opening a Supabase statement PDF resolves metadata and checks visibility before
-reading Storage. It must never call the full problem loader or download hidden
-tests. Judging continues to use the full, hash-verified problem loader.
+Production uses Supabase metadata and protected local file bytes. Opening a
+statement PDF resolves metadata and checks visibility before reading the selected
+public file root. Browsing never loads the private suite. Claimed submissions
+use the full hash-verified loader; local-file mode retains no full-suite cache.
+See [file storage](BACKEND_PROBLEM_FILES.md).
 
-PDF responses use `Cache-Control: private, no-cache`, `Vary: Cookie` and a
-content-based ETag. Browsers may retain bytes, but must revalidate before reuse;
-visibility is checked before returning either 200 or 304. The Pages proxy does
-not share-cache these responses. Existing visibility metadata TTLs still apply.
+## Browser and server caches
 
-The bounded server PDF cache expires after 300 seconds. A metadata refresh
-(normally every 30 seconds) also invalidates PDFs when a problem's `updated_at`
-or `statement_pdf_path` changes, or the problem disappears. **When replacing a
-Storage PDF, also update its problem row** so the metadata version changes.
-Replacing only Storage bytes may keep the previous PDF until cache expiry.
+| Response | Normal browser cache policy | Hidden/admin-visible problem |
+| --- | --- | --- |
+| Detail | `private, max-age=60` | `private, max-age=30` |
+| Public sample | `private, max-age=300` | `private, max-age=30` |
+| PDF | `private, max-age=600` plus content ETag | `private, max-age=30` plus content ETag |
 
-The SPA shares in-flight detail requests between hover and navigation and reuses
-details for 60 seconds. Identity changes clear that cache and prevent old
-responses from populating it or rendering in a new session. This client cache
-does not grant access to PDFs or submissions; those endpoints check visibility.
+These responses vary by Cookie and are not shared through the edge cache.
+Visibility is checked before a PDF response, including a conditional 304 request
+that reaches the API. Browser freshness can avoid a new request until expiry;
+changing visibility cannot retract bytes already returned or cached. Identity
+changes invalidate the SPA's identity-specific caches and delayed responses.
+
+The bounded server PDF cache expires after 300 seconds. Metadata refresh normally
+runs every 30 seconds and invalidates a PDF when `updated_at` or
+`statement_pdf_path` changes, or the problem disappears. Publish new PDF bytes
+and their matching metadata together under the paused/drained publication
+workflow. Replacing bytes alone can leave a previous cached PDF until expiry.
+Legacy Storage-mode readers remain for explicit recovery, not production fallback.
+
+The SPA shares in-flight detail requests between hover/navigation and retains
+details for 60 seconds. That client cache does not authorize another PDF, sample
+or submission request; those endpoints apply their own access policy.
 
 ## Regression checks
 
-These tests use versioned synthetic fixtures and fake Supabase, with no live DB:
+These tests use synthetic fixtures and fake Supabase, without a live database:
 
 ```sh
 python -m unittest discover -s tests -p test_problem_loading.py -v
 node --test tests/test_problem_loading.js
 ```
 
-The Python tests cover zero hidden-test downloads while browsing, numeric routes,
-authorization before conditional responses, PDF invalidation independent of
-test hashes, expiry, and full-test loading for judging. The JavaScript tests
-cover deduplication, expiry/retry, identity changes and stale navigation responses.
+They cover zero hidden-file downloads while browsing, numeric resolution,
+authorization before conditional responses, PDF version/TTL invalidation,
+full-suite loading for judging, client request deduplication, expiry/retry,
+identity changes and stale navigation responses. Cache/privacy and protected-file
+critical tests remain part of the full release gates.
 
-For latency comparisons, measure the same public detail and PDF URLs from the
-same browser/network before and after deployment. Record warm/cold cache state,
-status, transferred bytes and request counts separately. A few samples are not
-a population-wide latency guarantee.
+Compare latency from the same browser/network and URLs. Record warm/cold state,
+status, bytes transferred and request counts. The startup optimization and
+measured submission latency are documented in [the host runbook](HOST_DEPLOYMENT.md).

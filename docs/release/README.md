@@ -1,5 +1,9 @@
 # Release and recovery checks
 
+The [documentation index](../README.md) identifies current guides and dated
+qualification records. The verified application is release `2ae8aed`; subsequent
+documentation-only commits do not imply another application rollout.
+
 Use the [host runbook](../HOST_DEPLOYMENT.md),
 [current architecture](../PRODUCTION_ARCHITECTURE.md) and
 [backup/recovery guide](../HOST_BACKUP_RESTORE.md). Keep credentials, private

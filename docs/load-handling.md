@@ -1,5 +1,7 @@
 # Load handling and rollout
 
+Current production is the four-worker Ubuntu PC described in
+[the architecture](PRODUCTION_ARCHITECTURE.md) and [host runbook](HOST_DEPLOYMENT.md).
 The frontend stays static and FastAPI remains the API. Judge work now runs in supervised subprocesses; compilation, submissions, playground runs, and rejudges share host execution slots. Tests within a submission run serially. Output streams are bounded during collection, and timeout/cancellation waits for process cleanup before returning a slot.
 
 ## Queue modes and roles
@@ -13,7 +15,7 @@ Roles in database mode:
 | Role | Command | Responsibility |
 |---|---|---|
 | `combined` | `python server.py` or Uvicorn | HTTP API and judge consumers |
-| `api` | `uvicorn server:app --host 0.0.0.0 --port 8000` | HTTP only; playground requests also delegate to workers |
+| `api` | `uvicorn server:app --host 127.0.0.1 --port 8000` | HTTP only; playground requests also delegate to workers |
 | `worker` | `python worker.py` | Judge consumers without an HTTP listener |
 
 The Docker entrypoint selects the command from `GRADER_ROLE` and uses `PORT` for HTTP. Separate roles require database mode and an explicit stable `SESSION_SECRET`. All API replicas must share that secret. Each deployment needs the same problem packages, engine version, and appropriate Supabase environment. Keep the service-role key server-side.
@@ -22,16 +24,24 @@ The Docker entrypoint selects the command from `GRADER_ROLE` and uses `PORT` for
 
 Defaults derive from cgroup CPU/RAM limits. The scheduler reserves interpreter/API memory and budgets each active job for its supervisor plus the larger compiler/test address-space ceiling, including the enabled languages’ memory multipliers and virtual headroom. It caps requested worker count to both CPU and memory capacity. `GRADER_JUDGE_JOBS` no longer enables concurrent tests: effective test parallelism is one. Large worker/memory overrides cannot override the host safety calculation. Inspect `/api/version` for effective values.
 
-For a 512 MB host, the corrected default declared cap is **85 MB**, not 256 MB:
-170 MB API reserve + 340 MB per job fits within 512 MB. Python's threshold is
-212.5 MB and its RLIMIT_AS is 276 MB; compiler RLIMIT_AS remains 256 MB. These are
-per-process limits and a scheduler estimate, **not a hard aggregate process-tree
-limit**. Output buffers, cached problem data and descendants can exceed estimates.
-Per-job cgroup memory/pids/CPU and workspace bounds remain public-launch gates.
+Production has four separate one-CPU / one-GiB worker units and a four-CPU /
+four-GiB judge slice. Each unit runs one job with serial tests. Its private tmpfs
+is 128 MiB / 4,096 inodes; each job also receives a cgroup ceiling of 640 MiB,
+64 tasks, one CPU and no swap. The API has a separate one-CPU / 320 MiB budget.
+Declared problem memory is capped at 128 MiB with existing language allowances;
+overall judging timeout is 240 seconds.
 
-OS file locks coordinate processes that share `GRADER_CAPACITY_DIR` (default: `newbiegrader-capacity` under the system temporary directory). Processes sharing one machine allocation must use the same directory and matching capacity settings. Containers sharing one CPU/RAM allocation need a shared writable mount at that directory. Independent hosts have independent slot budgets and coordinate job ownership through PostgreSQL. Container CPU/RAM limits must reflect the resources actually reserved for each container.
+Exactly four jobs can execute at once; the durable admission cap allows 25 more
+queued jobs. Each ordinary account has at most one queued/running job. Queue
+capacity is a backlog bound, not a measured simultaneous-user capacity.
 
-Keep one judge execution on the documented 0.5 vCPU/512 MB server. For a first capacity trial, use **2 vCPU/2 GB** with `GRADER_MEMORY_CAP_MB=512`, leave worker count automatic, and keep serial tests. For larger contest bursts, trial **4 vCPU/4 GB** with the same per-test cap after measuring. These are starting configurations, not measured production capacity guarantees. Increasing queue depth accommodates a backlog; adding usable CPU/RAM increases judging capacity.
+File locks coordinate processes sharing one resource allocation. The production
+worker units have separate allocations and separate
+`GRADER_CAPACITY_DIR=/var/lib/newbiegrader/capacity/worker-N` directories. Sharing
+one single-slot directory would serialize the whole fleet. Their durable UID
+ledger remains shared and append-only. Independent hosts have separate capacity
+budgets and coordinate job ownership through database leases. Never enable two
+fleets during a host cutover without the reviewed fencing/drain workflow.
 
 ## Browsing latency and compile warmup
 
@@ -52,7 +62,7 @@ detail render, so repeated opens are served from the browser cache.
 Build the optional C++ PCH as root after a compiler/toolchain update:
 
 ```sh
-sudo python3 tools/build_cxx_pch.py
+sudo /usr/local/lib/newbiegrader/venv/bin/python tools/build_cxx_pch.py
 ```
 
 The default destination is `/usr/local/lib/newbiegrader/pch/cxx`, which is
@@ -61,13 +71,33 @@ readable by the Landlocked compile sandbox. The grader adds `-I` only when
 compile. Rebuild the PCH whenever `g++` or its headers change, and remove it if
 the toolchain becomes incompatible.
 
+## Submission latency
+
+Prepare trusted Python bytecode before each release with
+`deploy/host/precompile_runtime.py` and the dedicated Python 3.11 venv. Workers
+attempt the next durable claim immediately after completion; idle polling backs
+off to one second and outages to 30 seconds. Browser polls for active/head-of-queue
+jobs cap their scheduled interval at one second, while deeper queues retain
+backoff. Network request time is additional to the scheduled polling interval.
+
+On the same synthetic 17-case workload, precompilation reduced worker wall time
+from 7.6–8.3 seconds to 3.4–3.8 seconds. Public Python/C/C++ acceptance/history
+checks subsequently observed 0.34–0.42 seconds to admit and 5.53–5.60 seconds
+from submission to an observed result. See the
+[measurement record](releases/pc-latency-2026-10-22.json).
+
+These are scoped short-job measurements. The eight-job fleet probe confirms four
+overlapping workers; neither probe establishes sustained capacity for 30–50
+users. Rough classroom planning estimates still require a representative load
+test. Heavy solutions and backlogs retain their actual execution/queue time.
+
 ## Rollout order
 
-1. Complete the [security release checks](SECURITY_READINESS.md) on Linux. Windows checks and embedded PostgreSQL assertions have been run locally; they do not validate the production Linux sandbox.
+1. Complete the [security release checks](SECURITY_READINESS.md) and native host checks on Linux. Synthetic CI and other-platform checks do not replace actual host isolation tests.
 2. Trial the new revision against a disposable database and test accounts. Build the image, run all checks, and exercise both local and database modes.
 3. For a local-to-database transition, stop admissions, drain jobs if practical, and stop all old local-mode processes. Have the maintainer apply the complete idempotent `supabase/schema.sql` in Supabase SQL Editor. Do not run a mixed local/database fleet. Legacy running rows without ownership receive an expired lease so database workers can reclaim them; live leased ownership is left alone.
-4. Start one combined instance in database mode, verify health/version, admission, judging, history, ownership, and redaction, then add dedicated workers or API instances as needed. API-only mode requires an available worker fleet.
-5. Deploy the backend before frontend changes that depend on it. Verify effective limits and watch queue wait, errors, memory, and throughput. Upgrade paid infrastructure only after choosing an allocation and budget.
+4. For the current host, follow the four-instance activation in the host runbook. Verify health/version, admission, judging, history, ownership and redaction before opening service. API-only mode requires the qualified worker fleet.
+5. Deploy the backend before frontend changes that depend on it. Verify effective limits and watch queue wait, errors, memory, and throughput. Change allocations only after repeating native qualification and measuring the resulting capacity.
 
 To roll back queue mode, stop every database consumer and resolve/drain in-flight jobs first. Do not enable local recovery while database workers are alive.
 

@@ -1,6 +1,8 @@
 # Current production architecture
 
-Updated 2026-10-22 after migration to the native PC backend.
+Updated 2026-10-22 after the PC migration and submission-startup optimization.
+Verified application release: `2ae8aedd40c4ff4ef0ef267ab7c78f8d2c44ef09`.
+Documentation-only updates do not change that running application release.
 
 - **Frontend:** Cloudflare Pages, `https://newbiegrader.pages.dev`, vanilla SPA.
 - **Transport:** same-origin Pages Function → private `newbiegrader-pc-production`
@@ -9,13 +11,26 @@ Updated 2026-10-22 after migration to the native PC backend.
   listener and no retired-host fallback.
 - **Backend:** Ubuntu 26.04 x86_64 PC, Intel i5-10400T (6 physical cores /
   12 threads), about 7.1 GiB RAM and SSD storage; dedicated Python 3.11 venv.
-  API and judging use separate systemd services.
+  API and judging use separate systemd services. The API has one CPU / 320 MiB;
+  the system Python is preserved and the project uses Python 3.11.17.
 - **Judging:** exactly four `newbiegrader-worker@N.service` instances, one job
   per unit and serial tests within each job. Each has one CPU / 1 GiB, with an
   aggregate four-CPU / 4 GiB slice. Private workspace tmpfs, per-job cgroups,
   unique reserved UIDs, Landlock and seccomp remain mandatory. Per-problem limits
   and language memory allowances are unchanged; declared memory is capped at
   128 MiB and the overall submission deadline remains 240 seconds.
+- **Admission:** four executing jobs plus up to 25 queued jobs; one active job
+  per ordinary account. Queue size and measured job throughput do not establish
+  a tested number of simultaneous users.
+- **Startup/feedback latency:** precompiled trusted runtime, immediate next-job
+  claim and one-second scheduled polling cap for active/head-of-queue jobs.
+  The public 17-case Python/C/C++ checks took 5.53–5.60 seconds from submit to
+  observed result; larger jobs retain their actual runtime. See the
+  [measurement record](releases/pc-latency-2026-10-22.json).
+- **Availability:** boot-enabled Tailscale, API, tunnel and all four workers;
+  actual reboot recovery was verified. A dedicated sleep configuration disables
+  suspend/hibernation. Tailnet device-key expiry is managed separately in its
+  admin console and must be reviewed for unattended operation.
 - **Database, identities and durable queue:** the existing Supabase project;
   no database migration or identity rewrite was needed to move hosts.
 - **Files:** protected local public/private roots under

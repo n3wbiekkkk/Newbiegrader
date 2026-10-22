@@ -72,6 +72,19 @@ Application rollback uses a verified release on this PC with the current
 protected files and UID ledger. Pause/drain before changing a release. The
 application has no fallback to a retired hosting provider.
 
+## Watchdog configuration
+
+Install `/etc/newbiegrader/host.env` as root:root 0600 with the complete fleet:
+
+```ini
+NEWBIEGRADER_WORKER_UNITS="newbiegrader-worker@1.service newbiegrader-worker@2.service newbiegrader-worker@3.service newbiegrader-worker@4.service"
+```
+
+The watchdog reads this through its unit's `EnvironmentFile`. Without this
+setting its compatibility default checks the old singleton unit. Preserve the
+root-only webhook/token and host label, run `--check-only` with the same host
+environment, then enable the backup/alert/health timers on the active PC.
+
 ## Automatic recovery and availability
 
 Enable Tailscale, Nginx, API, the project tunnel and exactly worker instances 1–4
@@ -81,7 +94,10 @@ For an always-on desktop host, install `server-sleep.conf.example` as
 `/etc/systemd/sleep.conf.d/60-newbiegrader-server.conf`; this disables automatic
 suspend/hibernation. Power must remain available; service startup does not turn
 a physically powered-off PC on. Preserve existing Tailscale authentication and
-verify device-key expiry policy separately from service enablement.
+verify device-key expiry policy separately from service enablement. The latest
+2026-10-22 readback reports expiry on 2027-04-20. Review or disable device-key
+expiry in the authorized tailnet administration for long-term unattended use;
+local service enablement does not change that policy.
 
 ## Submission startup latency
 
@@ -93,6 +109,12 @@ need their actual runtime. See the [measurement record](releases/pc-latency-2026
 
 Workers immediately attempt the next durable claim after completing work, while
 idle/outage backoff remains bounded. Browser polls for running jobs and the head
-of the queue stay within one second; deeper queues retain traffic backoff. The
+of the queue cap their scheduled wait at one second, with network time additional;
+deeper queues retain traffic backoff. The
 API has one CPU independently of the unchanged four-CPU judge slice. All test
 cases, sandbox boundaries, language allowances and declared limits are preserved.
+
+The public HTTPS verification used an existing verified operator session; it
+did not repeat a fresh Google/OTP login. Both Python/C/C++ results and linked
+history were checked. See [security validation](SECURITY_READINESS.md) for the
+source fingerprint and the limits of these checks.

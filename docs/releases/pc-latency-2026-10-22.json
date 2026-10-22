@@ -36,5 +36,42 @@
     "linux_skips": 0,
     "frontend_tests": 127,
     "problem_reference_validation": "89/89"
+  },
+  "public_https_verification": {
+    "application_release": "2ae8aedd40c4ff4ef0ef267ab7c78f8d2c44ef09",
+    "problem": "sum_even",
+    "cases": 17,
+    "existing_verified_operator_session": true,
+    "fresh_login_tested": false,
+    "languages": {
+      "python": {
+        "admission_s": 0.424,
+        "queue_wait_s": 0.994,
+        "worker_execution_s": 3.761,
+        "observed_submit_to_result_s": 5.594
+      },
+      "c": {
+        "admission_s": 0.344,
+        "queue_wait_s": 0.443,
+        "worker_execution_s": 3.673,
+        "observed_submit_to_result_s": 5.529
+      },
+      "cpp": {
+        "admission_s": 0.399,
+        "queue_wait_s": 0.897,
+        "worker_execution_s": 3.892,
+        "observed_submit_to_result_s": 5.601
+      }
+    },
+    "all_accepted_and_history_verified": true
+  },
+  "privileged_fleet_probe": {
+    "jobs": 8,
+    "successful": 8,
+    "distinct_workers": 4,
+    "peak_overlapping_worker_intervals": 4,
+    "unique_private_sandbox_uids": 8,
+    "batch_wall_s": 3.931,
+    "evidence": "Persisted completed-job timestamps and results; explicit bounded verification jobs, ordinary per-user limits unchanged"
   }
 }

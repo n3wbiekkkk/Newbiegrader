@@ -1,136 +1,91 @@
-# Problem storage migration: local `problems/` → Supabase
+# Problem metadata and file storage
 
-Status: remote path implemented and feature-flagged; local files remain the
-default and are never deleted. Cutover is one environment variable after a
-verified import.
+Current production uses `GRADER_PROBLEM_SOURCE=supabase` for metadata and
+`GRADER_FILE_STORAGE=local` for PDF/sample/test bytes. The Ubuntu PC serves the
+protected files; Supabase retains metadata, identities, submissions and the
+durable queue. See [current architecture](PRODUCTION_ARCHITECTURE.md) and the
+[file-storage contract](BACKEND_PROBLEM_FILES.md).
 
-Neither `problems/` nor `examples/` is versioned in this repository: the source
-of truth is Supabase and the repo is public, so test fixtures and reference
-solutions must not ship here. Both directories stay on disk for local work
-(`GRADER_PROBLEM_SOURCE=local`) and are listed in `.gitignore`. CI has no
-problem set, so problem-dependent test modules and `tools/validate_problem.py`
-skip themselves when `problems/` is absent; run the full suite from a checkout
-that has `problems/`.
+The filename records the original metadata integration. Its former instructions
+for uploading production fixtures to Storage and rolling back by changing one
+environment variable are superseded by this document.
 
-## What moved where
+## Current mapping
 
-| Local artifact | Supabase location | Visibility |
+| Authoring artifact | Production location | Access |
 | --- | --- | --- |
-| `problems/<slug>/config.json` | `problems` row (`slug`, `no`, `title`, `time_limit`, `memory_limit`, `checker`, `tolerance`, `difficulty`, `tags`, `samples`, `hidden`) | metadata readable only via API; RLS limits direct reads to published, non-hidden rows |
-| `problems/<slug>/statement.md` | `problems.statement_md` | public for published problems |
-| `statement.pdf` | Storage `judge-assets/<slug>/statement.pdf` (row keeps `statement_pdf_path`) | private bucket; streamed by the API with server credentials |
-| `tests/<name>.in/.out` where `<name>` ∈ `config.samples` | `problems.samples_data` (`[{name,input,expected}]`) | public samples only, served via `/api/problems/{pid}/sample/{name}` |
-| `tests/<name>.in/.out` where `<name>` ∉ `samples` (1001+) | Storage `judge-assets/<slug>/tests/<name>.in|.out`; row keeps a **manifest only** (`hidden_tests: [{name,sha256,size_in,size_out}]` — never contents) | private; downloaded server-side with the service-role key |
-| `examples/<id>_ref.*` | **not migrated** — local tooling for test generation/validation; not versioned (kept on disk only) | never public |
+| `config.json` limits, slug, number, level, tags and visibility | Supabase `problems` metadata | API applies publication/contest policy; server controls writes |
+| Statement prose | `problems.statement_md` | Authorized detail response |
+| Statement PDF | Protected public file root; row selects `statement_pdf_path` | API checks visibility before serving bytes |
+| Explicit sample input/output | Protected public file root; row retains sample names | Only named public samples through the sample API |
+| Other test input/output | Protected private file root; row retains names, sizes and hashes | Trusted judge worker; feedback follows the practice/contest policy |
+| Reference solutions and input validators | Private operator authoring packages | Excluded from Git and application releases |
 
-Integrity: `problems.tests_hash` stores `grader.tests_hash(...)`. The loader
-recomputes the hash after downloading and **refuses to judge on mismatch**
-(fail closed) — a tampered row or partial upload can never become Accepted.
+Legacy Storage objects and `samples_data` may still exist. They are unused by
+production local-file reads. Removing them requires a separately scoped cleanup;
+this host migration did not delete them. New local-file publication writes empty
+legacy sample-byte copies while retaining canonical sample names.
 
-## Migrations
+## Authoring and publication
 
-`supabase/schema.sql` (append-only, re-runnable) gained the 2026-10-16 block:
+Follow [making-problems.md](making-problems.md), including strict checks for new
+problems, canonical PDF tooling and sample synchronization. Keep `problems/`,
+`examples/`, credentials, catalogs and recovery files private.
 
-- `problems` table (slug PK, unique `no`, RLS on).
-- Policy `problems_public_read`: `select` for `anon/authenticated` only where
-  `is_published and not hidden`. All writes are `service_role`-only.
-- Private Storage bucket `judge-assets` created when the `storage` schema
-  exists (guarded, so the plain-Postgres CI job still applies the file twice).
-  No anon/authenticated policy is created on `storage.objects` for this bucket.
-
-Apply in Supabase SQL Editor → paste `supabase/schema.sql` → run (idempotent).
-
-## Import
+Use the existing importer with the exact protected file roots in its trusted
+server environment. It publishes file bytes to disk first and updates Postgres
+metadata afterward. Its name reflects the retained database integration.
 
 ```sh
-SUPABASE_URL=... SUPABASE_KEY=...   # service_role key, server-side only
-python3 tools/import_problems_supabase.py --dry-run   # no writes, summary only
-python3 tools/import_problems_supabase.py             # all problems
-python3 tools/import_problems_supabase.py --problem hanoi
-python3 tools/import_problems_supabase.py --renumber  # after a local renumber
+python tools/import_problems_supabase.py --problem new_problem --strict --dry-run
+# Only after authorized backup, admission pause, drain and worker stop:
+python tools/import_problems_supabase.py --problem new_problem --strict
 ```
 
-- `--renumber` is for when `tools/number_problems.py --renumber` changed the local
-  numbers: `no int unique` means a permutation cannot be written slug-by-slug, so
-  this first parks every remote `no` on unique negatives (invisible: the API sorts
-  unnumbered rows last), then the normal upsert writes the canonical numbers.
+`--dry-run` writes nothing and does not prove a successful publication.
+`--statements-only` updates prose/PDF without changing tests, limits or visibility.
+The live CLI refuses cloud-file publication and refuses local-file `--prune`.
+An unchanged tests hash does not remove the need to reconcile selected files.
 
-- Upserts Postgres rows (`on_conflict slug`), uploads every test file and the PDF
-  to `judge-assets` (upsert on the same deterministic paths).
-- Unchanged problems (same `tests_hash`) are reported `skipped`; storage objects
-  are still reconciled, so a partial/interrupted import heals on re-run.
-- Refuses to create duplicate problem numbers (`no` conflicts fail, never
-  silently overwritten). Local files are never modified or deleted.
-- Exit code ≠ 0 when anything failed; summary lists created / updated /
-  skipped / failed.
+Publishers serialize changes to files and metadata; there is no transaction
+across both systems. Before reopening admission, verify complete package/hash
+parity, selected PDFs, sample bytes, visibility and encrypted off-host recovery.
+Restart all four workers after a file publication and reload API metadata as
+required. Preserve permanent slugs, history and the newest UID ledger.
 
-## Runtime switch (cutover)
+Catalog renumbering requires an explicitly approved committed map. Follow the
+numbering section in the authoring guide; do not use the old automatic
+`--renumber` examples as authorization to change an existing catalog.
 
-```
-GRADER_PROBLEM_SOURCE=supabase       # default: local (unchanged behavior)
-GRADER_PROBLEM_BUCKET=judge-assets   # optional override
-GRADER_PROBLEM_CACHE_TTL=30          # metadata TTL seconds, 0 disables
-```
+## Runtime behavior
 
-- Boot in supabase mode WITHOUT Supabase credentials refuses to start (no
-  silent local fallback). `GET /api/version -> system.problem_source` shows the
-  active source at runtime.
-- Problem rows are TTL-cached and versioned by `tests_hash`. Boot and the
-  periodic refresh load ROWS only (no Storage downloads); hidden test bytes
-  are cached per problem on first use and re-fetched only when the hash
-  changes — a refresh costs one small SELECT, never ~1700 file downloads.
-- Contest policy rows (`contests` table) share one 20s TTL cache across
-  visibility, reveal and listing checks, so sample clicks and submits don't
-  pay a live SELECT each; admin upsert/delete busts it immediately.
-- The isolated runner (`judge_runner --job`) receives the fully-resolved problem
-  (tests included) through the trusted server-side job payload; it never talks
-  to Supabase and never reads client-supplied paths.
-- Failure semantics: unknown problem → 404 / job error; missing or corrupt
-  assets, storage outage, DB error, hash mismatch → explicit 500 / job error
-  (`problem store unavailable`). Judging never proceeds with an empty test
-  suite, and an unavailable hidden test can never yield Accepted.
-- Unpublished problems (`is_published = false`) are admin-only everywhere,
-  including inside contests. Unpublish by setting the column in Supabase;
-  workers re-check before executing and refuse unpublished problems.
+- Missing Supabase credentials in metadata mode refuse startup. There is no
+  automatic fallback to the private local authoring checkout.
+- Browsing uses metadata and selected public files, without loading hidden tests.
+  Metadata refresh and PDF version invalidation are described in
+  [problem-loading.md](problem-loading.md).
+- Each claimed submission revalidates its problem metadata, publication status,
+  selected file bytes and tests hash against the admitted version. Local-file
+  mode retains no full private-suite cache between jobs.
+- The isolated runner receives the trusted resolved suite. It has no database
+  credentials and accepts no client-selected filesystem paths.
+- An absent, unsafe, corrupted or mismatched asset is an infrastructure error;
+  an incomplete or empty suite never becomes Accepted.
+- Visibility and live feedback policy are separate. Disclosure checks bypass the
+  contest cache where required; see [submission-feedback-policy.md](submission-feedback-policy.md).
 
-Rollback: set `GRADER_PROBLEM_SOURCE=local` and restart. Local directories were
-kept intact, so old behavior resumes immediately; history/queue tables are
-unaffected.
+For application rollback, pause/drain and use a compatible verified release on
+the PC with the current file generation and append-only UID ledger. Changing
+`GRADER_PROBLEM_SOURCE` alone is not an approved production rollback.
 
-## Safety invariants (implemented + tested)
+## Schema and verification
 
-1. Samples/hidden split preserved: only `samples` list members are public.
-2. Hidden test contents exist only in the private bucket and the judged job
-   payload; DB rows store names/sizes/sha256 only.
-3. RLS: no public policy grants beyond published/non-hidden `select`.
-4. No public URLs are created for any bucket object; PDFs stream through the API.
-5. Engine untouched: verdicts come from `grader.judge_test` via
-   `server.run_submission` exactly as before (verdict-parity test asserts the
-   same `tests_hash` and AC for reference solutions on both sources).
-6. `visual` truth preservation: no changes to grader.py judging logic beyond
-   carrying `is_published` through `Problem` (default `True` locally).
+The existing append-only `supabase/schema.sql` defines metadata, identity and
+queue permissions. No schema change was needed for the PC migration. Future DDL
+must be reviewed and applied by the maintainer through Supabase SQL Editor.
+Never replay an import or migration merely to check documentation.
 
-## Environment summary
-
-| Variable | Required for | Secret? |
-| --- | --- | --- |
-| `SUPABASE_URL`, `SUPABASE_KEY` (service_role) | import, supabase source, history | yes (server only) |
-| `GRADER_PROBLEM_SOURCE` | cutover flag (`local` default) | no |
-| `GRADER_PROBLEM_BUCKET`, `GRADER_PROBLEM_CACHE_TTL` | tuning | no |
-
-Never expose `SUPABASE_KEY` to the frontend; the Cloudflare proxy and browser
-bundle need nothing new.
-
-## Verification performed
-
-- `python3 tools/import_problems_supabase.py --dry-run` → every problem clean.
-- New suite `tests/test_problems_supabase.py` (17 tests): import idempotency,
-  duplicate-number refusal, malformed row, hash-mismatch, missing asset,
-  storage outage (all fail closed), unpublished visibility, hidden-redaction,
-  verdict parity (AC/WA/CE on fake Supabase), RLS/policy assertions on the SQL.
-- Full repo checks: compileall + frontend checks + existing unittest suites
-  (see PR/commit notes for the run log).
-
-Remote (live Supabase) verification is pending valid credentials — apply the
-schema, run the import, then judge the reference submissions once before
-flipping `GRADER_PROBLEM_SOURCE`.
+CI uses synthetic fixtures and fake Supabase, plus an empty disposable PostgreSQL
+instance for real SQL/ownership checks. Public Git contains no private problem
+set. Run the full private-package checks from an authorized operator checkout;
+use the official file verifier and current host checks before production changes.

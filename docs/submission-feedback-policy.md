@@ -49,8 +49,9 @@ suite as a secret contest suite. Changing visibility cannot erase downloads,
 screenshots, a user's source or earlier cached responses. Current-policy reads
 reduce new disclosure; they cannot retract prior disclosure.
 
-S03 isolation, S04 aggregate resource limits, S05 identity trust and durable queue
-rollout remain independent production gates. Revealing practice diagnostics does
+Job isolation, resource accounting, verified identity and durable queue ownership
+remain independent release requirements. Current controls and remaining memory
+accounting limits are recorded in [security readiness](SECURITY_READINESS.md). Revealing practice diagnostics does
 not authorize filesystem reads or network access. Peer source access follows the
 separate policy below; peer access never includes private test diagnostics.
 

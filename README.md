@@ -49,12 +49,12 @@ Practice submissions show input, expected output and actual output for failed ca
 
 The catalog contains 89 problems, numbered by a calibrated difficulty order under an explicit operator-approved migration. Every problem carries a `level` (1–5) that reflects the technique it actually demands, and the coarse easy/medium/hard badge is derived from it. Stable slug IDs and submission history are preserved; the [number map](docs/catalog/problem-numbers-2026-10-22.csv) records previous numbers.
 
-Every problem ships with a reference solution, and every recorded verdict can be traced to the exact test set and grader version that produced it.
+Private authoring packages contain reference solutions. Recorded verdicts identify the test set and grader version; private fixtures and references are excluded from this public repository.
 
 ## Features
 
 ### Strict and honest limits
-Wall-clock timeouts, measured peak memory and process isolation (resource limits, privilege drop and a network namespace where available). Each test reports its own time and memory usage.
+Wall-clock timeouts, measured peak memory and bounded execution. The production Linux host uses private job identities, Landlock filesystem rules, seccomp network endpoint denial, per-job cgroups and bounded workspaces. Each test reports its own time and memory figures; see the [security checks and accounting limits](docs/SECURITY_READINESS.md).
 
 ### Undisclosed tests
 Contest hidden tests return verdicts and resource figures. In practice, an owner can inspect input, expected output and actual output for failed cases. Upcoming/running contest problems withhold that extra practice feedback. The same policy applies to responses, history and persisted results.
@@ -95,6 +95,15 @@ Plain HTML, CSS and JavaScript. No bundler, no transpiler and no framework.
 | `supabase/` | Database schema with append-only, re-runnable migrations |
 
 Host capacity is read from the service or container at startup, and worker counts, memory ceilings, queue bounds and timeouts are derived from it automatically. Current production is Cloudflare Pages + an Ubuntu PC with four isolated judge workers. Problem PDFs, public samples and private tests are served from backend disk (`GRADER_FILE_STORAGE=local`); Supabase holds metadata, auth and the durable queue. See [current architecture](docs/PRODUCTION_ARCHITECTURE.md), [backend file storage](docs/BACKEND_PROBLEM_FILES.md), and the [host runbook](docs/HOST_DEPLOYMENT.md).
+
+The four workers execute four jobs concurrently, with up to 25 additional
+queued jobs. The API has one CPU / 320 MiB; judging has a separate four-CPU /
+four-GiB budget and a 128 MiB declared-memory cap. For the measured 17-case
+short-job workload, trusted runtime precompilation reduced worker time from
+about eight seconds to 3.4–3.8 seconds; public submit-to-result checks took
+5.53–5.60 seconds. These measurements do not establish all-problem latency or
+simultaneous-user capacity. See [load handling](docs/load-handling.md) and the
+[measurement record](docs/releases/pc-latency-2026-10-22.json).
 
 ## Design Principles
 
