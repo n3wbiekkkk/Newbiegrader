@@ -91,9 +91,16 @@ class AlertWatchdog(unittest.TestCase):
         state = {"broken": []}
         payload = alert.build_payload(broken, state)
         self.assertIn("judge worker", payload["text"])
+        self.assertIn("ALERT", payload["text"])
         self.assertEqual(payload["broken"], ["judge worker"])
         recovered = alert.build_payload(healthy, {"broken": ["judge worker"]})
+        self.assertIn("RECOVERED", recovered["text"])
+        self.assertIn("was failing: judge worker", recovered["text"])
         self.assertNotIn("judge worker", recovered["broken"])
+
+    def test_the_host_label_appears_in_the_message(self):
+        payload = alert.build_payload([], {"broken": []}, "PC 192.168.100.24")
+        self.assertIn("host=PC 192.168.100.24", payload["text"])
 
     def test_state_file_is_written_private(self):
         with tempfile.TemporaryDirectory() as tmp:

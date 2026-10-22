@@ -68,8 +68,17 @@ def _read_secret(path: Path) -> dict:
         if not url:
             raise SystemExit("Alert webhook file has no url")
         return {"url": url, "to": str(data.get("to") or "").strip(),
-                "token": str(data.get("token") or "").strip()}
-    return {"url": raw, "to": "", "token": ""}
+                "token": str(data.get("token") or "").strip(),
+                "label": str(data.get("label") or "").strip()}
+    return {"url": raw, "to": "", "token": "", "label": ""}
+
+
+def _secret_label(path: Path) -> str:
+    """The operator's name for this host, if the webhook file carries one."""
+    try:
+        return _read_secret(path).get("label", "")
+    except (SystemExit, OSError):
+        return ""
 
 
 def _get_json(url: str, timeout: float = 15.0):
@@ -267,18 +276,25 @@ def collect_checks() -> list[dict]:
     return checks
 
 
-def build_payload(checks: list[dict], state: dict) -> dict:
+def build_payload(checks: list[dict], state: dict, label: str = "") -> dict:
     broken = [c for c in checks if not c["ok"]]
-    lines = [f"Newbiegrader host alert — {len(broken)} check(s) failing"]
-    for check in broken:
-        lines.append(f"• {check['name']}: {check['detail']}")
-    lines.append(f"host={socket.gethostname()} at {dt.datetime.now(dt.timezone.utc).isoformat()}")
+    previous = state.get("broken", [])
+    if broken:
+        lines = [f"Newbiegrader ALERT — {len(broken)} check(s) failing"]
+        for check in broken:
+            lines.append(f"• {check['name']}: {check['detail']}")
+    else:
+        lines = ["Newbiegrader RECOVERED — every check is passing again"]
+        if previous:
+            lines.append(f"was failing: {', '.join(previous)}")
+    where = label or socket.gethostname()
+    lines.append(f"host={where} at {dt.datetime.now(dt.timezone.utc).isoformat()}")
     return {
         "text": "\n".join(lines),
-        "host": socket.gethostname(),
+        "host": where,
         "broken": [c["name"] for c in broken],
         "checks": checks,
-        "previous_state": state.get("broken", []),
+        "previous_state": previous,
     }
 
 
@@ -305,6 +321,9 @@ def main(argv=None) -> int:
                         help="report the checks and exit without contacting a webhook")
     parser.add_argument("--dry-run", action="store_true",
                         help="print the webhook payload instead of sending it")
+    parser.add_argument("--label", default="",
+                        help="how this host is named in the message (default: the "
+                             "label in the webhook file, else the hostname)")
     args = parser.parse_args(argv)
 
     checks = collect_checks()
@@ -328,14 +347,15 @@ def main(argv=None) -> int:
     if args.check_only:
         return 0 if healthy else 1
     if transition:
-        payload = build_payload(checks, state)
+        payload = build_payload(checks, state,
+                                args.label or _secret_label(args.webhook_file))
         if args.dry_run:
             print(json.dumps(payload, ensure_ascii=False, indent=2))
         else:
             secret = _read_secret(args.webhook_file)
             payload["line_to"] = secret.get("to", "")
             try:
-                _post_json(secret["url"], payload)
+                _post_json(secret["url"], payload, secret.get("token", ""))
                 print(f"alert sent ({len(broken)} failing check(s))")
             except (urllib.error.URLError, OSError) as exc:
                 print(f"alert delivery failed: {type(exc).__name__}: {exc}", file=sys.stderr)
