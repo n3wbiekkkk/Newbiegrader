@@ -56,7 +56,7 @@ Documentation-only updates do not change that running application release.
   off-host. See the recovery guide for the exact coverage and limits.
 - **Discord presence:** a separate unprivileged service checks the public HTTPS
   identity path, local API and all four workers every 30 seconds. It displays
-  `Newbiegrader website` while online and goes invisible when those checks fail.
+  `https://newbiegrader.pages.dev` while online and goes invisible when those checks fail.
   Discord/network outages can delay or obscure status; it is an indicator rather
   than independent off-host monitoring. Alert routing stays in private configuration.
 - **Watchdog:** the PC checks API, all four workers, tunnel, queue, disk, backup
