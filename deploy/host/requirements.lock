@@ -1,4 +1,4 @@
-# Verified host CPython 3.11 runtime; generated with uv 0.13.1.
+# Verified host CPython 3.13 runtime; generated with uv 0.13.5.
 annotated-doc==0.0.5
 annotated-types==0.8.0
 anyio==4.15.1
