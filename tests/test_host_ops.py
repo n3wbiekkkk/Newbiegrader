@@ -163,7 +163,7 @@ class AlertWatchdog(unittest.TestCase):
 
 
 class EncryptedBackup(unittest.TestCase):
-    def test_every_schema_table_is_listed(self):
+    def test_durable_schema_tables_are_listed(self):
         tables = backup.public_tables(ROOT / "supabase" / "schema.sql")
         for expected in ("submissions", "problems", "users", "judge_jobs",
                          "contests", "profiles", "reports", "admins"):
@@ -175,6 +175,12 @@ class EncryptedBackup(unittest.TestCase):
             self.assertTrue(relative.startswith("etc/"), relative)
         self.assertIn("allocated-uids", backup.UID_LEDGER)
         self.assertIn("tunnel-token", " ".join(backup.CONFIG_FILES))
+
+    def test_ephemeral_sessions_are_excluded_from_data_exports(self):
+        tables = backup.public_tables(ROOT / "supabase" / "schema.sql")
+        self.assertIn("users", tables)
+        self.assertNotIn("web_sessions", tables)
+        self.assertIn("create table if not exists public.web_sessions", (ROOT / "supabase/schema.sql").read_text())
 
     def test_the_private_identity_is_never_read_by_the_host_script(self):
         source = (ROOT / "deploy/host" / "newbiegrader-backup.py").read_text(encoding="utf-8")

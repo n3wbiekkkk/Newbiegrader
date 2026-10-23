@@ -241,12 +241,12 @@ class EmailAuth(unittest.TestCase):
         self.assertIsNone(self.client.get("/api/auth/me").json()["user"])
         self.assertEqual(self.finish().status_code, 400)
 
-    def test_verified_session_db_outage_is_closed_and_logout_still_works(self):
+    def test_verified_session_db_outage_never_reports_successful_logout(self):
         self.db.rows("users").append(verified_row())
         self.client.post("/api/auth/password", json={"email": EMAIL, "password": PASSWORD})
         with patch.object(self.db, "table", side_effect=RuntimeError("synthetic outage")):
             self.assertEqual(self.client.get("/api/profile").status_code, 503)
-            self.assertEqual(self.client.post("/api/auth/logout").status_code, 200)
+            self.assertEqual(self.client.post("/api/auth/logout").status_code, 503)
 
     def test_real_application_middleware_rejects_legacy_and_revoked_sessions(self):
         self.db.rows("users").append(verified_row())
@@ -293,7 +293,8 @@ class EmailAuth(unittest.TestCase):
 
     def test_missing_identity_migration_never_uses_password_only_fallback(self):
         self.db.rows("users").append(verified_row())
-        self.client.cookies.set("ng_session", signed_cookie({"user": {"email": EMAIL, "auth_version": 1}}))
+        self.assertEqual(self.client.post("/api/auth/password", json={
+            "email": EMAIL, "password": PASSWORD}).status_code, 200)
         with patch.object(self.db, "table", side_effect=RuntimeError("missing identity columns")):
             self.assertEqual(self.client.get("/api/profile").status_code, 503)
 

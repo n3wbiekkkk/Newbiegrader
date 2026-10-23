@@ -268,6 +268,8 @@ class _AuthRPC:
 
     def _execute(self):
         p = self.params
+        if self.name.startswith("auth_session_"):
+            return self._session()
         if self.name == "auth_email_budget":
             now = dt.datetime.now(dt.timezone.utc).timestamp()
             email, network = p["p_email_key"], p["p_network_key"]
@@ -311,6 +313,61 @@ class _AuthRPC:
         else:
             raise AssertionError(self.name)
         return {k: row[k] for k in ("email", "name", "auth_version")}
+
+    def _session(self):
+        p = self.params
+        self.db.table("web_sessions")
+        rows = self.db.rows("web_sessions")
+        now = dt.datetime.now(dt.timezone.utc).timestamp()
+        if self.name == "auth_session_revoke":
+            for row in rows:
+                if row["token_hash"] in p["p_token_hashes"] and row.get("revoked_at") is None:
+                    row.update(revoked_at=now, expires_at=now)
+            return {"ok": True}
+        self.db.table("users")
+        account = next((u for u in self.db.rows("users") if u["email"] == p.get("p_email")), None)
+        if self.name == "auth_session_start":
+            if not account or not account.get("email_verified_at") or account.get("auth_version") != p["p_auth_version"]:
+                return {"valid": False}
+            for row in rows:
+                if row["token_hash"] in p["p_previous"]:
+                    row.update(revoked_at=now, expires_at=now)
+            rows[:] = [r for r in rows if r["expires_at"] > now]
+            if any(r["token_hash"] == p["p_token_hash"] for r in rows):
+                raise ValueError("duplicate session")
+            until = now + 365 * 86400 if p["p_remember"] else None
+            rows.append({"token_hash": p["p_token_hash"], "user_email": p["p_email"],
+                "auth_version": p["p_auth_version"], "created_at": now,
+                "expires_at": now + 300 if p["p_pending"] else max(now + 60 * 86400, until or 0),
+                "remember_until": until, "activated": not p["p_pending"],
+                "handoff_until": now + 300 if p["p_pending"] else None,
+                "provider": p["p_provider"], "picture": p["p_picture"], "revoked_at": None})
+            return {"valid": True}
+        if self.name != "auth_session_identity":
+            raise AssertionError(self.name)
+        row = next((r for r in rows if r["token_hash"] == p["p_token_hash"]), None)
+        account = next((u for u in self.db.rows("users") if row and u["email"] == row["user_email"]), None)
+        if not row or not account or row.get("revoked_at") is not None or row["expires_at"] <= now \
+                or not account.get("email_verified_at") or row["auth_version"] != account.get("auth_version"):
+            return {"valid": False}
+        if p["p_mode"] == "finish":
+            if row["activated"] or not row["handoff_until"] or row["handoff_until"] <= now:
+                return {"valid": False}
+            if row["remember_until"] is not None:
+                row["remember_until"] = now + 365 * 86400
+            row.update(activated=True, handoff_until=None,
+                       expires_at=max(now + 60 * 86400, row["remember_until"] or 0))
+            for other in rows:
+                if other is not row and other["token_hash"] in p["p_previous"]:
+                    other.update(revoked_at=now, expires_at=now)
+        elif not row["activated"] or (p["p_mode"] == "remember" and
+                (row["remember_until"] is None or row["remember_until"] <= now)):
+            return {"valid": False}
+        elif row["expires_at"] < now + 45 * 86400:
+            row["expires_at"] = now + 60 * 86400
+        return {"valid": True, "user": {"email": account["email"],
+            "name": account.get("name") or account["email"], "auth_version": account["auth_version"],
+            "provider": row["provider"], "picture": row["picture"]}}
 
 
 class _FakeStorage:

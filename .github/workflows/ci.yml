@@ -144,5 +144,10 @@ jobs:
       - name: Verify concurrent email budgets and identity claims
         run: python3 tests/auth_concurrency.py
 
+      - name: Verify revocable browser sessions and concurrent handoffs
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -f tests/session_sql.sql
+          python3 tests/session_concurrency.py
+
       - name: Verify concurrent queue claims and crashed-worker lease recovery
         run: python3 tests/queue_concurrency.py

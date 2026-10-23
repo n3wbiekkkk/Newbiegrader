@@ -1698,95 +1698,123 @@ _session_secret = os.environ.get("SESSION_SECRET", "").strip()
 if not _session_secret:
     _session_secret = secrets.token_hex(32)
     print("[web] WARNING: SESSION_SECRET not set, sessions die on restart", file=sys.stderr)
-_login_signer = URLSafeTimedSerializer(_session_secret, salt="login-once-v2")
-# "Remember me": a long-lived signed cookie holding only the email. When the
-# session cookie is gone (browser cleanup, expiry) but this one survives,
-# GET /api/auth/restore silently re-establishes the session. It is HttpOnly +
-# Secure + SameSite=lax like the session cookie, and dies with logout.
-# NOTE: like sessions, it only survives restarts when SESSION_SECRET is set.
-_remember_signer = URLSafeTimedSerializer(_session_secret, salt="remember-me-v2")
+_login_signer = URLSafeTimedSerializer(_session_secret, salt="login-once-v3")
+_remember_signer = URLSafeTimedSerializer(_session_secret, salt="remember-me-v3")
 REMEMBER_MAX_AGE = 365 * 24 * 3600
 _REMEMBER_COOKIE = "ng_remember"
+_SESSION_KEY = "auth_session"
 
 
 def _cookie_secure() -> bool:
     return os.environ.get("SESSION_SECURE", "true").lower() != "false"
 
 
-def _issue_remember(resp, user: dict) -> None:
-    resp.set_cookie(_REMEMBER_COOKIE, _remember_signer.dumps({"user": user}),
-                    max_age=REMEMBER_MAX_AGE, httponly=True,
-                    samesite="lax", secure=_cookie_secure(), path="/")
+def _session_hash(token) -> str:
+    if not isinstance(token, str) or not re.fullmatch(r"[A-Za-z0-9_-]{43}", token):
+        return ""
+    return hashlib.sha256(token.encode("ascii")).hexdigest()
 
 
-def _set_remember_choice(resp, user: dict, remember: bool) -> None:
-    """Long-lived login is explicit opt-in; opting out clears an older cookie."""
+def _set_remember_choice(resp, token: str, remember: bool) -> None:
     if remember is True:
-        _issue_remember(resp, user)
+        resp.set_cookie(_REMEMBER_COOKIE, _remember_signer.dumps({"sid": token}),
+                        max_age=REMEMBER_MAX_AGE, httponly=True, samesite="lax",
+                        secure=_cookie_secure(), path="/")
     else:
         resp.delete_cookie(_REMEMBER_COOKIE, path="/", httponly=True,
                            samesite="lax", secure=_cookie_secure())
 
 
-def _read_remember(request: Request) -> dict:
+def _read_remember(request: Request) -> str:
     try:
-        data = _remember_signer.loads(request.cookies.get(_REMEMBER_COOKIE, ""),
-                                      max_age=REMEMBER_MAX_AGE)
-        user = data.get("user")
-        return user if isinstance(user, dict) else {}
+        value = _remember_signer.loads(request.cookies.get(_REMEMBER_COOKIE, ""),
+                                       max_age=REMEMBER_MAX_AGE).get("sid")
+        return value if _session_hash(value) else ""
     except Exception:
+        return ""
+
+
+def _browser_session_hashes(request: Request) -> list[str]:
+    return list(dict.fromkeys(value for value in (
+        _session_hash(request.session.get(_SESSION_KEY)),
+        _session_hash(_read_remember(request))) if value))
+
+
+def _revoke_browser_sessions(request: Request) -> None:
+    hashes = _browser_session_hashes(request)
+    if hashes:
+        result = _auth_rpc("auth_session_revoke", {"p_token_hashes": hashes})
+        if result.get("ok") is not True:
+            raise HTTPException(status_code=503, detail="logout unavailable; please retry")
+
+
+def _start_web_session(request: Request, user: dict, remember: bool, *, pending=False) -> str:
+    token = secrets.token_urlsafe(32)
+    result = _auth_rpc("auth_session_start", {
+        "p_token_hash": _session_hash(token), "p_email": user["email"],
+        "p_auth_version": user["auth_version"], "p_remember": remember is True,
+        "p_pending": pending, "p_provider": user.get("provider", "password"),
+        "p_picture": str(user.get("picture") or "")[:2048],
+        "p_previous": _browser_session_hashes(request)})
+    if result.get("valid") is not True:
+        raise HTTPException(status_code=401, detail="please sign in again")
+    return token
+
+
+def _session_identity(token, *, mode="session", previous=()) -> dict:
+    hashed = _session_hash(token)
+    if not hashed:
         return {}
-
-
-def _identity_row(email: str) -> dict:
-    if _sb is None:
-        raise HTTPException(status_code=503, detail="identity service unavailable")
-    try:
-        result = _sb.table("users").select(
-            "email,name,email_verified_at,auth_version").eq("email", email).limit(1).execute()
-        return (result.data or [{}])[0]
-    except Exception:
-        # Do not include provider/DB exception text in auth logs or responses.
-        raise HTTPException(status_code=503, detail="identity service unavailable") from None
-
-
-def _current_identity(user) -> dict:
-    """Every protected API route gets a currently verified, versioned identity."""
+    result = _auth_rpc("auth_session_identity", {
+        "p_token_hash": hashed, "p_mode": mode, "p_previous": list(previous)})
+    if result.get("valid") is not True:
+        return {}
+    user = result.get("user")
     if not isinstance(user, dict) or type(user.get("auth_version")) is not int \
             or user["auth_version"] < 1:
-        return {}
+        raise HTTPException(status_code=503, detail="identity service unavailable")
     try:
         email = email_auth.normalize_email(user.get("email"))
     except ValueError:
-        return {}
-    row = _identity_row(email)
-    if not row.get("email_verified_at") or row.get("auth_version") != user["auth_version"]:
-        return {}
-    return {"email": email, "name": row.get("name") or email,
-            "picture": user.get("picture", ""), "provider": user.get("provider", ""),
-            "auth_version": row["auth_version"]}
+        raise HTTPException(status_code=503, detail="identity service unavailable") from None
+    return {"email": email, "name": user.get("name") or email,
+            "picture": user.get("picture") or "", "provider": user.get("provider") or "",
+            "auth_version": user["auth_version"]}
 
 
 class VerifiedIdentityMiddleware:
-    """Must run INSIDE SessionMiddleware, before any route reads session.user."""
+    """Validate current DB session + identity in one RPC; persist only opaque SID.
+
+    SessionMiddleware must wrap this middleware. Removing user before its send
+    hook prevents old cookie-only backends from accepting new sessions on rollback.
+    """
     def __init__(self, app):
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] == "http" and scope.get("session", {}).get("user"):
-            if scope.get("path") == "/api/auth/logout":
-                scope["session"].pop("user", None)
-            else:
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        session = scope.get("session", {})
+
+        async def opaque_send(message):
+            if message["type"] == "http.response.start":
+                session.pop("user", None)
+            await send(message)
+
+        if scope.get("path") != "/api/auth/logout":
+            session.pop("user", None)  # Legacy identity cookies never upgrade silently.
+            token = session.get(_SESSION_KEY)
+            if token:
                 try:
-                    user = await asyncio.to_thread(_current_identity, scope["session"]["user"])
+                    user = await asyncio.to_thread(_session_identity, token)
                 except HTTPException:
-                    return await JSONResponse({"detail": "identity service unavailable"}, 503, headers={"Cache-Control": "no-store"})(
-                        scope, receive, send)
+                    return await JSONResponse({"detail": "identity service unavailable"}, 503,
+                        headers={"Cache-Control": "no-store"})(scope, receive, opaque_send)
                 if user:
-                    scope["session"]["user"] = user
+                    session["user"] = user
                 else:
-                    scope["session"].pop("user", None)
-        await self.app(scope, receive, send)
+                    session.pop(_SESSION_KEY, None)
+        await self.app(scope, receive, opaque_send)
 
 
 def _json_response(payload: dict):
@@ -1868,8 +1896,9 @@ async def auth_callback(request: Request, code: str = "", state: str = "", error
             "p_name": str(info.get("name") or email)[:50]})
         if identity.get("link_required"):
             return RedirectResponse(FRONTEND_URL + "/#/login?email_proof=required", status_code=307)
-        request.session["user"] = {**identity, "picture": info.get("picture", ""),
-                                   "provider": "google"}
+        user = {**identity, "picture": info.get("picture", ""), "provider": "google"}
+        remember = request.session.get("oauth_remember") is True
+        sid = await asyncio.to_thread(_start_web_session, request, user, remember, pending=True)
     except Exception:
         return RedirectResponse(FRONTEND_URL + "/#/login?email_proof=required", status_code=307)
     next_url = request.session.pop("oauth_next", "#/")
@@ -1878,46 +1907,29 @@ async def auth_callback(request: Request, code: str = "", state: str = "", error
     # Hand the session to the frontend origin via one-time token, so the
     # session cookie is set first-party (works even when browsers block
     # third-party cookies). /api/auth/finish is proxied by the frontend host.
-    token = _login_signer.dumps({"user": request.session["user"],
-                                 "remember": request.session.pop("oauth_remember", False),
-                                 "jti": secrets.token_urlsafe(16)})
+    token = _login_signer.dumps({"sid": sid, "remember": remember})
     request.session.clear()
     return RedirectResponse(
         FRONTEND_URL + "/api/auth/finish?" + urlencode({"token": token, "next": next_url}),
         status_code=307)
 
 
-_used_login_jti: Dict[str, float] = {}
-_login_jti_lock = threading.Lock()
-
-
 @app.get("/api/auth/finish")
 def auth_finish(request: Request, token: str = "", next: str = "#/"):
     try:
         data = _login_signer.loads(token, max_age=300)
-        user = _current_identity(data.get("user"))
-        jti = str(data.get("jti") or "")
-        if not user.get("email") or not jti:
-            raise ValueError("no email")
-        now = time.monotonic()
-        # One-time use: replaying a logged/proxied token must fail.
-        with _login_jti_lock:
-            if jti in _used_login_jti:
-                raise ValueError("reused token")
-            # Never evict a still-valid token: fail closed at capacity instead.
-            for k in list(_used_login_jti):
-                if now - _used_login_jti.get(k, 0) > 600:
-                    _used_login_jti.pop(k, None)
-            if len(_used_login_jti) >= 20000:
-                raise ValueError("login replay cache full")
-            _used_login_jti[jti] = now
     except Exception:
         return RedirectResponse(FRONTEND_URL + "/#/?login=failed", status_code=307)
-    if not next.startswith("#/"):
+    sid = data.get("sid") if isinstance(data, dict) else None
+    user = _session_identity(sid, mode="finish", previous=_browser_session_hashes(request))
+    if not user:
+        return RedirectResponse(FRONTEND_URL + "/#/?login=failed", status_code=307)
+    if not isinstance(next, str) or not next.startswith("#/"):
         next = "#/"
-    request.session["user"] = user
+    request.session.clear()
+    request.session.update({_SESSION_KEY: sid, "user": user})
     resp = RedirectResponse(FRONTEND_URL + "/#/" + next.lstrip("#/"), status_code=307)
-    _set_remember_choice(resp, request.session["user"], data.get("remember") is True)
+    _set_remember_choice(resp, sid, data.get("remember") is True)
     return resp
 
 
@@ -1954,18 +1966,20 @@ def auth_restore(request: Request) -> dict:
     """
     if (request.session.get("user") or {}).get("email"):
         return {"ok": True, "restored": False}
-    user = _current_identity(_read_remember(request))
+    sid = _read_remember(request)
+    user = _session_identity(sid, mode="remember")
     if not user:
         return {"ok": True, "restored": False}
-    request.session["user"] = user
+    request.session.update({_SESSION_KEY: sid, "user": user})
     return {"ok": True, "restored": True}
 
 
 @app.post("/api/auth/logout")
 def auth_logout(request: Request) -> dict:
+    _revoke_browser_sessions(request)
     request.session.clear()
     resp = _json_response({"ok": True})
-    _set_remember_choice(resp, {}, False)
+    _set_remember_choice(resp, "", False)
     return resp
 
 
@@ -2211,6 +2225,8 @@ async def auth_register(request: Request):
         raise HTTPException(status_code=403, detail="this email is reserved; use Google")
     config = _email_provider_config()
     await asyncio.to_thread(_email_budget, request, email, "request")
+    # Replacing this browser's auth context must also invalidate copied cookies.
+    await asyncio.to_thread(_revoke_browser_sessions, request)
     # Do not keep a preselected password or issue an authenticated session.
     request.session.clear()
     try:
@@ -2221,7 +2237,7 @@ async def auth_register(request: Request):
     resp = _json_response({"ok": True, "verification_required": True,
                            "message": "check your email for a verification code"})
     resp.status_code = 202
-    _set_remember_choice(resp, {}, False)
+    _set_remember_choice(resp, "", False)
     return resp
 
 
@@ -2255,9 +2271,11 @@ async def auth_email_verify(request: Request):
     name = str(body.get("name") or "").strip()[:50] or email.split("@")[0]
     user = await asyncio.to_thread(_auth_rpc, "auth_email_complete", {
         "p_email": email, "p_subject": subject, "p_password_hash": pw_hash, "p_name": name})
-    request.session["user"] = {**user, "provider": "password", "picture": ""}
-    resp = _json_response({"ok": True, "user": request.session["user"]})
-    _set_remember_choice(resp, request.session["user"], body.get("remember") is True)
+    user = {**user, "provider": "password", "picture": ""}
+    sid = await asyncio.to_thread(_start_web_session, request, user, body.get("remember") is True)
+    request.session.update({_SESSION_KEY: sid, "user": user})
+    resp = _json_response({"ok": True, "user": user})
+    _set_remember_choice(resp, sid, body.get("remember") is True)
     return resp
 
 
@@ -2294,10 +2312,11 @@ async def auth_password(request: Request):
     _clear_account_attempts(email)
     user = {"email": account["email"], "name": account.get("name") or email,
             "picture": "", "provider": "password", "auth_version": account["auth_version"]}
+    sid = await asyncio.to_thread(_start_web_session, request, user, body.get("remember") is True)
     request.session.clear()
-    request.session["user"] = user
+    request.session.update({_SESSION_KEY: sid, "user": user})
     resp = _json_response({"ok": True, "user": user})
-    _set_remember_choice(resp, user, body.get("remember") is True)
+    _set_remember_choice(resp, sid, body.get("remember") is True)
     return resp
 
 

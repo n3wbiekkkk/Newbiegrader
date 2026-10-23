@@ -104,7 +104,8 @@ def public_tables(schema: Path) -> list[str]:
         re.IGNORECASE)
     for match in pattern.finditer(text):
         name = match.group(1).lower()
-        if name not in names:
+        # Ephemeral credentials must not be resurrected by data restoration.
+        if name != "web_sessions" and name not in names:
             names.append(name)
     return names
 
