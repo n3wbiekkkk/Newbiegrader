@@ -49,7 +49,7 @@ from starlette.responses import RedirectResponse
 from itsdangerous import URLSafeTimedSerializer
 
 try:
-    from supabase import create_client
+    from database_client import create_database_client as create_client
     _has_supabase_lib = True
 except ImportError:  # optional dep: history disabled without it
     create_client = None
@@ -83,7 +83,7 @@ logging.getLogger("uvicorn.access").addFilter(AuthQueryLogFilter())
 STATIC_DIR = ROOT / "static"
 
 BUILD_SOURCE_FILES = ("grader.py", "server.py", "judge_runner.py", "judge_execution.py", "job_resources.py", "problem_store.py", "backend_problem_files.py",
-                      "container_entrypoint.py", "worker.py", "job_sandbox.py", "email_auth.py")
+                      "container_entrypoint.py", "worker.py", "job_sandbox.py", "email_auth.py", "database_client.py")
 
 
 def _source_fingerprint(root: Path = ROOT) -> str:
@@ -562,7 +562,7 @@ if not RUNNER_CHILD and _sb_url and _sb_key:
         print("[web] supabase lib not installed, history disabled", file=sys.stderr)
     else:
         try:
-            _sb = create_client(_sb_url, _sb_key)
+            _sb = create_client(_sb_url, _sb_key, role=GRADER_ROLE)
         except Exception as e:
             print(f"[web] supabase disabled: {e}", file=sys.stderr)
             _sb = None
