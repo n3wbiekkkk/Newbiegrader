@@ -116,7 +116,7 @@ def health_ok(public_url: str, units: list[str]) -> bool:
 
 
 def presence(online: bool) -> dict:
-    return {"since": None, "activities": [{"name": "https://newbiegrader.pages.dev", "type": 3}]
+    return {"since": None, "activities": [{"name": "Newbiegrader website", "type": 3}]
             if online else [], "status": "online" if online else "invisible", "afk": False}
 
 

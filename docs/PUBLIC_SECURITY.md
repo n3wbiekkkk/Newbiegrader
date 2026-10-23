@@ -68,7 +68,7 @@ errors can never recur; scheduled monitoring remains enabled.
 
 A separate unprivileged Discord presence service now checks local API health,
 all four worker units and the public HTTPS identity path every 30 seconds. The
-bot displays `https://newbiegrader.pages.dev` while healthy and Invisible/Offline otherwise.
+bot displays `Newbiegrader website` while healthy and Invisible/Offline otherwise.
 It starts automatically at boot and retains the existing token through a systemd
 credential; the API and judge accounts do not receive that credential. Its ceiling
 is 64 MiB / 5% CPU, separate from unchanged judging budgets. The existing watchdog

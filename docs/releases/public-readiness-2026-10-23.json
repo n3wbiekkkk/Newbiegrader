@@ -107,14 +107,13 @@
     "timers_enabled": true,
     "discord_presence": "online; boot enabled",
     "temporary_operator_headers_and_qa": "removed",
-    "discord_presence_activity": "https://newbiegrader.pages.dev",
+    "discord_presence_activity": "Newbiegrader website",
     "discord_presence_check_seconds": 30,
     "discord_presence_memory_limit_mb": 64,
     "discord_presence_cpu_quota_percent": 5,
     "alert_destination": "operator-selected Discord #bot channel; permissions verified",
     "manual_discord_test_message_sent": false,
-    "final_activity_change_restarted_api_or_workers": false,
-    "activity_followup": "Operator subsequently requested the website URL as bot activity; judging source and budgets unchanged"
+    "final_activity_change_restarted_api_or_workers": false
   },
   "recovery": {
     "latest_deployed_configuration_backup_authenticated_off_host": true,
