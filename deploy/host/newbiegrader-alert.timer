@@ -1,0 +1,14 @@
+[Unit]
+Description=Newbiegrader health watchdog schedule
+
+[Timer]
+OnBootSec=2m
+OnUnitActiveSec=5m
+AccuracySec=30s
+# A run that was missed because the machine was off happens right after it
+# comes back.
+Persistent=true
+Unit=newbiegrader-alert.service
+
+[Install]
+WantedBy=timers.target

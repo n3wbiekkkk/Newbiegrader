@@ -1,0 +1,53 @@
+[Unit]
+Description=Newbiegrader database judge worker %i (explicit cutover gate)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+# The trusted supervisor drops each compiler/program to a private numeric UID.
+# No CAP_SYS_ADMIN, Docker socket, host network namespace changes or shell exec.
+User=root
+Slice=newbiegrader-judge.slice
+WorkingDirectory=/opt/newbiegrader/current
+EnvironmentFile=/etc/newbiegrader/worker-%i.env
+ExecCondition=/usr/bin/test -f /etc/newbiegrader/worker-enabled
+ExecStart=/usr/local/lib/newbiegrader/venv/bin/python -u worker.py
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+KillMode=control-group
+Delegate=cpu memory pids
+DelegateSubgroup=manager
+MemoryMax=1G
+MemorySwapMax=0
+CPUQuota=100%
+TasksMax=128
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_CHOWN CAP_DAC_OVERRIDE CAP_KILL CAP_FOWNER
+AmbientCapabilities=CAP_SETUID
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateMounts=yes
+TemporaryFileSystem=/var/lib/newbiegrader/workspaces:rw,nosuid,nodev,size=128M,nr_inodes=4096,mode=0755
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+ReadWritePaths=/var/lib/newbiegrader
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=200
+
+[Install]
+WantedBy=multi-user.target

@@ -3,11 +3,22 @@
 # so repeat visits skip revalidation (~0.4s + RTT per file). index.html itself
 # stays revalidated — it is the entry that points at the current ?v= stamps.
 # Meta files (vercel.json legacy, _headers itself) are never versioned: no-cache.
+# Static HTML is served by Pages, outside the API's security middleware.
+# Same-origin API/PDF frames and the existing fonts/avatars remain supported.
+/*
+  Content-Security-Policy: default-src 'self'; base-uri 'none'; object-src 'none'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self'; frame-src 'self' https://challenges.cloudflare.com; frame-ancestors 'self'; form-action 'self' https://accounts.google.com
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: SAMEORIGIN
+  Referrer-Policy: no-referrer
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
+  Strict-Transport-Security: max-age=31536000
 /app.js
   Cache-Control: public, max-age=31536000, immutable
 /styles.css
   Cache-Control: public, max-age=31536000, immutable
 /config.js
+  Cache-Control: public, max-age=31536000, immutable
+/turnstile.js
   Cache-Control: public, max-age=31536000, immutable
 /logo.png
   Cache-Control: public, max-age=31536000, immutable

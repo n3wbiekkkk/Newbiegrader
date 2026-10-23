@@ -24,7 +24,7 @@ class AuthCookies(unittest.TestCase):
         self.addCleanup(self.stack.close)
         self.stack.enter_context(patch.dict(os.environ, {"SESSION_SECURE": "true"}))
         for key, value in {"_sb": FakeSupabase(), "_login_tries": {}, "_account_tries": {},
-                           "_used_login_jti": {}, "GOOGLE_CLIENT_ID": "synthetic-client"}.items():
+                           "GOOGLE_CLIENT_ID": "synthetic-client"}.items():
             self.stack.enter_context(patch.object(server, key, value))
         app = FastAPI()
         app.middleware("http")(server._security_headers)

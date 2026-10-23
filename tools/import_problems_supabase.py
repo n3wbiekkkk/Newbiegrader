@@ -18,6 +18,7 @@ or deleted.
     python3 tools/import_problems_supabase.py --problem hanoi --problem thai_time
     python3 tools/import_problems_supabase.py  # all problems
     python3 tools/import_problems_supabase.py --renumber  # after renumbering locally
+    python3 tools/import_problems_supabase.py --numbers-only  # catalog order only
 
 Exit code 0 only when nothing failed.
 """
@@ -193,6 +194,56 @@ def import_one(client, bucket_name: str, slug: str, dry: bool) -> tuple[str, str
     return status, f"tests={len(prob.tests)} hash={tests_hash}"
 
 
+def import_numbers_only(client, slugs: list[str], dry: bool) -> tuple[int, int, list[str]]:
+    """Publish only the catalog position and the difficulty band.
+
+    A renumbering changes where a problem sits in the list, not the problem:
+    the tests, the samples, the statement and the PDF are byte-identical, so
+    this mode never touches a file. The `no` column is UNIQUE, so every
+    existing number is first parked on a negative value; the final numbers are
+    then written in one pass.
+    """
+    local: dict[str, int] = {}
+    bands: dict[str, str] = {}
+    for slug in slugs:
+        try:
+            prob = grader.load_problem(slug)
+        except SystemExit as e:
+            return 0, 0, [f"{slug}: loader: {e}"]
+        if prob.no <= 0:
+            return 0, 0, [f"{slug}: no number in config.json"]
+        local[slug] = prob.no
+        bands[slug] = prob.difficulty or ""
+    if len(set(local.values())) != len(local):
+        return 0, 0, ["duplicate numbers in the local catalog"]
+
+    res = client.table("problems").select("slug,no").execute()
+    rows = getattr(res, "data", None) or []
+    remote = {str(r.get("slug")): int(r.get("no") or 0) for r in rows}
+    if set(remote) != set(local):
+        missing = sorted(set(local) - set(remote))
+        extra = sorted(set(remote) - set(local))
+        return 0, 0, [f"catalog differs from the database (missing {missing}, unknown {extra})"]
+
+    moved = [slug for slug, no in local.items() if remote.get(slug) != no]
+    if not moved:
+        return 0, 0, []
+    if dry:
+        return len(moved), 0, []
+    try:
+        _park_numbers(client)
+        # Every row is parked, so every row has to be written back: a slug whose
+        # number did not change still holds its negative parking value.
+        for slug in local:
+            client.table("problems").update(
+                {"no": local[slug], "difficulty": bands[slug],
+                 "updated_at": dt.datetime.now(dt.timezone.utc).isoformat()}
+            ).eq("slug", slug).execute()
+    except Exception as e:
+        return 0, len(moved), [f"numbers-only update failed: {e}"]
+    return len(moved), 0, []
+
+
 def import_statement_one(client, bucket_name: str, slug: str, dry: bool) -> tuple[str, str]:
     """Update public prose/PDF only; never upsert tests or publication flags.
 
@@ -247,11 +298,26 @@ def _park_numbers(client) -> int:
     normal import writes the canonical local numbers. Negatives are invisible
     to clients (the API sorts unnumbered rows last) and are replaced within the
     same run, so only a short window can see them.
+
+    The parking values start below the lowest number already in the table, so
+    a table that still holds negatives from an interrupted run is parked
+    safely instead of colliding with them.
     """
     res = client.table("problems").select("slug,no").execute()
     rows = getattr(res, "data", None) or []
-    for i, row in enumerate(sorted(rows, key=lambda r: int(r.get("no") or 0)), start=1):
-        client.table("problems").update({"no": -i}).eq("slug", row["slug"]).execute()
+    if not rows:
+        return 0
+    used = {int(r.get("no") or 0) for r in rows}
+    # Below zero and below everything already in use, so a table that still
+    # holds negatives from an interrupted run is parked safely.
+    nxt = min(min(used), 0) - 1
+    for row in sorted(rows, key=lambda r: int(r.get("no") or 0)):
+        value = nxt
+        while value in used:
+            value -= 1
+        client.table("problems").update({"no": value}).eq("slug", row["slug"]).execute()
+        used.add(value)
+        nxt = value - 1
     return len(rows)
 
 
@@ -306,8 +372,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--prune", action="store_true",
                     help="also delete Storage test objects for this problem that no "
                          "longer exist locally (stale after a shrinking test set)")
+    ap.add_argument("--numbers-only", action="store_true",
+                    help="publish only the catalog number and the difficulty band; "
+                         "never touch tests, samples, statements or visibility")
     args = ap.parse_args(argv)
-    if not args.dry_run and problem_store.backend_problem_files.backend() != "local":
+    if args.numbers_only and (args.statements_only or args.prune or args.renumber):
+        ap.error("--numbers-only cannot be combined with --statements-only/--prune/--renumber")
+    if not args.dry_run and not args.numbers_only and \
+            problem_store.backend_problem_files.backend() != "local":
         ap.error("production file publishing requires GRADER_FILE_STORAGE=local and private backend roots")
     if args.prune and problem_store.backend_problem_files.backend() == "local":
         ap.error("local immutable file versions cannot be pruned by this tool")
@@ -367,6 +439,22 @@ def main(argv: list[str] | None = None) -> int:
     if args.statements_only and client is None:
         print("statement-only updates require reachable remote metadata", file=sys.stderr)
         return 2
+    if args.numbers_only:
+        if client is None:
+            print("numbers-only updates require reachable remote metadata", file=sys.stderr)
+            return 2
+        moved, failed, errors = import_numbers_only(client, slugs, dry=args.dry_run)
+        for error in errors:
+            print(f"x numbers-only: {error}", file=sys.stderr)
+        if errors:
+            return 1
+        mode = "DRY-RUN " if args.dry_run else ""
+        print(f"{mode}numbers-only: {moved} of {len(slugs)} problems would move "
+              f"to their new number" if args.dry_run else
+              f"numbers-only: moved {moved} of {len(slugs)} problems to their new number")
+        if failed:
+            return 1
+        return 0
     if args.renumber and client is not None and not args.dry_run:
         try:
             parked = _park_numbers(client)

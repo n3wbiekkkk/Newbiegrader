@@ -47,14 +47,14 @@ Practice submissions show input, expected output and actual output for failed ca
 
 </div>
 
-The [20-problem release](docs/catalog/NEW_PROBLEMS_2026-10-20.md) brings the catalog to 89 problems, numbered by difficulty under an explicit operator-approved migration. Stable slug IDs and submission history are preserved; the [number map](docs/catalog/problem-numbers-2026-10-20.csv) records previous numbers.
+The catalog contains 89 problems, numbered by a calibrated difficulty order under an explicit operator-approved migration. Every problem carries a `level` (1–5) that reflects the technique it actually demands, and the coarse easy/medium/hard badge is derived from it. Stable slug IDs and submission history are preserved; the [number map](docs/catalog/problem-numbers-2026-10-22.csv) records previous numbers.
 
-Every problem ships with a reference solution, and every recorded verdict can be traced to the exact test set and grader version that produced it.
+Private authoring packages contain reference solutions. Recorded verdicts identify the test set and grader version; private fixtures and references are excluded from this public repository.
 
 ## Features
 
 ### Strict and honest limits
-Wall-clock timeouts, measured peak memory and process isolation (resource limits, privilege drop and a network namespace where available). Each test reports its own time and memory usage.
+Wall-clock timeouts, measured peak memory and bounded execution. The production Linux host uses private job identities, Landlock filesystem rules, seccomp network endpoint denial, per-job cgroups and bounded workspaces. Each test reports its own time and memory figures; see the [security checks and accounting limits](docs/SECURITY_READINESS.md).
 
 ### Undisclosed tests
 Contest hidden tests return verdicts and resource figures. In practice, an owner can inspect input, expected output and actual output for failed cases. Upcoming/running contest problems withhold that extra practice feedback. The same policy applies to responses, history and persisted results.
@@ -89,12 +89,32 @@ Plain HTML, CSS and JavaScript. No bundler, no transpiler and no framework.
 | --- | --- |
 | `grader.py` | The single judging engine, built on the Python standard library only |
 | `server.py` | FastAPI application: authentication, job queue, quota and visibility policy, result redaction |
-| `judge_runner.py` · `worker.py` | Supervised bounded execution and the dedicated worker role |
+| `judge_execution.py` · `judge_runner.py` · `worker.py` | Supervised bounded execution and the dedicated worker role |
 | `static/` | The web interface |
 | `problems/` | Local working copy of the problem set (configuration, statement, tests). Not versioned here — runtime files are published to protected backend storage; metadata lives in Supabase |
 | `supabase/` | Database schema with append-only, re-runnable migrations |
 
-Host capacity is read from the service or container at startup, and worker counts, memory ceilings, queue bounds and timeouts are derived from it automatically. Current production is Cloudflare Pages + AWS EC2 t3.small with one worker; Vercel and JustRunMy are not used. Problem PDFs, public samples and private tests are served from backend disk (`GRADER_FILE_STORAGE=local`); Supabase holds metadata, auth and the durable queue. See [current architecture](docs/PRODUCTION_ARCHITECTURE.md), the [backend file release record](docs/releases/PRODUCTION_BACKEND_FILES_2026-10-19.md), the [earlier correctness/cache record](docs/releases/PRODUCTION_CORRECTNESS_RELEASE_2026-10-19.md), and the [EC2 runbook](docs/EC2_MIGRATION.md).
+Host capacity is read from the service or container at startup, and worker counts, memory ceilings, queue bounds and timeouts are derived from it automatically. Current production is Cloudflare Pages + an Ubuntu PC with four isolated judge workers. Problem PDFs, public samples and private tests are served from backend disk (`GRADER_FILE_STORAGE=local`); Supabase holds metadata, auth and the durable queue. See [current architecture](docs/PRODUCTION_ARCHITECTURE.md), [backend file storage](docs/BACKEND_PROBLEM_FILES.md), and the [host runbook](docs/HOST_DEPLOYMENT.md).
+
+The four workers execute four jobs concurrently, with up to 25 additional
+queued jobs. The API has one CPU / 320 MiB; judging has a separate four-CPU /
+four-GiB budget and a 128 MiB declared-memory cap. For the measured 17-case
+short-job workload, trusted runtime precompilation first reduced worker time
+from about eight seconds to 3.4–3.8 seconds. Removing web-stack startup and
+redundant exited-process sampling reduced the same synthetic workload by a
+further 20%, to 2.82–3.03 seconds. Public Python/C/C++ checks took 3.75–4.81
+seconds from submit to observed result. These scoped measurements do not
+establish all-problem latency or simultaneous-user capacity. See
+[load handling](docs/load-handling.md) and the
+[current measurement record](docs/releases/pc-execution-performance-2026-10-22.json).
+
+The current [public website security qualification](docs/PUBLIC_SECURITY.md)
+records the browser protections, sandbox restrictions, patched CA bundle,
+edge rate limits and Turnstile email-request gate, together with measured live
+checks, revocable database sessions and retained SSH/OS limitations. Worker
+database traffic uses
+pooled HTTP/1.1 to avoid the observed HTTP/2 connection-turnover failures;
+ambiguous queue claims are never automatically replayed.
 
 ## Design Principles
 
@@ -109,7 +129,7 @@ Host capacity is read from the service or container at startup, and worker count
 | API | FastAPI |
 | Database | PostgreSQL via Supabase |
 | Frontend | HTML, CSS and JavaScript on Cloudflare Pages |
-| Production backend | AWS EC2 / Ubuntu, Python 3.11 and separate systemd API/worker services |
+| Production backend | Ubuntu PC, Python 3.11, separate systemd API and four worker services |
 | Local packaging | Docker |
 
 ## Contributing
@@ -127,8 +147,20 @@ Contributions are welcome. You can suggest features or report bugs by opening an
 
 ## License
 
-This program is free software, released under the [GNU Affero General Public License v3.0 or later](LICENSE).
+Copyright (C) 2026 Newbiegrader contributors. Source code: <https://github.com/n3wbiekkkk/Newbiegrader>.
+
+### Code
+
+This program is free software, released under the **GNU Affero General Public License v3.0 or later** (`AGPL-3.0-or-later`). The full license text is in [LICENSE](LICENSE).
 
 Under AGPL §13, running a modified version for users over a network requires offering them the Corresponding Source. For this deployment, the source is available at <https://github.com/n3wbiekkkk/Newbiegrader>.
 
-Statement-PDF typefaces (Sarabun, Prompt and Anuphan) are bundled under SIL OFL 1.1. No warranty is provided and no trademark rights are granted.
+### Name and logo
+
+The Newbiegrader name and logo are **not** covered by the code license. All rights reserved.
+
+### Third-party typefaces
+
+Statement PDFs embed typefaces that keep their own licenses and are not covered by the licenses above: Anuphan and Inconsolata under SIL OFL 1.1, Latin Modern Roman under the GUST Font License, and TH Sarabun New under GPL-2.0-or-later with the font-embedding exception (so the rendered PDFs are not covered by the GPL). See `tools/fonts/`.
+
+No warranty is provided and no trademark rights are granted.

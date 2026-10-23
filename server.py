@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import collections
-import concurrent.futures
 import datetime as dt
 import hashlib
 import hmac
@@ -30,8 +29,6 @@ import time
 import traceback
 import uuid
 from contextlib import asynccontextmanager
-from contextvars import copy_context
-from dataclasses import replace
 from pathlib import Path
 from typing import Dict, List, Optional
 from urllib.parse import urlencode
@@ -52,7 +49,7 @@ from starlette.responses import RedirectResponse
 from itsdangerous import URLSafeTimedSerializer
 
 try:
-    from supabase import create_client
+    from database_client import create_database_client as create_client
     _has_supabase_lib = True
 except ImportError:  # optional dep: history disabled without it
     create_client = None
@@ -64,6 +61,11 @@ sys.path.insert(0, str(ROOT))
 import grader  # noqa: E402  (CLI grader module, import-safe: guarded by __main__)
 import problem_store  # noqa: E402  (local|supabase problem repository, storage only)
 import email_auth  # noqa: E402
+import judge_execution  # noqa: E402
+from judge_execution import (  # noqa: E402
+    REVEAL_ALL, REVEAL_SAMPLES, REVEAL_NONE, REVEAL_PRACTICE,
+    DETAIL_HEAD, RUN_OUTPUT_MAX, _plain_text, _redact_results, _sanitize_compile_error,
+)
 
 class AuthQueryLogFilter(logging.Filter):
     """Uvicorn logs a raw request target, including OAuth bearer query values."""
@@ -80,8 +82,8 @@ logging.getLogger("uvicorn.access").addFilter(AuthQueryLogFilter())
 
 STATIC_DIR = ROOT / "static"
 
-BUILD_SOURCE_FILES = ("grader.py", "server.py", "judge_runner.py", "job_resources.py", "problem_store.py", "backend_problem_files.py",
-                      "container_entrypoint.py", "worker.py", "job_sandbox.py", "email_auth.py")
+BUILD_SOURCE_FILES = ("grader.py", "server.py", "judge_runner.py", "judge_execution.py", "job_resources.py", "problem_store.py", "backend_problem_files.py",
+                      "container_entrypoint.py", "worker.py", "job_sandbox.py", "email_auth.py", "database_client.py")
 
 
 def _source_fingerprint(root: Path = ROOT) -> str:
@@ -130,14 +132,12 @@ LANGS: Dict[str, Dict[str, object]] = {
 EXT2LANG = {".py": "python", ".c": "c", ".cpp": "cpp", ".cc": "cpp", ".cxx": "cpp"}
 
 MAX_CODE_BYTES = 256 * 1024   # 256 KB source cap
-DETAIL_HEAD = 4000            # max chars of detail/diff sent to frontend
 
 # ---- capacity, derived from the host/container this runs in ----
-# Prod is a small container (currently 1 CPU / 1.5 GB): judging two submissions
-# at once, or running 4 tests of one submission in parallel, oversubscribes the
-# core and produces wall-clock TLEs that have nothing to do with the student's
-# code. Everything below is auto-derived from cgroup limits (see grader.cpu_quota
-# / grader.ram_limit_mb) and overridable by env when the host changes.
+# Each production worker has one CPU and its own bounded allocation. Running
+# tests of one submission in parallel would oversubscribe that quota and can
+# create unrelated wall-clock TLEs. Capacity below comes from cgroup limits
+# (grader.cpu_quota / grader.ram_limit_mb), with explicit host overrides.
 CPU_QUOTA = grader.CPU_QUOTA
 RAM_MB = grader.RAM_MB
 
@@ -153,25 +153,6 @@ def _env_int(name: str, auto: int) -> int:
         except ValueError:
             print(f"[web] warning: bad {name}={raw!r}, using auto", file=sys.stderr)
     return auto
-
-def _sanitize_compile_error(text: str) -> str:
-    """Redact host paths and compiler version banners from toolchain output
-    before returning it to clients. Keeps diagnostics useful for students."""
-    # 1. Redact absolute host paths (/tmp, /app, /root, /home, /usr, /var, /etc).
-    text = re.sub(
-        r"(/tmp|/app|/root|/home|/usr|/var|/etc)(?:/\S*)?(?=\s|$)",
-        "[path]",
-        text,
-    )
-    # 2. Redact compiler version banners to just "<tool> (compiler)".
-    text = re.sub(
-        r"(?m)^[ \t]*(gcc|g\+\+|javac|java|node|go|rustc).*$",
-        lambda m: m.group(1) + " (compiler)",
-        text,
-    )
-    # 4. Truncate to 4000 chars as a safety net.
-    return text[:4000]
-
 
 def _derive_capacity(cpu: float, ram: int) -> dict:
     # Reserve API/interpreter memory, then budget the larger of compiler and
@@ -231,16 +212,15 @@ print(f"[web] host: cpu={CPU_QUOTA:g} core(s), ram={RAM_MB}MB -> "
 
 # ---- async judging (B9) ----
 # The HTTP path never judges inline: it queues a job and the client polls
-# /api/jobs/{id}. Workers live in the same process (one container deploy), each
-# running a job in a thread so uvicorn's loop stays responsive. Concurrency and
-# limits are host derived — see the capacity block above.
+# /api/jobs/{id}. Production uses dedicated database worker processes. Local
+# combined mode runs worker tasks alongside the API, with blocking execution
+# delegated to threads. Concurrency and limits come from the capacity block.
 JOB_TTL_S = 3600              # in-memory job records kept this long (no-DB mode)
 JOB_MAX_AGE_S = 24 * 3600     # queued jobs older than this are dropped, not run
 REJUDGE_MAX = 200             # cap per /api/admin/rejudge call
 
 # ---- /api/run (custom input playground) ----
 RUN_INPUT_MAX = 64 * 1024     # max bytes of user-supplied stdin
-RUN_OUTPUT_MAX = 64 * 1024    # max bytes echoed back
 RUN_TIMEOUT_MAX = 5.0         # hard cap for playground runs
 RUN_BUDGET = 30.0             # total CPU-seconds a single /api/run may spend
 
@@ -366,8 +346,11 @@ async def _security_headers(request: Request, call_next):
     if request.url.path == "/api/history" or request.url.path.startswith("/api/history/"):
         resp.headers["Cache-Control"] = "private, no-store"
         resp.headers["Vary"] = "Cookie"
+    if request.url.path == "/api/admin" or request.url.path.startswith("/api/admin/"):
+        resp.headers["Cache-Control"] = "private, no-store"
+        resp.headers["Vary"] = "Cookie"
     resp.headers["Content-Security-Policy"] = (
-        "default-src 'self'; script-src 'self'; "
+        "default-src 'self'; base-uri 'none'; object-src 'none'; script-src 'self'; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
         "font-src https://fonts.gstatic.com; img-src 'self' data: https:; "
         "frame-src 'self'; frame-ancestors 'self'; "
@@ -498,6 +481,8 @@ async def _csrf_origin_check(request: Request, call_next):
 # Tiny in-memory cache for slow aggregate endpoints (Supabase RTT dominates).
 # Invalidated on every stored submission.
 _cache: dict = {}
+_cache_inflight: dict = {}
+_cache_generation = 0
 CACHE_TTL = {"stats": 30}
 
 
@@ -512,18 +497,39 @@ def _cached(key: str, ttl: int, build):
 
 
 async def _acached(key: str, ttl: int, build):
-    """Async twin of _cached: cache check on the loop, blocking DB build in a
-    thread so aggregate endpoints never stall judging or other requests."""
+    """Share one aggregate read on a cold cache, without blocking the loop.
+
+    A cancelled HTTP request must not cancel the shared read. Invalidation
+    starts a new generation so an older read cannot repopulate stale stats.
+    """
     now = time.monotonic()
     hit = _cache.get(key)
     if hit and now - hit[0] < ttl:
         return hit[1]
-    val = await asyncio.to_thread(build)  # raises HTTPException: never cached
-    _cache[key] = (time.monotonic(), val)
-    return val
+    generation = _cache_generation
+    slot = (asyncio.get_running_loop(), key, generation)
+    task = _cache_inflight.get(slot)
+    if task is None:
+        async def refresh():
+            try:
+                val = await asyncio.to_thread(build)  # errors are never cached
+                if generation == _cache_generation:
+                    _cache[key] = (time.monotonic(), val)
+                return val
+            finally:
+                _cache_inflight.pop(slot, None)
+
+        task = asyncio.create_task(refresh())
+        _cache_inflight[slot] = task
+        # Retrieve failures even if every HTTP waiter disconnects. Awaiters
+        # still receive the same exception and the next request can retry.
+        task.add_done_callback(lambda done: None if done.cancelled() else done.exception())
+    return await asyncio.shield(task)
 
 
 def _bust_cache() -> None:
+    global _cache_generation
+    _cache_generation += 1
     _cache.pop("stats", None)
 
 # Split deployment: same-origin via frontend /api proxy (Cloudflare Pages
@@ -556,7 +562,7 @@ if not RUNNER_CHILD and _sb_url and _sb_key:
         print("[web] supabase lib not installed, history disabled", file=sys.stderr)
     else:
         try:
-            _sb = create_client(_sb_url, _sb_key)
+            _sb = create_client(_sb_url, _sb_key, role=GRADER_ROLE)
         except Exception as e:
             print(f"[web] supabase disabled: {e}", file=sys.stderr)
             _sb = None
@@ -566,6 +572,46 @@ def _db_err(e: Exception) -> HTTPException:
     """Log the real DB error server-side, return a generic 500 to clients."""
     print(f"[web] database error: {e}", file=sys.stderr)
     return HTTPException(status_code=500, detail="database error")
+
+
+def _missing_submission_column(error: Exception) -> bool:
+    """True only for an explicit PostgREST/PostgreSQL missing-column signal.
+
+    A generic error containing the word "column" can be an integrity failure;
+    retrying that would silently drop provenance fields.
+    """
+    msg = str(error)
+    low = msg.lower()
+    return ("42703" in msg or "pgrst204" in low
+            or "undefined_column" in low
+            or ("column" in low and ("does not exist" in low
+                                     or "could not find" in low)))
+
+
+def _legacy_submission_row(row: dict, error: Exception, *, operation: str) -> dict:
+    """Strip only the 2026-10 traceability columns for an old schema.
+
+    A contest row may never lose contest_id. A practice row has no provenance
+    to lose, so it may also use the old schema when contest_id itself is absent.
+    Raises the original error for any non-missing-column failure.
+    """
+    if not _missing_submission_column(error):
+        raise error
+    low = str(error).lower()
+    if "contest_id" in low and row.get("contest_id"):
+        print("[web] refusing to drop contest_id from a contest submission; "
+              "run supabase/schema.sql", file=sys.stderr)
+        raise error
+    if row.get("contest_id"):
+        traceability = tuple(c for c in _NEW_SUB_COLS if c != "contest_id")
+    else:
+        traceability = _NEW_SUB_COLS
+    slim = {k: v for k, v in row.items() if k not in traceability}
+    if len(slim) == len(row):
+        raise error
+    print(f"[web] submissions {operation} retried without {traceability[0]}.. "
+          f"({error}); run supabase/schema.sql to add them", file=sys.stderr)
+    return slim
 
 
 async def _store_submission(row: dict, target_id: Optional[str] = None) -> Optional[str]:
@@ -579,22 +625,22 @@ async def _store_submission(row: dict, target_id: Optional[str] = None) -> Optio
 
     def _write():
         if target_id:
-            return _sb.table("submissions").update(row).eq("id", target_id).execute()
+            try:
+                return _sb.table("submissions").update(row).eq("id", target_id).execute()
+            except Exception as first:
+                # Keep rejudge compatible with a pre-2026-10 schema too, under
+                # the same no-provenance-downgrade rule as inserts.
+                slim = _legacy_submission_row(row, first, operation="update")
+                return (_sb.table("submissions").update(slim)
+                        .eq("id", target_id).execute())
         try:
             return _sb.table("submissions").insert(row).execute()
         except Exception as first:
             # Pre-2026-10 database: the extra traceability columns do not exist
             # yet. Drop them rather than losing the submission. Retry ONLY for
-            # missing-column errors; network/timeouts must not double-insert.
-            msg = str(first)
-            if "42703" not in msg and "undefined_column" not in msg.lower() and \
-               "could not find" not in msg.lower() and "column" not in msg.lower():
-                raise
-            slim = {k: v for k, v in row.items() if k not in _NEW_SUB_COLS}
-            if len(slim) == len(row):
-                raise
-            print(f"[web] submissions insert retried without {_NEW_SUB_COLS[0]}.. "
-                  f"({first}); run supabase/schema.sql to add them", file=sys.stderr)
+            # missing-column errors; network/timeouts must not double-insert and
+            # integrity errors must not silently drop provenance columns.
+            slim = _legacy_submission_row(row, first, operation="insert")
             return _sb.table("submissions").insert(slim).execute()
 
     try:
@@ -614,59 +660,6 @@ async def _store_submission(row: dict, target_id: Optional[str] = None) -> Optio
 # failed practice cases, by explicit product policy. Upcoming/running contests
 # also restrict the practice path and reads of previously stored practice data.
 # Redact before returning AND persisting; practice provenance is server-generated.
-REVEAL_ALL = "all"          # admin: full detail
-REVEAL_SAMPLES = "samples"  # contest/default legacy feedback: samples only
-REVEAL_NONE = "none"        # live contest with show_samples = false
-REVEAL_PRACTICE = "practice-failures"  # owner: failed practice cases only
-
-
-_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
-
-
-def _plain_text(text: str) -> str:
-    """Drop ANSI colour codes from judge output.
-
-    grader.py colours its CLI diff when stdout is a tty, so `python3 server.py`
-    in a terminal produced `\\x1b[90m---·expected` inside the JSON payload and
-    the history row: the browser showed the escape sequence instead of the diff.
-    The CLI keeps its colours; the web/DB never sees them.
-    """
-    if "\x1b[" not in text:
-        return text
-    return _ANSI_RE.sub("", text)
-
-
-def _redact_results(results: List[dict], reveal: str) -> List[dict]:
-    """Strip test data from per-test results the caller is not allowed to see."""
-    out: List[dict] = []
-    for r in results:
-        item = {k: (_plain_text(v) if isinstance(v, str) else v)
-                for k, v in r.items()}
-        public = bool(item.pop("public", False))
-        practice = (reveal == REVEAL_PRACTICE and item.get("practice_feedback") is True
-                    and item.get("verdict") in {"WA", "RE", "TLE", "MLE", "OLE"})
-        if (not public and not practice) or reveal == REVEAL_NONE:
-            # detail is user-controlled (including old persisted stderr).
-            # Never attempt to distinguish it by matching its text.
-            detail = item.pop("detail", None)
-            item.pop("stderr", None)
-            item.pop("stdout", None)
-            if detail:
-                item["detail"] = {
-                    "RE": "runtime error", "MLE": "memory limit exceeded",
-                    "TLE": "time limit exceeded", "OLE": "output limit exceeded",
-                }.get(item.get("verdict"), "execution diagnostic withheld")
-        if reveal == REVEAL_ALL or practice or (public and reveal != REVEAL_NONE):
-            out.append(item)
-            continue
-        item.pop("practice_feedback", None)
-        for k in ("diff", "input", "expected", "actual"):
-            item.pop(k, None)
-        item["hidden"] = True
-        out.append(item)
-    return out
-
-
 def _iso_now() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat()
 
@@ -1120,7 +1113,12 @@ async def _finish_job(jid: str, *, result: Optional[dict] = None, stored: Option
     job["status"] = "error" if error else "done"
     job["error"] = error
     if result is not None:
-        job["result"] = result
+        # Local mode keeps the same redacted variant the database queue stores.
+        # The requester-privileged view (REVEAL_ALL on admin rejudges) must not
+        # live in a record the submission owner can poll; job_status re-applies
+        # the job's policy per request.
+        job["result"] = result if job.get("kind") == "playground" else (
+            stored if stored is not None else result)
     job["finished_at"] = _iso_now()
     job.setdefault("created_monotonic", time.monotonic())
     # The submission row already owns the validated source. Polling terminal
@@ -1135,7 +1133,10 @@ async def _finish_job(jid: str, *, result: Optional[dict] = None, stored: Option
             _active_jobs.pop(email, None)
     await _update_job_db(jid, {"status": job["status"], "error": error,
                                "finished_at": job["finished_at"],
-                               "result": stored if stored is not None else result})
+                               "result": stored if stored is not None else result,
+                               # The row already owns the source. Do not keep
+                               # a second copy in the status record.
+                               "source": ""})
     _prune_jobs()
 
 
@@ -1154,9 +1155,9 @@ async def _judge_worker(idx: int) -> None:
                     if job:
                         await _run_job(job)
                     # Idle wakeup is user-visible latency. Keep the fallback
-                    # poll reasonably responsive; the durable queue is shared,
-                    # so a claim is still the only authority.
-                    poll_delay = .25 if job else min(1.0, poll_delay * 2)
+                    # poll reasonably responsive; drain ready work without an
+                    # extra sleep. The durable claim remains the only authority.
+                    poll_delay = 0.0 if job else min(1.0, max(.5, poll_delay * 2))
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -1332,6 +1333,25 @@ def _submission_row(job: dict, result: dict, stored: Optional[dict] = None) -> d
 
 
 # ---- contest policy (B7) ----
+def _contest_times_valid(contest: Optional[dict]) -> bool:
+    """True only for timezone-aware, ordered contest bounds.
+
+    _contest_window's legacy fallback treats malformed dates as ended for
+    display purposes.  Feedback authorities must never reuse that fallback:
+    an invalid bound is an unavailable policy, not permission to show samples.
+    """
+    if not isinstance(contest, dict):
+        return False
+    try:
+        start = dt.datetime.fromisoformat(
+            str(contest.get("starts_at")).replace("Z", "+00:00"))
+        end = dt.datetime.fromisoformat(
+            str(contest.get("ends_at")).replace("Z", "+00:00"))
+    except (TypeError, ValueError, OverflowError):
+        return False
+    return start.tzinfo is not None and end.tzinfo is not None and end > start
+
+
 def _contest_window(contest: dict) -> str:
     """'upcoming' | 'running' | 'ended' (UTC now vs the contest window)."""
     now = dt.datetime.now(dt.timezone.utc)
@@ -1379,6 +1399,8 @@ def _parse_bool(value: object, default: bool = True) -> bool:
 def _reveal_for(contest: Optional[dict], email: str) -> str:
     if _is_admin(email):
         return REVEAL_ALL
+    if contest is not None and not _contest_times_valid(contest):
+        return REVEAL_NONE
     if contest and _contest_window(contest) == "running" and contest.get("show_samples") is False:
         return REVEAL_NONE
     return REVEAL_SAMPLES
@@ -1394,8 +1416,20 @@ def _live_hidden_pids(exclude_cid: str = "") -> set:
     if _sb is None:
         return hidden
     try:
-        for row in _contest_policy_rows():
+        # Sample bytes are a live disclosure boundary: never let the 20s
+        # visibility cache keep serving them after another process turns
+        # show_samples off. Policy failures still raise (fail closed).
+        for row in _contest_policy_rows(fresh=True):
             if exclude_cid and row.get("id") == exclude_cid:
+                continue
+            # A malformed contest bound is not proof samples are public.
+            # Hide its listed problems until the policy can be trusted.
+            if not _contest_times_valid(row):
+                for x in (row.get("problems") or []):
+                    try:
+                        hidden.add(_resolve_pid(str(x)))
+                    except Exception:
+                        pass
                 continue
             if _contest_window(row) != "running":
                 continue
@@ -1425,9 +1459,7 @@ def _effective_reveal(contest: Optional[dict], email: str, pid: str) -> str:
                 continue
             # _contest_window's legacy invalid-date fallback is not a basis
             # for declassifying fixtures. Require valid, timezone-aware dates.
-            start = dt.datetime.fromisoformat(str(row.get("starts_at")).replace("Z", "+00:00"))
-            end = dt.datetime.fromisoformat(str(row.get("ends_at")).replace("Z", "+00:00"))
-            if start.tzinfo is None or end.tzinfo is None or end <= start:
+            if not _contest_times_valid(row):
                 return REVEAL_NONE
             window = _contest_window(row)
             if window != "ended":
@@ -1437,6 +1469,25 @@ def _effective_reveal(contest: Optional[dict], email: str, pid: str) -> str:
     except Exception:
         return REVEAL_NONE
     return REVEAL_SAMPLES if protected else REVEAL_PRACTICE
+
+
+def _live_reveal(contest_id: object, owner: str, pid: str) -> str:
+    """Owner-facing feedback policy for a stored row, evaluated now.
+
+    Contest rows use their own row so an admin owner keeps the same ALL view
+    the submit/rejudge path used; everyone else follows the live window.
+    Practice rows follow the contest-aware practice policy. Unknown contests
+    and policy failures fail closed to REVEAL_NONE.
+    """
+    if not contest_id:
+        return _effective_reveal(None, owner, pid)
+    try:
+        for row in _contest_policy_rows(fresh=True):
+            if str(row.get("id")) == str(contest_id):
+                return _reveal_for(row, owner)
+    except Exception:
+        return REVEAL_NONE
+    return REVEAL_NONE
 
 
 # ---- contest registration (Codeforces style) ----
@@ -1647,95 +1698,123 @@ _session_secret = os.environ.get("SESSION_SECRET", "").strip()
 if not _session_secret:
     _session_secret = secrets.token_hex(32)
     print("[web] WARNING: SESSION_SECRET not set, sessions die on restart", file=sys.stderr)
-_login_signer = URLSafeTimedSerializer(_session_secret, salt="login-once-v2")
-# "Remember me": a long-lived signed cookie holding only the email. When the
-# session cookie is gone (browser cleanup, expiry) but this one survives,
-# GET /api/auth/restore silently re-establishes the session. It is HttpOnly +
-# Secure + SameSite=lax like the session cookie, and dies with logout.
-# NOTE: like sessions, it only survives restarts when SESSION_SECRET is set.
-_remember_signer = URLSafeTimedSerializer(_session_secret, salt="remember-me-v2")
+_login_signer = URLSafeTimedSerializer(_session_secret, salt="login-once-v3")
+_remember_signer = URLSafeTimedSerializer(_session_secret, salt="remember-me-v3")
 REMEMBER_MAX_AGE = 365 * 24 * 3600
 _REMEMBER_COOKIE = "ng_remember"
+_SESSION_KEY = "auth_session"
 
 
 def _cookie_secure() -> bool:
     return os.environ.get("SESSION_SECURE", "true").lower() != "false"
 
 
-def _issue_remember(resp, user: dict) -> None:
-    resp.set_cookie(_REMEMBER_COOKIE, _remember_signer.dumps({"user": user}),
-                    max_age=REMEMBER_MAX_AGE, httponly=True,
-                    samesite="lax", secure=_cookie_secure(), path="/")
+def _session_hash(token) -> str:
+    if not isinstance(token, str) or not re.fullmatch(r"[A-Za-z0-9_-]{43}", token):
+        return ""
+    return hashlib.sha256(token.encode("ascii")).hexdigest()
 
 
-def _set_remember_choice(resp, user: dict, remember: bool) -> None:
-    """Long-lived login is explicit opt-in; opting out clears an older cookie."""
+def _set_remember_choice(resp, token: str, remember: bool) -> None:
     if remember is True:
-        _issue_remember(resp, user)
+        resp.set_cookie(_REMEMBER_COOKIE, _remember_signer.dumps({"sid": token}),
+                        max_age=REMEMBER_MAX_AGE, httponly=True, samesite="lax",
+                        secure=_cookie_secure(), path="/")
     else:
         resp.delete_cookie(_REMEMBER_COOKIE, path="/", httponly=True,
                            samesite="lax", secure=_cookie_secure())
 
 
-def _read_remember(request: Request) -> dict:
+def _read_remember(request: Request) -> str:
     try:
-        data = _remember_signer.loads(request.cookies.get(_REMEMBER_COOKIE, ""),
-                                      max_age=REMEMBER_MAX_AGE)
-        user = data.get("user")
-        return user if isinstance(user, dict) else {}
+        value = _remember_signer.loads(request.cookies.get(_REMEMBER_COOKIE, ""),
+                                       max_age=REMEMBER_MAX_AGE).get("sid")
+        return value if _session_hash(value) else ""
     except Exception:
+        return ""
+
+
+def _browser_session_hashes(request: Request) -> list[str]:
+    return list(dict.fromkeys(value for value in (
+        _session_hash(request.session.get(_SESSION_KEY)),
+        _session_hash(_read_remember(request))) if value))
+
+
+def _revoke_browser_sessions(request: Request) -> None:
+    hashes = _browser_session_hashes(request)
+    if hashes:
+        result = _auth_rpc("auth_session_revoke", {"p_token_hashes": hashes})
+        if result.get("ok") is not True:
+            raise HTTPException(status_code=503, detail="logout unavailable; please retry")
+
+
+def _start_web_session(request: Request, user: dict, remember: bool, *, pending=False) -> str:
+    token = secrets.token_urlsafe(32)
+    result = _auth_rpc("auth_session_start", {
+        "p_token_hash": _session_hash(token), "p_email": user["email"],
+        "p_auth_version": user["auth_version"], "p_remember": remember is True,
+        "p_pending": pending, "p_provider": user.get("provider", "password"),
+        "p_picture": str(user.get("picture") or "")[:2048],
+        "p_previous": _browser_session_hashes(request)})
+    if result.get("valid") is not True:
+        raise HTTPException(status_code=401, detail="please sign in again")
+    return token
+
+
+def _session_identity(token, *, mode="session", previous=()) -> dict:
+    hashed = _session_hash(token)
+    if not hashed:
         return {}
-
-
-def _identity_row(email: str) -> dict:
-    if _sb is None:
-        raise HTTPException(status_code=503, detail="identity service unavailable")
-    try:
-        result = _sb.table("users").select(
-            "email,name,email_verified_at,auth_version").eq("email", email).limit(1).execute()
-        return (result.data or [{}])[0]
-    except Exception:
-        # Do not include provider/DB exception text in auth logs or responses.
-        raise HTTPException(status_code=503, detail="identity service unavailable") from None
-
-
-def _current_identity(user) -> dict:
-    """Every protected API route gets a currently verified, versioned identity."""
+    result = _auth_rpc("auth_session_identity", {
+        "p_token_hash": hashed, "p_mode": mode, "p_previous": list(previous)})
+    if result.get("valid") is not True:
+        return {}
+    user = result.get("user")
     if not isinstance(user, dict) or type(user.get("auth_version")) is not int \
             or user["auth_version"] < 1:
-        return {}
+        raise HTTPException(status_code=503, detail="identity service unavailable")
     try:
         email = email_auth.normalize_email(user.get("email"))
     except ValueError:
-        return {}
-    row = _identity_row(email)
-    if not row.get("email_verified_at") or row.get("auth_version") != user["auth_version"]:
-        return {}
-    return {"email": email, "name": row.get("name") or email,
-            "picture": user.get("picture", ""), "provider": user.get("provider", ""),
-            "auth_version": row["auth_version"]}
+        raise HTTPException(status_code=503, detail="identity service unavailable") from None
+    return {"email": email, "name": user.get("name") or email,
+            "picture": user.get("picture") or "", "provider": user.get("provider") or "",
+            "auth_version": user["auth_version"]}
 
 
 class VerifiedIdentityMiddleware:
-    """Must run INSIDE SessionMiddleware, before any route reads session.user."""
+    """Validate current DB session + identity in one RPC; persist only opaque SID.
+
+    SessionMiddleware must wrap this middleware. Removing user before its send
+    hook prevents old cookie-only backends from accepting new sessions on rollback.
+    """
     def __init__(self, app):
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] == "http" and scope.get("session", {}).get("user"):
-            if scope.get("path") == "/api/auth/logout":
-                scope["session"].pop("user", None)
-            else:
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        session = scope.get("session", {})
+
+        async def opaque_send(message):
+            if message["type"] == "http.response.start":
+                session.pop("user", None)
+            await send(message)
+
+        if scope.get("path") != "/api/auth/logout":
+            session.pop("user", None)  # Legacy identity cookies never upgrade silently.
+            token = session.get(_SESSION_KEY)
+            if token:
                 try:
-                    user = await asyncio.to_thread(_current_identity, scope["session"]["user"])
+                    user = await asyncio.to_thread(_session_identity, token)
                 except HTTPException:
-                    return await JSONResponse({"detail": "identity service unavailable"}, 503, headers={"Cache-Control": "no-store"})(
-                        scope, receive, send)
+                    return await JSONResponse({"detail": "identity service unavailable"}, 503,
+                        headers={"Cache-Control": "no-store"})(scope, receive, opaque_send)
                 if user:
-                    scope["session"]["user"] = user
+                    session["user"] = user
                 else:
-                    scope["session"].pop("user", None)
-        await self.app(scope, receive, send)
+                    session.pop(_SESSION_KEY, None)
+        await self.app(scope, receive, opaque_send)
 
 
 def _json_response(payload: dict):
@@ -1817,8 +1896,9 @@ async def auth_callback(request: Request, code: str = "", state: str = "", error
             "p_name": str(info.get("name") or email)[:50]})
         if identity.get("link_required"):
             return RedirectResponse(FRONTEND_URL + "/#/login?email_proof=required", status_code=307)
-        request.session["user"] = {**identity, "picture": info.get("picture", ""),
-                                   "provider": "google"}
+        user = {**identity, "picture": info.get("picture", ""), "provider": "google"}
+        remember = request.session.get("oauth_remember") is True
+        sid = await asyncio.to_thread(_start_web_session, request, user, remember, pending=True)
     except Exception:
         return RedirectResponse(FRONTEND_URL + "/#/login?email_proof=required", status_code=307)
     next_url = request.session.pop("oauth_next", "#/")
@@ -1827,46 +1907,29 @@ async def auth_callback(request: Request, code: str = "", state: str = "", error
     # Hand the session to the frontend origin via one-time token, so the
     # session cookie is set first-party (works even when browsers block
     # third-party cookies). /api/auth/finish is proxied by the frontend host.
-    token = _login_signer.dumps({"user": request.session["user"],
-                                 "remember": request.session.pop("oauth_remember", False),
-                                 "jti": secrets.token_urlsafe(16)})
+    token = _login_signer.dumps({"sid": sid, "remember": remember})
     request.session.clear()
     return RedirectResponse(
         FRONTEND_URL + "/api/auth/finish?" + urlencode({"token": token, "next": next_url}),
         status_code=307)
 
 
-_used_login_jti: Dict[str, float] = {}
-_login_jti_lock = threading.Lock()
-
-
 @app.get("/api/auth/finish")
 def auth_finish(request: Request, token: str = "", next: str = "#/"):
     try:
         data = _login_signer.loads(token, max_age=300)
-        user = _current_identity(data.get("user"))
-        jti = str(data.get("jti") or "")
-        if not user.get("email") or not jti:
-            raise ValueError("no email")
-        now = time.monotonic()
-        # One-time use: replaying a logged/proxied token must fail.
-        with _login_jti_lock:
-            if jti in _used_login_jti:
-                raise ValueError("reused token")
-            # Never evict a still-valid token: fail closed at capacity instead.
-            for k in list(_used_login_jti):
-                if now - _used_login_jti.get(k, 0) > 600:
-                    _used_login_jti.pop(k, None)
-            if len(_used_login_jti) >= 20000:
-                raise ValueError("login replay cache full")
-            _used_login_jti[jti] = now
     except Exception:
         return RedirectResponse(FRONTEND_URL + "/#/?login=failed", status_code=307)
-    if not next.startswith("#/"):
+    sid = data.get("sid") if isinstance(data, dict) else None
+    user = _session_identity(sid, mode="finish", previous=_browser_session_hashes(request))
+    if not user:
+        return RedirectResponse(FRONTEND_URL + "/#/?login=failed", status_code=307)
+    if not isinstance(next, str) or not next.startswith("#/"):
         next = "#/"
-    request.session["user"] = user
+    request.session.clear()
+    request.session.update({_SESSION_KEY: sid, "user": user})
     resp = RedirectResponse(FRONTEND_URL + "/#/" + next.lstrip("#/"), status_code=307)
-    _set_remember_choice(resp, request.session["user"], data.get("remember") is True)
+    _set_remember_choice(resp, sid, data.get("remember") is True)
     return resp
 
 
@@ -1887,7 +1950,10 @@ def auth_me(request: Request) -> dict:
         except Exception:
             pass
     return {"user": user, "is_admin": _is_admin(email), "profile": profile,
-            "profile_configured": _sb is not None}
+            "profile_configured": _sb is not None,
+            # Presence is a request hint, never proof of identity. Only the
+            # restore endpoint validates the signed cookie and live account.
+            "restore_available": bool(request.cookies.get(_REMEMBER_COOKIE))}
 
 
 @app.get("/api/auth/restore")
@@ -1900,18 +1966,20 @@ def auth_restore(request: Request) -> dict:
     """
     if (request.session.get("user") or {}).get("email"):
         return {"ok": True, "restored": False}
-    user = _current_identity(_read_remember(request))
+    sid = _read_remember(request)
+    user = _session_identity(sid, mode="remember")
     if not user:
         return {"ok": True, "restored": False}
-    request.session["user"] = user
+    request.session.update({_SESSION_KEY: sid, "user": user})
     return {"ok": True, "restored": True}
 
 
 @app.post("/api/auth/logout")
 def auth_logout(request: Request) -> dict:
+    _revoke_browser_sessions(request)
     request.session.clear()
     resp = _json_response({"ok": True})
-    _set_remember_choice(resp, {}, False)
+    _set_remember_choice(resp, "", False)
     return resp
 
 
@@ -2157,6 +2225,8 @@ async def auth_register(request: Request):
         raise HTTPException(status_code=403, detail="this email is reserved; use Google")
     config = _email_provider_config()
     await asyncio.to_thread(_email_budget, request, email, "request")
+    # Replacing this browser's auth context must also invalidate copied cookies.
+    await asyncio.to_thread(_revoke_browser_sessions, request)
     # Do not keep a preselected password or issue an authenticated session.
     request.session.clear()
     try:
@@ -2167,7 +2237,7 @@ async def auth_register(request: Request):
     resp = _json_response({"ok": True, "verification_required": True,
                            "message": "check your email for a verification code"})
     resp.status_code = 202
-    _set_remember_choice(resp, {}, False)
+    _set_remember_choice(resp, "", False)
     return resp
 
 
@@ -2201,9 +2271,11 @@ async def auth_email_verify(request: Request):
     name = str(body.get("name") or "").strip()[:50] or email.split("@")[0]
     user = await asyncio.to_thread(_auth_rpc, "auth_email_complete", {
         "p_email": email, "p_subject": subject, "p_password_hash": pw_hash, "p_name": name})
-    request.session["user"] = {**user, "provider": "password", "picture": ""}
-    resp = _json_response({"ok": True, "user": request.session["user"]})
-    _set_remember_choice(resp, request.session["user"], body.get("remember") is True)
+    user = {**user, "provider": "password", "picture": ""}
+    sid = await asyncio.to_thread(_start_web_session, request, user, body.get("remember") is True)
+    request.session.update({_SESSION_KEY: sid, "user": user})
+    resp = _json_response({"ok": True, "user": user})
+    _set_remember_choice(resp, sid, body.get("remember") is True)
     return resp
 
 
@@ -2240,10 +2312,11 @@ async def auth_password(request: Request):
     _clear_account_attempts(email)
     user = {"email": account["email"], "name": account.get("name") or email,
             "picture": "", "provider": "password", "auth_version": account["auth_version"]}
+    sid = await asyncio.to_thread(_start_web_session, request, user, body.get("remember") is True)
     request.session.clear()
-    request.session["user"] = user
+    request.session.update({_SESSION_KEY: sid, "user": user})
     resp = _json_response({"ok": True, "user": user})
-    _set_remember_choice(resp, user, body.get("remember") is True)
+    _set_remember_choice(resp, sid, body.get("remember") is True)
     return resp
 
 
@@ -2760,209 +2833,26 @@ def _host_limits() -> dict:
             "mem_headroom_mb": grader.LANG_MEM_HEADROOM_MB}
 
 
+def _execution_settings() -> judge_execution.Settings:
+    return judge_execution.Settings(MEMORY_CAP_MB, JUDGE_JOBS, CPU_QUOTA, RAM_MB)
+
+
 def _effective(prob: Optional[grader.Problem], time_limit: float,
                memory_mb: int) -> tuple[float, int, dict]:
-    """Clamp a problem's declared limits to what this host can actually give."""
-    eff = min(memory_mb, MEMORY_CAP_MB)
-    limits = {
-        "time_s": time_limit, "memory_mb": eff, "declared_mb": memory_mb,
-        "capped": eff < memory_mb, "host_memory_mb": RAM_MB,
-        "host_cpu": CPU_QUOTA, "problem": prob.pid if prob else "",
-    }
-    return time_limit, eff, limits
+    return judge_execution._effective(prob, time_limit, memory_mb, _execution_settings())
 
 
 def run_submission(prob: grader.Problem, ext: str, source: str,
                    reveal: str = REVEAL_SAMPLES) -> dict:
-    """Judge one submission (runs inside a worker thread, never inline in the loop).
-
-    `reveal` decides which failures may carry test data. Storage re-applies the
-    server-selected policy; contest records never opt into practice feedback.
-    """
-    if not prob.tests:
-        # Fail closed: an empty suite must never become Accepted.
-        return {"error": "problem store unavailable (no tests)"}
-    samples = grader.sample_names(prob)
-    practice = reveal == REVEAL_PRACTICE
-    # The isolated runner receives trusted embedded tests but has no populated
-    # metadata cache. Record these exact bytes, not a potentially stale API hash.
-    executed_tests_hash = grader.tests_hash(prob)
-    limits = _effective(prob, prob.time_limit, prob.memory_limit)[2]
-    if limits["capped"]:
-        # Judge against the host-appropriate ceiling, keep the declared value
-        # in the response so nobody wonders why 512 MB became 256 MB.
-        capped = replace(prob, memory_limit=limits["memory_mb"])
-    else:
-        capped = prob
-    with grader.job_sandbox.scope(), tempfile.TemporaryDirectory(prefix="websub_") as tmp:
-        workdir = Path(tmp)
-        src = workdir / ("solution" + ext)
-        src.write_text(source, encoding="utf-8")
-        try:
-            grader.prepare_workspace(workdir, src)
-            cmd, _disp, warnings = grader.prepare_command(src, workdir)
-        except grader.SandboxUnavailable:
-            return {"error": "execution environment unavailable"}
-        except grader.CompileError as e:
-            return {
-                "problem": prob.pid, "verdict": "CE", "accepted": False,
-                "passed": 0, "total": len(prob.tests), "score": 0,
-                "counts": {"CE": len(prob.tests)},
-                "compile_error": _sanitize_compile_error(str(e))[:4000],
-                "limits": limits, "memory_capped": limits["capped"],
-                "checker": prob.checker, "results": [], "samples": len(samples),
-                "tests_hash": executed_tests_hash,
-                "grader_version": grader.GRADER_VERSION,
-            }
-        except SystemExit as e:
-            return {"error": _sanitize_compile_error(str(e))}
-
-        results: List[dict] = []
-        lang = grader.detect_language(Path("solution" + ext))
-        # Public feedback must finish before any hidden input reaches user code:
-        # tests in one job share a workspace, even with per-job isolation.
-        stages = ([tc for tc in prob.tests if tc.name in samples],
-                  [tc for tc in prob.tests if tc.name not in samples])
-        if JUDGE_JOBS <= 1:
-            # Serial path: JUDGE_JOBS is 1 on all small hosts. Avoid
-            # ThreadPoolExecutor overhead (thread spawn + future per test).
-            judged = []
-            for tc in (*stages[0], *stages[1]):
-                try:
-                    judged.append((tc, grader.judge_test(
-                        cmd, tc, capped, False, False, lang,
-                        diagnostics=(tc.name in samples or practice) and reveal != REVEAL_NONE,
-                        reveal_failed=practice)))
-                except grader.SandboxUnavailable:
-                    # Fail closed: no test was judged, no verdict is recorded.
-                    # The worker maps {"error": ...} to a job-level error.
-                    return {"error": "execution environment unavailable"}
-            for tc, (v, wall, cpu, mem, detail, actual) in judged:
-                item = {
-                    "test": tc.name, "verdict": v,
-                    "wall_s": round(wall, 4), "cpu_s": round(cpu, 4),
-                    "peak_mb": round(mem, 2),
-                    "public": tc.name in samples,
-                }
-                if v == "WA" or (v != "AC" and (tc.name in samples or practice) and reveal != REVEAL_NONE):
-                    if v == "WA":
-                        item["diff"] = grader.show_diff(tc.expected, actual)[:DETAIL_HEAD]
-                    item["input"] = tc.input[:2000]
-                    item["expected"] = tc.expected[:2000]
-                    item["actual"] = actual[:2000]
-                if practice and v in {"WA", "RE", "TLE", "MLE", "OLE"}:
-                    item["practice_feedback"] = True
-                if detail:
-                    item["detail"] = detail[:DETAIL_HEAD]
-                results.append(item)
-        else:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=JUDGE_JOBS) as ex:
-                for stage in stages:
-                    futs = [ex.submit(copy_context().run, grader.judge_test, cmd, tc, capped, False, False, lang,
-                                      diagnostics=(tc.name in samples or practice) and reveal != REVEAL_NONE,
-                                      reveal_failed=practice)
-                            for tc in stage]
-                    # result() returns only after the supervisor reaps all
-                    # descendants; sample readers cannot survive this barrier.
-                    for tc, f in zip(stage, futs):
-                        try:
-                            v, wall, cpu, mem, detail, actual = f.result()
-                        except grader.SandboxUnavailable:
-                            return {"error": "execution environment unavailable"}
-                        item = {
-                            "test": tc.name, "verdict": v,
-                            "wall_s": round(wall, 4), "cpu_s": round(cpu, 4),
-                            "peak_mb": round(mem, 2),
-                            "public": tc.name in samples,
-                        }
-                        if v == "WA" or (v != "AC" and (tc.name in samples or practice) and reveal != REVEAL_NONE):
-                            if v == "WA":
-                                item["diff"] = grader.show_diff(tc.expected, actual)[:DETAIL_HEAD]
-                            item["input"] = tc.input[:2000]
-                            item["expected"] = tc.expected[:2000]
-                            item["actual"] = actual[:2000]
-                        if practice and v in {"WA", "RE", "TLE", "MLE", "OLE"}:
-                            item["practice_feedback"] = True
-                        if detail:
-                            item["detail"] = detail[:DETAIL_HEAD]
-                        results.append(item)
-
-        order = {tc.name: index for index, tc in enumerate(prob.tests)}
-        results.sort(key=lambda item: order[item["test"]])
-        passed = sum(1 for r in results if r["verdict"] == "AC")
-        total = len(prob.tests)
-        counts: Dict[str, int] = {}
-        for r in results:
-            counts[r["verdict"]] = counts.get(r["verdict"], 0) + 1
-        return {
-            "problem": prob.pid, "accepted": passed == total,
-            "verdict": "AC" if passed == total else "REJECTED",
-            "passed": passed, "total": total,
-            "score": (100 * passed // total) if total else 0,
-            "counts": counts, "build_warnings": (warnings or "")[:2000],
-            "compile_error": "",
-            "limits": limits, "memory_capped": limits["capped"],
-            "checker": prob.checker,
-            "results": _redact_results(results, reveal),
-            "samples": len(samples),
-            "tests_hash": executed_tests_hash,
-            "grader_version": grader.GRADER_VERSION,
-        }
+    return judge_execution.run_submission(prob, ext, source, reveal,
+                                           settings=_execution_settings())
 
 
 def _run_playground(prob: Optional[grader.Problem], ext: str, source: str,
                     stdin_data: str, time_limit: float, memory_mb: int) -> dict:
-    """One-shot run with user-supplied stdin. Never touches history."""
-    with grader.job_sandbox.scope(), tempfile.TemporaryDirectory(prefix="webrun_") as tmp:
-        workdir = Path(tmp)
-        src = workdir / ("solution" + ext)
-        src.write_text(source, encoding="utf-8")
-        started = time.perf_counter()
-        try:
-            grader.prepare_workspace(workdir, src)
-            cmd, _disp, warnings = grader.prepare_command(src, workdir)
-        except grader.SandboxUnavailable:
-            return {"error": "execution environment unavailable"}
-        except grader.CompileError as e:
-            return {"verdict": "CE", "stdout": "", "stderr": _sanitize_compile_error(str(e))[:4000],
-                    "wall_s": round(time.perf_counter() - started, 4),
-                    "cpu_s": 0.0, "peak_mb": 0.0, "reason": "compile-error",
-                    "build_warnings": "",
-                    "limits": _effective(prob, time_limit, memory_mb)[2],
-                    "memory_capped": memory_mb > MEMORY_CAP_MB}
-        except SystemExit as e:
-            return {"error": _sanitize_compile_error(str(e))}
-        _tl, eff_mem, limits = _effective(prob, time_limit, memory_mb)
-        res = grader.run_one(cmd, stdin_data, time_limit, eff_mem,
-                             grader.detect_language(src))
-        reason = res.get("reason", "")
-        if reason == "sandbox-unavailable":
-            return {"error": "execution environment unavailable"}
-        if reason == "timeout":
-            verdict = "TLE"
-        elif reason == "ole":
-            verdict = "OLE"
-        elif reason in ("oom", "sigkill"):
-            verdict = "MLE"
-        elif reason.startswith("signal:") or reason == "spawn-fail":
-            verdict = "RE"
-        elif res.get("returncode"):
-            verdict = "RE"
-        else:
-            verdict = "OK"
-        out = res.get("stdout") or ""
-        err = res.get("stderr") or ""
-        truncated = len(out.encode("utf-8", "ignore")) > RUN_OUTPUT_MAX
-        return {
-            "verdict": verdict, "reason": reason,
-            "stdout": out[:RUN_OUTPUT_MAX], "stderr": err[:RUN_OUTPUT_MAX],
-            "truncated": truncated,
-            "wall_s": round(res.get("wall", 0.0), 4), "cpu_s": round(res.get("cpu", 0.0), 4),
-            "peak_mb": round(res.get("peak_mb", 0.0), 2),
-            "build_warnings": (warnings or "")[:2000],
-            "limits": limits,
-            "memory_capped": limits["capped"],
-        }
+    return judge_execution._run_playground(prob, ext, source, stdin_data,
+                                            time_limit, memory_mb,
+                                            settings=_execution_settings())
 
 
 @app.get("/api/health")
@@ -3004,7 +2894,8 @@ def list_problems(request: Request, response: Response, sort: str = "") -> dict:
     hidden = _hidden_pids()
     listed, contest_hidden = _contest_problem_sets()
     ranked = grader.sort_problems(PROBLEMS.values()) if not sort_by_difficulty else sorted(
-        PROBLEMS.values(), key=lambda p: (order.get((p.difficulty or "").lower(), 99), p.pid))
+        PROBLEMS.values(), key=lambda p: (order.get((p.difficulty or "").lower(), 99),
+                                           p.no if p.no > 0 else 0, p.pid))
     out = []
     for p in ranked:
         is_hidden = p.pid in hidden
@@ -3295,10 +3186,18 @@ async def job_status(request: Request, jid: str) -> dict:
         raise HTTPException(status_code=404, detail="unknown job")
     status = job.get("status", "queued")
     result = job.get("result") if status == "done" else None
+    if result is not None and not isinstance(result, dict):
+        # Legacy/corrupt JSON could bypass the field-level redactor. Return no
+        # verdict payload rather than passing an unknown structure to a client.
+        result = None
     if isinstance(result, dict) and job.get("kind") != "playground":
-        reveal = job.get("reveal") or REVEAL_SAMPLES
-        if reveal == REVEAL_PRACTICE:
-            reveal = await asyncio.to_thread(_effective_reveal, None, user["email"], job.get("problem", ""))
+        # Re-evaluate the owner-facing live policy: the job's reveal is a
+        # creation-time snapshot and may predate a contest switching to hidden.
+        # Use the job owner, never the requester, so an admin poll cannot
+        # declassify another user's submission.
+        reveal = await asyncio.to_thread(
+            _live_reveal, job.get("contest_id"), job.get("user_email", ""),
+            job.get("problem", ""))
         result = _result_with_reveal(job, result, reveal)
     return {
         "id": jid, "status": status, "problem": job.get("problem", ""),
@@ -3414,7 +3313,28 @@ def _completed_peer_submission(row: dict) -> bool:
 def _peer_problem_policy(pid: str, contest_id: Optional[str] = None) -> str:
     """Fresh visibility and contest decision; empty string means unprotected."""
     prob = PROBLEMS.get(pid)
-    if prob is None or not getattr(prob, "is_published", True):
+    if prob is None:
+        return "hidden"
+    hidden_problem = bool(getattr(prob, "hidden", False))
+    if PROBLEM_SOURCE == "supabase":
+        # Peer source is a disclosure decision. Do not trust the TTL catalog
+        # for publication state: a problem can be unpublished or hidden while a
+        # history-only replica still has the old Problem object.
+        if _sb is None:
+            return "unavailable"
+        try:
+            res = (_sb.table("problems").select("slug,is_published,hidden")
+                   .eq("slug", pid).limit(1).execute())
+            fresh_rows = res.data or []
+        except Exception:
+            return "unavailable"
+        if not fresh_rows:
+            return "hidden"
+        fresh = fresh_rows[0]
+        if not _parse_bool(fresh.get("is_published"), False):
+            return "hidden"
+        hidden_problem = _parse_bool(fresh.get("hidden"), False)
+    elif not getattr(prob, "is_published", True):
         return "hidden"
     try:
         # Do not use the TTL cache or the legacy missing-table=empty fallback:
@@ -3443,7 +3363,7 @@ def _peer_problem_policy(pid: str, contest_id: Optional[str] = None) -> str:
             return "contest"  # Missing/deleted target contest policy is unknown.
         # Every related contest is now known to have ended, so it grants the
         # same problem visibility as the existing started-contest policy.
-        if prob.hidden and not related:
+        if hidden_problem and not related:
             return "hidden"
         return ""
     except Exception:
@@ -3560,9 +3480,13 @@ async def history_detail(request: Request, sid: str) -> dict:
     if not rows:
         raise HTTPException(status_code=404, detail="submission not found")
     row = dict(rows[0])
+    owner = row.get("user_email") or ""
     # Owners/admins retain their existing feedback. Peers receive a narrower,
     # explicitly serialized source/results view after fresh authorization.
-    if row.get("user_email") != email and not _is_admin(email):
+    # A non-owner admin is authorized to inspect the row, but must still use
+    # the submission owner's feedback policy below; admin access is not a
+    # reason to declassify a live hidden contest or an old practice row.
+    if owner != email and not _is_admin(email):
         access = await asyncio.to_thread(_peer_inspection_access, email,
                                          row.get("problem", ""), row.get("contest_id"))
         if not access["allowed"] or not _completed_peer_submission(row):
@@ -3571,9 +3495,13 @@ async def history_detail(request: Request, sid: str) -> dict:
                                 detail="peer inspection locked: " + reason)
         return _peer_submission_detail(row)
     row.pop("user_email", None)  # never expose login emails publicly
-    reveal = REVEAL_SAMPLES
-    if not row.get("contest_id") and any(r.get("practice_feedback") is True for r in row.get("results", [])):
-        reveal = await asyncio.to_thread(_effective_reveal, None, email, row.get("problem", ""))
+    # Re-evaluate the live owner-facing policy: stored rows can predate the
+    # current contest window (or an old rejudge), so trusting their bytes would
+    # serve samples during a show_samples=false contest. Use the submission
+    # owner, not the viewer, so an admin looking at someone else's row cannot
+    # declassify it.
+    reveal = await asyncio.to_thread(
+        _live_reveal, row.get("contest_id"), owner, row.get("problem", ""))
     row["results"] = _result_with_reveal(row, {"results": row.get("results", [])}, reveal)["results"]
     return row
 
@@ -3782,6 +3710,17 @@ async def admin_remove_admin(request: Request, email: str) -> dict:
     return {"ok": True, "email": target}
 
 
+_ADMIN_HISTORY_FIELDS = (
+    "id", "created_at", "user_email", "name", "problem", "language",
+    "verdict", "accepted", "passed", "total", "score", "counts", "contest_id",
+)
+
+
+def _admin_history_row(row: dict) -> dict:
+    """Allowlist metadata even when a storage adapter ignores the projection."""
+    return {key: row.get(key) for key in _ADMIN_HISTORY_FIELDS}
+
+
 @app.get("/api/admin/submissions")
 async def admin_submissions(request: Request, page: int = 1, per_page: int = 20,
                             problem: Optional[str] = None) -> dict:
@@ -3816,7 +3755,7 @@ async def admin_submissions(request: Request, page: int = 1, per_page: int = 20,
         "per_page": per_page,
         "total": total,
         "pages": max(1, (total + per_page - 1) // per_page),
-        "submissions": res.data or [],
+        "submissions": [_admin_history_row(row) for row in (res.data or [])],
     }
 
 
@@ -4129,7 +4068,11 @@ def delete_contest(request: Request, cid: str) -> dict:
 
 
 def _contest_result_frozen(contest: Optional[dict], submission: dict) -> bool:
-    if not contest or _contest_window(contest) != "running":
+    if not contest:
+        return False
+    if not _contest_times_valid(contest):
+        return True  # malformed policy cannot disclose a contest result
+    if _contest_window(contest) != "running":
         return False
     try:
         minutes = int(contest.get("freeze_minutes") or 0)
@@ -4156,7 +4099,9 @@ def _contest_scoreboard(contest: dict, live: bool, allowed_pids: Optional[set] =
     # contest timestamps are malformed.
     freeze_cutoff = None
     freeze_all = False
-    if not live and _contest_window(contest) == "running":
+    if not live and not _contest_times_valid(contest):
+        freeze_all = True
+    elif not live and _contest_window(contest) == "running":
         try:
             minutes = int(contest.get("freeze_minutes") or 0)
             if minutes > 0:
@@ -4464,16 +4409,23 @@ async def admin_rejudge(request: Request) -> dict:
     # Cache contests once: rejudged rows keep their original contest's policy,
     # so a live show_samples=false contest stays REVEAL_NONE.
     _contest_cache: Dict[str, Optional[dict]] = {}
-    def _reveal_for_row(cid: object, requester: str) -> str:
+    _practice_reveal: Dict[str, str] = {}
+    def _reveal_for_row(cid: object, owner: str, pid: str) -> str:
         if not cid:
-            return REVEAL_SAMPLES
+            # Practice feedback follows the same live policy as submit: hidden
+            # during any running show_samples=false contest, PRACTICE otherwise.
+            if pid not in _practice_reveal:
+                _practice_reveal[pid] = _effective_reveal(None, owner, pid)
+            return _practice_reveal[pid]
         ckey = str(cid)
         if ckey not in _contest_cache:
             try:
                 _contest_cache[ckey] = _contest_or_404(ckey)
             except HTTPException:
+                # Unknown/unavailable contest: fail closed, never samples.
                 _contest_cache[ckey] = None
-        return _reveal_for(_contest_cache[ckey], requester)
+        contest = _contest_cache[ckey]
+        return _reveal_for(contest, owner) if contest is not None else REVEAL_NONE
     for row in res.data or []:
         pid = row.get("problem", "")
         lang = row.get("language", "")
@@ -4488,7 +4440,10 @@ async def admin_rejudge(request: Request) -> dict:
                 "filename": row.get("filename"), "source": code,
                 "contest_id": row.get("contest_id"),
                 "target_id": row.get("id"),
-                "reveal": _reveal_for_row(row.get("contest_id"), user.get("email", "")),
+                # Owner-facing storage policy, never the requester's: an admin
+                # rejudge must not declassify a live show_samples=false contest.
+                "reveal": _reveal_for_row(
+                    row.get("contest_id"), row.get("user_email") or "", pid),
                 "tests_hash": _tests_hash(pid),
                 "grader_version": grader.GRADER_VERSION,
             }, track_active=False)

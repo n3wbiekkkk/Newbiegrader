@@ -1,0 +1,46 @@
+[Unit]
+Description=Newbiegrader API (no judge execution)
+After=network-online.target newbiegrader-judge.slice
+Wants=network-online.target
+Requires=newbiegrader-judge.slice
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=newbiegrader-api
+Group=newbiegrader-api
+WorkingDirectory=/opt/newbiegrader/current
+EnvironmentFile=/etc/newbiegrader/api.env
+ExecStart=/usr/local/lib/newbiegrader/venv/bin/python -m uvicorn server:app --host 127.0.0.1 --port 8000 --workers 1 --no-proxy-headers --no-access-log
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillMode=control-group
+MemoryMax=320M
+MemorySwapMax=0
+CPUQuota=100%
+TasksMax=96
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+ProtectProc=invisible
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=200
+
+[Install]
+WantedBy=multi-user.target

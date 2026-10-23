@@ -98,5 +98,7 @@
     "python_run": 284,
     "python_skip": 3
   },
-  "worker_count_target": 1
+  "worker_count_target": 1,
+  "status": "Historical synthetic benchmark, 2026-10-19; not current PC capacity or latency evidence",
+  "current_measurements": "pc-latency-2026-10-22.json"
 }

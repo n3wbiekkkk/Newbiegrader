@@ -82,6 +82,17 @@ class EmailAuth(unittest.TestCase):
     def start(self, email=EMAIL, **extra):
         return self.client.post("/api/auth/email/request", json={"email": email, **extra})
 
+    def test_restore_hint_skips_absent_cookie_without_trusting_present_cookie(self):
+        response = self.client.get('/api/auth/me')
+        self.assertFalse(response.json()['restore_available'])
+        self.assertEqual(response.headers['cache-control'], 'no-store')
+        self.client.cookies.set('ng_remember', 'synthetic-invalid-cookie')
+        data = self.client.get('/api/auth/me').json()
+        self.assertTrue(data['restore_available'])
+        self.assertIsNone(data['user'])
+        self.assertFalse(data['is_admin'])
+        self.assertFalse(self.client.get('/api/auth/restore').json()['restored'])
+
     def finish(self, **extra):
         return self.client.post("/api/auth/email/verify", json={
             "email": EMAIL, "code": "12345678", "password": PASSWORD, "name": "Owner", **extra})
@@ -230,12 +241,12 @@ class EmailAuth(unittest.TestCase):
         self.assertIsNone(self.client.get("/api/auth/me").json()["user"])
         self.assertEqual(self.finish().status_code, 400)
 
-    def test_verified_session_db_outage_is_closed_and_logout_still_works(self):
+    def test_verified_session_db_outage_never_reports_successful_logout(self):
         self.db.rows("users").append(verified_row())
         self.client.post("/api/auth/password", json={"email": EMAIL, "password": PASSWORD})
         with patch.object(self.db, "table", side_effect=RuntimeError("synthetic outage")):
             self.assertEqual(self.client.get("/api/profile").status_code, 503)
-            self.assertEqual(self.client.post("/api/auth/logout").status_code, 200)
+            self.assertEqual(self.client.post("/api/auth/logout").status_code, 503)
 
     def test_real_application_middleware_rejects_legacy_and_revoked_sessions(self):
         self.db.rows("users").append(verified_row())
@@ -282,7 +293,8 @@ class EmailAuth(unittest.TestCase):
 
     def test_missing_identity_migration_never_uses_password_only_fallback(self):
         self.db.rows("users").append(verified_row())
-        self.client.cookies.set("ng_session", signed_cookie({"user": {"email": EMAIL, "auth_version": 1}}))
+        self.assertEqual(self.client.post("/api/auth/password", json={
+            "email": EMAIL, "password": PASSWORD}).status_code, 200)
         with patch.object(self.db, "table", side_effect=RuntimeError("missing identity columns")):
             self.assertEqual(self.client.get("/api/profile").status_code, 503)
 

@@ -160,6 +160,13 @@ SANDBOX_REFUSED_RC = 126
 SANDBOX_REFUSED_MARKER = "GRADER_REQUIRE_NETNS"
 PRIVILEGE_REFUSED_RC = 125
 PRIVILEGE_REFUSED_MARKER = "GRADER_PRIVILEGE_DROP_FAILED"
+# Exit code + marker used when the supervisor cannot start the sandbox wrapper
+# at all (host resource failure such as EAGAIN). run_one maps it to reason
+# "spawn-fail", which judge_test turns into SandboxUnavailable: no submission
+# code ran, so the job must end as an environment error, never a verdict.
+# judge_runner.SPAWN_FAILED_* mirrors these values (asserted by tests).
+SPAWN_FAILED_RC = 127
+SPAWN_FAILED_MARKER = "GRADER_SPAWN_FAILED"
 
 
 SAMPLE_INTERVAL = _env_float("GRADER_SAMPLE_INTERVAL",
@@ -219,6 +226,7 @@ class Problem:
     description: str
     tests: list[TestCase]
     difficulty: str = ""        # easy | medium | hard (ไว้ filter)
+    level: int = 0              # 1..5 ความยากละเอียด (ใช้เรียงเลขโจทย์ให้เรียงง่าย->ยาก)
     tags: list[str] = field(default_factory=list)
     samples: list[str] = field(default_factory=list)  # ชื่อ test ที่เป็น "ตัวอย่างสาธารณะ" (ที่เหลือ = hidden)
     hidden: bool = False        # true = โจทย์ชุดคอนเทสต์: ไม่โชว์ในหน้า Task (admin/คอนเทสต์เห็น)
@@ -312,14 +320,44 @@ def load_problem(pid: str) -> Problem:
     if no < 0:
         print(c(f"WARNING: problem '{pid}' has a negative 'no' ({no})", C.YELLOW))
         no = 0
+    level = _load_level(pid, cfg)
     # Local packages are always published; Supabase rows carry is_published
     # separately (unpublished = admin-only). Keep the default True here so
     # existing callers and tests are unaffected.
     return Problem(pid, title, time_limit, memory_limit, checker, tolerance, description, tests,
-                   difficulty, tags, samples, hidden, no, True)
+                   difficulty, level, tags, samples, hidden, no, True)
 
 
 DIFFICULTY_RANK = {"easy": 0, "medium": 1, "hard": 2}
+
+# Fine-grained curriculum level (1..5) -> the coarse badge the UI shows.
+# level 1-2 = easy, 3 = medium, 4-5 = hard. The level is the calibrated
+# difficulty; the badge is only a three-way summary of it.
+VALID_LEVELS = (1, 2, 3, 4, 5)
+LEVEL_BANDS = {1: "easy", 2: "easy", 3: "medium", 4: "hard", 5: "hard"}
+# Fallback level per coarse badge, used only when config.level is missing.
+BAND_DEFAULT_LEVEL = {"easy": 2, "medium": 3, "hard": 4}
+
+
+def band_for_level(level: int) -> str:
+    return LEVEL_BANDS.get(int(level or 0), "")
+
+
+def _load_level(pid: str, cfg: dict) -> int:
+    """Read config.level (1..5). Missing or invalid falls back to the band of
+    the coarse difficulty label so an un-updated package still sorts sanely."""
+    raw = cfg.get("level")
+    if raw is None:
+        return BAND_DEFAULT_LEVEL.get(str(cfg.get("difficulty", "")).lower(), 0)
+    try:
+        level = int(raw)
+    except (TypeError, ValueError):
+        print(c(f"WARNING: problem '{pid}' has a non-numeric 'level' ({raw!r})", C.YELLOW))
+        return 0
+    if level not in VALID_LEVELS:
+        print(c(f"WARNING: problem '{pid}' has an out-of-range 'level' ({level})", C.YELLOW))
+        return 0
+    return level
 
 
 def order_key(prob: "Problem") -> tuple:
@@ -519,17 +557,26 @@ def prepare_workspace(workdir: Path, src: Optional[Path] = None) -> None:
 
 def _compile(command: list[str], workdir: Path):
     try:
-        from judge_runner import run_bounded
+        from judge_runner import run_bounded, SPAWN_FAILED_RC, SPAWN_FAILED_MARKER
     except ImportError as e:
-        raise CompileError(f"judge runner unavailable: {e}")
+        # The runner is infrastructure, not the student's source: never CE.
+        raise SandboxUnavailable("compiler runner unavailable (not a verdict)") from e
     prepare_workspace(workdir)
     # Linux/root must drop privileges even when compile memory limits are off.
     if os.name == "posix" and (COMPILE_MEMORY_MB or (
             sys.platform.startswith("linux") and os.geteuid() == 0)):
         command = [sys.executable, str(Path(__file__).resolve()), "--compile-sandbox",
                    str(COMPILE_MEMORY_MB), str(COMPILE_TIMEOUT), "--", *command]
-    result = run_bounded(command, "", COMPILE_TIMEOUT, output_limit=OUTPUT_LIMIT_BYTES,
-                         env=judge_env(str(workdir)), cwd=str(workdir))
+    try:
+        result = run_bounded(command, "", COMPILE_TIMEOUT, output_limit=OUTPUT_LIMIT_BYTES,
+                             env=judge_env(str(workdir)), cwd=str(workdir))
+    except OSError as exc:
+        # Host resource failure before the compiler started: not a CE.
+        raise SandboxUnavailable("compiler could not be started (not a verdict)") from exc
+    if result.returncode == SPAWN_FAILED_RC and SPAWN_FAILED_MARKER in (result.stderr or ""):
+        # The supervisor could not start the compiler at all. No student code
+        # was compiled, so this must never be recorded as CE.
+        raise SandboxUnavailable("compiler could not be started (not a verdict)")
     if result.returncode == PRIVILEGE_REFUSED_RC and PRIVILEGE_REFUSED_MARKER in result.stderr:
         raise SandboxUnavailable("compiler privilege drop failed (not a verdict)")
     if result.reason == "timeout":
@@ -555,6 +602,10 @@ def _linewise_exact(expected: str, actual: str) -> bool:
     return True
 
 def check_token(expected: str, actual: str) -> bool:
+    # Most accepted outputs are byte-for-byte identical. Avoid allocating two
+    # token lists for them; differently spaced answers still use token rules.
+    if expected == actual:
+        return True
     return expected.split() == actual.split()
 
 def check_float(expected: str, actual: str, tol: float) -> bool:
@@ -589,6 +640,10 @@ def check_decimal2(expected: str, actual: str, tol: float = 1e-6) -> bool:
     """Line-locked 2-decimal checker: same line/token counts, every token must
     look like setprecision(2) output, values within tolerance. Leading/trailing
     spaces per line (and multi-space gaps) are forgiven."""
+    if expected == actual and tol >= 0:
+        # Equality alone is insufficient: "1" must still fail this checker.
+        # Validate the format once; equal valid decimals need no float parsing.
+        return all(DECIMAL2_RE.fullmatch(token) for token in expected.split())
     e = expected.rstrip("\r\n").split("\n")
     a = actual.rstrip("\r\n").split("\n")
     if len(e) != len(a):
@@ -683,6 +738,15 @@ def _sample_rss_mb(pid: int) -> float:
             for line in f:
                 if line.startswith("VmHWM:"):
                     return int(line.split()[1]) / 1024.0
+        if sys.platform.startswith("linux"):
+            # Zombies have no resident address space (and no VmHWM). Running
+            # ps here adds a subprocess on almost every completed short test.
+            return 0.0
+    except FileNotFoundError:
+        if sys.platform.startswith("linux"):
+            # The supervised child has already been reaped. Keep the peak
+            # gathered while it was alive; ps cannot recover an exited RSS.
+            return 0.0
     except Exception:
         pass
     try:
@@ -821,12 +885,22 @@ def build_limits(memory_mb: int, time_limit: float, sandbox: bool = True, *,
             cpu = max(1, int(math.ceil(float(time_limit) + 1)))
             set_limit("RLIMIT_CPU", cpu)
             for lim, val in (
-                ("RLIMIT_NPROC", 64),      # กัน fork bomb
                 ("RLIMIT_FSIZE", 64 * 1024 * 1024),  # กันเขียนไฟล์ถล่ม disk
                 ("RLIMIT_CORE", 0),        # ไม่เอา core dump
                 ("RLIMIT_NOFILE", 64),     # กันเปิด fd ถล่ม (pinned by test_judge_runner)
             ):
                 set_limit(lim, val)
+            # RLIMIT_NPROC caps every process of the real UID, not just this
+            # job's children. It only holds as intended where the sandbox owns
+            # the UID (production Linux root drops to a unique job UID before
+            # exec). On macOS/Windows, and on non-root Linux where every job
+            # shares the service UID, a 64-process ceiling sits below the
+            # developer's own session: clang++ -> cc1 -> ld can fail EAGAIN,
+            # turning valid C/C++ sources into bogus CE. Keep the ceiling only
+            # for the Linux root identity-drop model; the warning above remains
+            # for all rlimit-only runs.
+            if sys.platform.startswith("linux") and os.geteuid() == 0:
+                set_limit("RLIMIT_NPROC", 64)  # กัน fork bomb
         except (ImportError, AttributeError, ValueError, OSError, TypeError):
             if strict_limits:
                 print(f"[grader] FATAL: {PRIVILEGE_REFUSED_MARKER}; resource limits unavailable",
@@ -1048,6 +1122,11 @@ def run_one(cmd: list[str], stdin_data: str, time_limit: float, memory_mb: int,
         # Strict-mode refusal: the wrapper exited before exec, so NO user
         # code ran. (A user program exiting 126 would lack the marker.)
         reason = "sandbox-unavailable"
+    if rc == SPAWN_FAILED_RC and SPAWN_FAILED_MARKER in (err or ""):
+        # The supervisor could not start the sandbox wrapper: host resource
+        # failure, not the submission. (A user program exiting 127 would lack
+        # the marker.) judge_test refuses to score it.
+        reason = "spawn-fail"
     if not reason and rc is not None and rc < 0:
         try:
             sig = -rc
@@ -1131,8 +1210,10 @@ def judge_test(cmd, tc: TestCase, prob: Problem, strict: bool,
         detail = hint + (f"\n{tail}" if tail.strip() else "")
         return "RE", wall, cpu, mem, detail, actual
     if reason == "spawn-fail":
-        detail = (res["stderr"] or "spawn failed") if diagnostics else "execution failed"
-        return "RE", wall, cpu, mem, detail, actual
+        # The sandbox wrapper never started (host resource failure): no
+        # submission code ran, so this is an environment error, never a
+        # verdict — the same contract as the strict-mode refusal above.
+        raise SandboxUnavailable("execution environment unavailable (not a verdict)")
     rc = res["returncode"]
     if rc is not None and rc != 0:
         err = res["stderr"] or ""

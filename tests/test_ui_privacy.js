@@ -37,6 +37,8 @@ function harness(storage = new Map(), blocked = false) {
       return elements.get(key);
     },
   });
+  vm.runInContext(source.slice(source.indexOf("/* ---------------- editor keys"),
+    source.indexOf("/* ---------------- task tabs")), context);
   vm.runInContext(source.slice(source.indexOf("function esc("), source.indexOf("function inlineMd(")), context);
   vm.runInContext(source.slice(source.indexOf("function problemNameHtml("), source.indexOf("function byPidOf(")), context);
   vm.runInContext(source.slice(source.indexOf("function taskScoreHtml("), source.indexOf("function renderTasksTable(")), context);

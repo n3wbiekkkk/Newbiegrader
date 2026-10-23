@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
 from fastapi import Request
+from fake_supabase import FakeSupabase
 from critical_helpers import test_server
 
 server = test_server()
@@ -40,15 +41,24 @@ class AuthRetentionAudit(unittest.TestCase):
             self.assertEqual(server._google_userinfo("synthetic-code")["email"],
                              "synthetic@example.invalid")
 
-    def test_handoff_full_replay_cache_does_not_break_valid_login(self):
-        entries = {str(i): time.monotonic() for i in range(10001)}
-        token = server._login_signer.dumps({"jti": "synthetic-new", "user": {
-            "email": "synthetic@example.invalid", "auth_version": 1}})
-        request = Request({"type": "http", "session": {}})
-        with patch.object(server, "_used_login_jti", entries), patch.object(server, "_current_identity", side_effect=lambda u: u):
+    def make_handoff(self, db):
+        email = "synthetic@example.invalid"
+        db.rows("users").append({"email": email, "name": "Synthetic", "auth_version": 1,
+                                 "email_verified_at": "2026-10-23T00:00:00Z"})
+        request = Request({"type": "http", "session": {}, "headers": []})
+        sid = server._start_web_session(request, {"email": email, "auth_version": 1,
+                                                 "provider": "google"}, False, pending=True)
+        return server._login_signer.dumps({"sid": sid, "remember": False})
+
+    def test_handoff_has_no_process_replay_cache_capacity_cutoff(self):
+        db = FakeSupabase()
+        with patch.object(server, "_sb", db):
+            token = self.make_handoff(db)
+            db.rows("web_sessions").extend({"token_hash": f"{i:064x}"} for i in range(10001))
+            request = Request({"type": "http", "session": {}, "headers": []})
             server.auth_finish(request, token, "#/tasks")
             self.assertEqual(request.session["user"]["email"], "synthetic@example.invalid")
-            replay = Request({"type": "http", "session": {}})
+            replay = Request({"type": "http", "session": {}, "headers": []})
             server.auth_finish(replay, token, "#/tasks")
             self.assertNotIn("user", replay.session)
 
@@ -62,19 +72,20 @@ class AuthRetentionAudit(unittest.TestCase):
             self.assertNotIn("payload", jobs["synthetic"])
             self.assertEqual(jobs["synthetic"]["result"]["verdict"], "OK")
 
-    def test_concurrent_handoff_is_single_use_and_full_cache_fails_closed(self):
-        token = server._login_signer.dumps({"jti": "synthetic-concurrent", "user": {
-            "email": "synthetic@example.invalid", "auth_version": 1}})
-        def finish(_):
-            request = Request({"type": "http", "session": {}})
-            server.auth_finish(request, token, "#/")
-            return "user" in request.session
-        with patch.object(server, "_used_login_jti", {}), patch.object(server, "_current_identity", side_effect=lambda u: u), ThreadPoolExecutor(max_workers=8) as pool:
-            self.assertEqual(sum(pool.map(finish, range(32))), 1)
-        entries = {str(i): time.monotonic() for i in range(20000)}
-        with patch.object(server, "_used_login_jti", entries), patch.object(server, "_current_identity", side_effect=lambda u: u):
-            self.assertFalse(finish(0))
-            self.assertEqual(len(entries), 20000)
+    def test_concurrent_handoff_is_single_use_and_database_failure_is_closed(self):
+        db = FakeSupabase()
+        with patch.object(server, "_sb", db):
+            token = self.make_handoff(db)
+            def finish(_):
+                request = Request({"type": "http", "session": {}, "headers": []})
+                server.auth_finish(request, token, "#/")
+                return "user" in request.session
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                self.assertEqual(sum(pool.map(finish, range(32))), 1)
+            with patch.object(db, "rpc", side_effect=RuntimeError("synthetic outage")):
+                with self.assertRaises(server.HTTPException) as error:
+                    finish(0)
+                self.assertEqual(error.exception.status_code, 503)
 
     def test_expired_completed_jobs_prune_below_the_old_5000_threshold(self):
         old = time.monotonic() - server.JOB_TTL_S - 1

@@ -96,3 +96,11 @@ test("persistent network failure keeps the job id for resume", async () => {
   await assert.rejects(h.poll(), (error) => error.keepJob === true && error.job_id === "job/a");
   assert.equal(h.calls.length, 9);   // 1 initial + 8 retries, then give up but keep id
 });
+
+test("active jobs expose completion within one polling interval", async () => {
+  for (const job of [{ status: "running" }, { status: "queued", queued_ahead: 0 }]) {
+    const h = harness([...Array(12).fill(job), { status: "done" }], 0.999);
+    await h.poll();
+    assert.ok(h.waits.every((ms) => ms <= 1000));
+  }
+});

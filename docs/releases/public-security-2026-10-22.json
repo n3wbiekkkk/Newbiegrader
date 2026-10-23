@@ -1,0 +1,160 @@
+{
+  "date": "2026-10-22",
+  "scope": "Public website and untrusted Python/C/C++ submissions on the existing PC; no repository visibility, SSH, logout design or database schema changes",
+  "application_release": "b290e8ca074e77b6ea681551fa74ed572e0cad8b",
+  "build_sha256": "4deece227ccc7353d04cbffcf62e7c969f69257f33cc463d477c9464b9d867f1",
+  "changes": {
+    "browser": "Pages static responses enforce CSP, HSTS, frame, MIME, referrer and permissions policies; API adds base-uri/object-src denial",
+    "sandbox": "Deny all native SysV IPC, keyring, BPF and perf_event_open calls on x86_64/aarch64; preserve ordinary process/thread operations and anonymous stream socketpairs",
+    "tls": "certifi 2026.10.19 pinned in direct requirements and host lock; installed from the reviewed offline wheel; CI audits both dependency inputs"
+  },
+  "dependency_advisory": "https://github.com/advisories/GHSA-6q48-6c7w-9gw2",
+  "validation": {
+    "linux_critical": 306,
+    "linux_full": 502,
+    "linux_skips": 0,
+    "native_isolation_canaries": 12,
+    "frontend_tests": 127,
+    "problem_reference_validation": "89/89",
+    "plagiarism": "4/4",
+    "known_vulnerabilities_in_locked_dependency_audit": 0,
+    "installed_packages_matching_lock": 36,
+    "reviewed_release_files_matching_git_and_root_controlled": 216,
+    "github_ci_run": 39788481600,
+    "github_ci_all_three_jobs": "success",
+    "pages_deployment": "7b39561d-f0c0-4a7b-8c67-db2d582fc358"
+  },
+  "browser_live": {
+    "inline_script_blocked": true,
+    "only_expected_script_src_violation_during_injected_probe": true,
+    "catalog_and_task_rendered": true,
+    "same_origin_pdf_http_status": 200,
+    "required_font_requests_http_status": 200,
+    "production_csp_and_hsts_read_back": true
+  },
+  "public_https": {
+    "boundary_checks": 15,
+    "private_path_and_unauthenticated_probes": [
+      {
+        "path": "/.env",
+        "status": 200,
+        "content_type": "text/html; charset=utf-8",
+        "private_bytes_exposed": false
+      },
+      {
+        "path": "/.git/config",
+        "status": 200,
+        "content_type": "text/html; charset=utf-8",
+        "private_bytes_exposed": false
+      },
+      {
+        "path": "/agent.md",
+        "status": 200,
+        "content_type": "text/html; charset=utf-8",
+        "private_bytes_exposed": false
+      },
+      {
+        "path": "/api/.env",
+        "status": 404,
+        "content_type": "application/json",
+        "private_bytes_exposed": false
+      },
+      {
+        "path": "/api/history?mine=1",
+        "status": 401,
+        "content_type": "application/json",
+        "private_bytes_exposed": false
+      },
+      {
+        "path": "/api/admin/overview",
+        "status": 403,
+        "content_type": "application/json",
+        "private_bytes_exposed": false
+      }
+    ],
+    "authenticated_submissions": [
+      {
+        "language": "python",
+        "admission_s": 0.449,
+        "queue_wait_s": 0.036,
+        "worker_execution_s": 2.953,
+        "observed_submit_to_result_s": 3.746,
+        "passed": 17,
+        "history_verified": true
+      },
+      {
+        "language": "c",
+        "admission_s": 0.417,
+        "queue_wait_s": 0.241,
+        "worker_execution_s": 3.009,
+        "observed_submit_to_result_s": 3.708,
+        "passed": 17,
+        "history_verified": true
+      },
+      {
+        "language": "cpp",
+        "admission_s": 0.478,
+        "queue_wait_s": 0.078,
+        "worker_execution_s": 3.221,
+        "observed_submit_to_result_s": 4.53,
+        "passed": 17,
+        "history_verified": true
+      }
+    ],
+    "existing_verified_operator_session": true,
+    "fresh_google_otp_password_login_tested": false,
+    "external_email_messages_manually_sent": false
+  },
+  "database_catalog_review": {
+    "tables_with_rls_and_no_anon_authenticated_select": 12,
+    "views_with_security_invoker_and_no_client_select": 2,
+    "server_only_rpc_no_client_execute": 8,
+    "private_storage_buckets": 2,
+    "storage_policies_for_client_roles": 0,
+    "schema_changed": false,
+    "rls_no_policy_advisor": "Expected deny-by-default for server-only tables",
+    "provider_leaked_password_protection_warning": "Still disabled; Supabase handles OTP while application passwords use the existing custom verifier; no password screening added"
+  },
+  "transport_review": {
+    "api_and_nginx_loopback_only": true,
+    "worker_public_subdomain_disabled": true,
+    "worker_preview_urls_disabled": true,
+    "pages_service_binding_to_private_pc_worker": true,
+    "bridge_key_secret_binding": true,
+    "query_strings_redacted_in_worker_logs_and_traces": true,
+    "automatic_worker_invocation_logs": false,
+    "cors_wildcard_not_enabled": true
+  },
+  "secret_review": {
+    "current_reviewed_index": "gitleaks passed, zero findings",
+    "historical_scan_commits": 370,
+    "historical_flags": 5,
+    "historical_flag_review": "Template file hash, two numeric GRADER_ACCEPT_JOBS examples, RPC name and public build fingerprint; no credential identified; history was not rewritten"
+  },
+  "operator_choices": {
+    "sandbox_api_restrictions": "Explicitly approved after compatibility impact explained",
+    "ssh": "Explicitly retained existing configuration; all-interface SSH with passwords remains, Internet reachability depends on router/network",
+    "logout": "Explicitly retained browser-only logout; copied valid session/remember cookies are not individually revoked by logout",
+    "ubuntu_updates": "Explicitly deferred: cached upgrade simulation showed 37 upgrades, zero additions/removals, two not upgraded. No OS update or reboot performed in this release."
+  },
+  "rollout": {
+    "queued_running_live_leases_drained_to_zero": true,
+    "workers": 4,
+    "resource_budgets_unchanged": true,
+    "installer_issue": "A private installer umask made new certifi files root-only and temporarily prevented API startup during the fenced rollout. Corrected public package permissions, verified import/CA loading as the API user, then reopened admission. Credentials stayed private.",
+    "current_api_and_four_workers": "active",
+    "watchdog_check_only": "healthy",
+    "post_verification_encrypted_backup_authenticated_off_host": true,
+    "backup_table_exports": 12,
+    "complete_hosted_database_auth_storage_restore_proved": false,
+    "temporary_session_headers_qa_and_transient_units": "removed"
+  },
+  "limits": [
+    "Scoped regression and live checks are not a guarantee against all vulnerabilities or host kernel escapes",
+    "Judge processes share the host kernel; no VM boundary added",
+    "Public abuse and sustained-user load were not exhaustively tested",
+    "Per-test descendant memory attribution remains distinct from whole-job cgroup containment",
+    "SSH and copied-cookie logout risks were retained by explicit operator choice",
+    "Pending Ubuntu updates were explicitly deferred by the operator; OS patch completeness is not claimed"
+  ]
+}

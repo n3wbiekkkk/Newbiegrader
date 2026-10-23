@@ -12,7 +12,7 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-function harness({ me, restore = async () => ({ restored: false }), route = '#/admin', healthFails = false }) {
+function harness({ me, restore = async () => ({ restored: false }), stats = async () => {}, route = '#/admin', healthFails = false }) {
   const nodes = new Map(), events = new Map(), queued = [], calls = [], replaced = [];
   let hash = route, adminLoads = 0;
   function node(id) {
@@ -58,7 +58,7 @@ function harness({ me, restore = async () => ({ restored: false }), route = '#/a
     problemsCacheAgeMs: () => Infinity, saveProblemsCache() {}, buildFilterOptions() {},
     stopContestTicker() {}, renderHome() {}, renderTasksTable() {},
     loadHistory() {}, loadAdminReports() {}, loadAdmins() {}, addAdminByEmail() {}, loadAdminHistory() {},
-    fetchStats: async () => {}, buildProblemSelect() {}, renderContestProblemPicker() {},
+    fetchStats: () => { calls.push('/api/stats'); return stats(); }, buildProblemSelect() {}, renderContestProblemPicker() {},
     loadAdminContests() { adminLoads++; }, loadOverview() { adminLoads++; },
   });
   function load(start, end) {
@@ -84,6 +84,37 @@ function harness({ me, restore = async () => ({ restored: false }), route = '#/a
 const admin = { user: { email: 'admin@example.invalid', name: 'Synthetic Admin' }, is_admin: true, profile: {} };
 const regular = { user: { email: 'student@example.invalid' }, is_admin: false, profile: {} };
 const anonymous = { user: null, is_admin: false };
+
+test('explicitly absent remember cookie skips restoration without granting an identity', async () => {
+  const h = harness({ me: async () => ({...anonymous, restore_available: false}) });
+  await h.start(); await h.flush();
+  assert.equal(h.calls.includes('/api/auth/restore'), false);
+  assert.equal(h.state.authReady, true);
+  assert.equal(h.state.user, null);
+  assert.equal(h.loads(), 0);
+});
+
+test('public statistics start while identity is pending and never delay auth readiness', async () => {
+  const identity = deferred(), stats = deferred();
+  const h = harness({ me: () => identity.promise, stats: () => stats.promise, route: '#/' });
+  const boot = h.start();
+  assert.equal(h.calls.filter(url => url === '/api/stats').length, 1);
+  assert.equal(h.state.authReady, false);
+  identity.resolve({...anonymous, restore_available: false});
+  await boot; await h.flush();
+  assert.equal(h.state.authReady, true);
+  stats.resolve(); await h.flush();
+});
+
+test('present remember cookie still restores and revalidates before opening admin', async () => {
+  let reads = 0;
+  const h = harness({ me: async () => ++reads === 1 ? {...anonymous, restore_available: true} : admin,
+    restore: async () => ({restored: true}) });
+  await h.start(); await h.flush();
+  assert.equal(reads, 2);
+  assert.equal(h.calls.filter(url => url === '/api/auth/restore').length, 1);
+  assert.equal(h.node('admin-content').classList.contains('hidden'), false);
+});
 
 test('reload retains admin URL and hides controls until the actual identity resolves', async () => {
   const pending = deferred(), h = harness({ me: () => pending.promise });

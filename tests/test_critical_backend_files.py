@@ -203,7 +203,7 @@ class CriticalBackendFiles(unittest.TestCase):
         self.assertEqual(path.read_bytes(),raw)
 
     def test_critical_native_file_canary_refuses_without_approved_idle_unit(self):
-        tool=Path(__file__).resolve().parents[1]/'tools/ec2_problem_file_canary.py'
+        tool=Path(__file__).resolve().parents[1]/'tools/host_problem_file_canary.py'
         result=subprocess.run([sys.executable,str(tool)],capture_output=True,text=True,timeout=10)
         self.assertNotEqual(result.returncode,0);self.assertIn('REFUSED',result.stderr)
 

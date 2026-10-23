@@ -7,7 +7,7 @@ Git เพื่อให้ AI คนละตัวหรือคนละ se
 ## 1. แหล่งข้อมูลและสิ่งที่ต้องตกลงก่อนเขียน
 
 - `config.json`: ชื่อ `ชื่อไทย (English Name)`, เลขถาวร, เวลา, หน่วยความจำ,
-  checker, difficulty, tags และรายชื่อ public samples
+  checker, level (1-5), difficulty, tags และรายชื่อ public samples
 - `statement.md`: เรื่องที่สัมพันธ์กับชื่อ กติกาครบ และ Input/Output ที่ไม่กำกวม
 - `tests/*.in|out`: แหล่งข้อมูลตัวอย่างจริง ห้ามคัดลอกแล้วแก้ซ้ำใน statement ด้วยมือ
 - `input_validator.py`: grammar/constraints ของ input ทั้ง public และ hidden
@@ -53,7 +53,7 @@ python tools/problem_authoring.py new new_problem \
 - `statement.md` ใช้ลำดับ Input → Output → ตัวอย่าง → คำอธิบายตัวอย่าง → Limits
 - `input_validator.py` และ reference เป็นร่างที่ **ยังไม่ผ่าน** จนกว่าจะเขียนจริง
 
-กรอก TODO ทั้งหมด ไม่ใช้ default แทนการตัดสินใจเรื่อง limits หรือ difficulty
+กรอก TODO ทั้งหมด ไม่ใช้ default แทนการตัดสินใจเรื่อง limits, level หรือ difficulty
 ถ้ายอมหลายคำตอบ ต้องกำหนดคำตอบที่เป็นเอกลักษณ์หรือใช้ checker ที่รองรับจริง
 checker `token` ไม่ยอมรับคำตอบคนละค่าแม้ว่าจะเป็นคำตอบที่โจทย์เปิดให้เลือกได้
 
@@ -156,7 +156,7 @@ CI มี synthetic authoring tests ใน Git จึงตรวจเครื
 เก็บ credentials ใน environment ของเครื่องมือฝั่ง server ไม่พิมพ์ค่าลงคำสั่งหรือ log
 ตั้งแต่ 2026-10-19 ไฟล์โจทย์เผยแพร่ลง backend disk ไม่ใช่ Supabase Storage แล้ว
 ตั้ง `GRADER_FILE_STORAGE=local` พร้อม `GRADER_PUBLIC_FILE_ROOT` /
-`GRADER_PRIVATE_FILE_ROOT` ของ EC2 ที่ป้องกันไว้ใน environment ของผู้เผยแพร่
+`GRADER_PRIVATE_FILE_ROOT` ของ backend ที่ป้องกันไว้ใน environment ของผู้เผยแพร่
 ชื่อ `import_problems_supabase.py` ยังใช้อยู่เพราะยังอัปเดต metadata ใน PostgreSQL
 แต่ตัวไฟล์จะถูกเขียนลง disk ก่อนแล้วจึงอัปเดต metadata สำหรับโจทย์ใหม่ที่ได้รับอนุญาต:
 
@@ -177,7 +177,7 @@ python tools/import_problems_supabase.py --problem new_problem --strict
 สำรองแถวเดิมและไฟล์/index ก่อนอัปเดตเสมอ importer ไม่ใช่ transaction ข้ามไฟล์กับ DB
 ต้อง pause admission, drain, หยุด worker และเผยแพร่แบบ serialize
 ถ้าแก้ชุดเทสต์ของโจทย์เดิม ต้องตรวจ active jobs และวางแผน rollback ของไฟล์กับ row
-สำรองข้อมูลไฟล์แบบ off-host ด้วย age ตาม `EC2_BACKUP_RESTORE.md` ก่อนและหลังเปลี่ยน
+สำรองข้อมูลไฟล์แบบ off-host ด้วย age ตาม `HOST_BACKUP_RESTORE.md` ก่อนและหลังเปลี่ยน
 
 หลังเปลี่ยนโจทย์ให้ restart worker (local file mode) และตรวจ `/api/version`
 เห็น hash รุ่นใหม่ก่อนสรุปว่างานเสร็จ
@@ -185,14 +185,42 @@ commit/push เฉพาะ code/docs/tools ที่เปลี่ยน ห�
 
 ### การเปลี่ยนเลขที่ได้รับอนุมัติเป็นกรณีพิเศษ
 
-รอบ 2026-10-20 ผู้ดูแลอนุมัติให้เปลี่ยนเลขทั้ง catalog ตามระดับความยาก
-ดู [แผนที่เลขเก่า/ใหม่](catalog/problem-numbers-2026-10-20.csv) และ
-[หลักฐานการเผยแพร่](releases/PROBLEM_EXPANSION_2026-10-20.md)
+รอบ 2026-10-22 ผู้ดูแลอนุมัติให้เปลี่ยนเลขทั้ง catalog ตามความยากที่ประเมินแล้ว
+ดู [แผนที่เลขเก่า/ใหม่](catalog/problem-numbers-2026-10-22.csv)
+หลักฐานการเผยแพร่เก็บไว้ในบันทึกภายใน
 เป็นข้อยกเว้นเฉพาะรอบนี้; งานถัดไปยังต้องรักษาเลขเดิมจนกว่าจะได้รับอนุมัติใหม่
 slug ID และประวัติการส่งไม่ถูกเปลี่ยนตามเลข
 ห้ามใช้ `--renumber` กับ production โดยสมมติว่าเป็น transaction ทั้งชุด:
 ต้องตรวจ reference, สำรอง, pause/drain และทดสอบ atomic SQL กับฐานจำลองก่อน
 ห้าม replay SQL/rollback ของ release ที่รับรองแล้วกับข้อมูลปัจจุบันโดยไม่ตรวจใหม่
+
+### ความยากของโจทย์ (`config.level`)
+
+`config.level` คือความยากจริงที่ประเมินจาก **เทคนิคที่ต้องใช้ + ภาระการเขียนโค้ด**
+ไม่ใช่ความยากของเนื้อเรื่อง (เรื่องดูน่ากลัวแต่แก้ด้วย loop เดียว = ง่าย)
+
+| level | ความหมาย | badge |
+| --- | --- | --- |
+| 1 | พื้นฐานล้วน: รับ input, loop, เลข, if/else | easy |
+| 2 | ต้องรู้ 1 แนวคิด: sort, dict/set, สูตร, greedy ง่าย | easy |
+| 3 | เทคนิคจริง: recursion, binary search, prefix sum, DP, BFS/DFS | medium |
+| 4 | ขั้นสูง: DSU, Fenwick, Dijkstra, tree DP, bitmask DP | hard |
+| 5 | ยากจริง: matrix exponentiation | hard |
+
+`config.difficulty` (easy/medium/hard) ต้องเป็น band ของ `level` เสมอ
+`tools/validate_problem.py` จะ fail ถ้าไม่ตรงกัน และ `tools/number_problems.py --check`
+จะ fail ถ้าเลขไม่เรียงตาม level
+
+การเปลี่ยนเลขทั้ง catalog ทำผ่านแมปที่ commit ไว้ ไม่ใช่แก้ทีละไฟล์:
+
+```sh
+python3 tools/number_problems.py --order docs/catalog/problem-numbers-2026-10-22.csv --dry-run
+python3 tools/number_problems.py --order docs/catalog/problem-numbers-2026-10-22.csv
+python3 tools/number_problems.py --check
+```
+
+แมปเก็บ `slug,old_no,new_no,level,difficulty,title` และครอบคลุมทุกข้อใน `problems/`
+ถ้าไม่ครบ หรือมี slug ที่ไม่รู้จัก หรือ band ไม่ตรงกับ level เครื่องมือจะปฏิเสธทั้งหมด
 
 ## Prompt ย่อสำหรับ AI ตัวอื่น
 

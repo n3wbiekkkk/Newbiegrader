@@ -1,5 +1,10 @@
 # Codex MCP setup — Newbiegrader
 
+This is a dated integration/setup record, not a production deployment runbook.
+Server versions, tool counts and plan observations below describe that checkpoint.
+Use [the documentation index](README.md) for current host and release guidance;
+the configured development MCP project does not determine the production project.
+
 Verified on 2026-10-17 (Asia/Bangkok), macOS 27.0.1 / Apple Silicon.
 Initial setup branch: `chore/codex-mcp-setup`.
 Context7 was removed, including its local Codex OAuth credentials, at the user's request.
@@ -22,7 +27,7 @@ privately before adding one `cloudflare` entry; no duplicate was created.
 - Safe integration calls actually succeeded: documentation search, authenticated
   identity lookup, API schema search and a read-only account tunnel inventory
   returning HTTP 200. Later staging-only resource changes are recorded in the
-  EC2 migration log; this authentication does not approve production cutover.
+  private migration record; this authentication does not approve production cutover.
 - Requested OAuth scopes cover account/user read, Workers scripts read/write/
   bind, Pages metadata/read/write, tunnel read/write and connectivity directory
   read/bind/admin, plus offline refresh. Default broad authorization was stopped

@@ -252,6 +252,14 @@ class CriticalPeerInspection(unittest.TestCase):
         self.contests[:] = [self.contest('ended')]
         self.assertEqual(self.get().status_code, 200)
 
+    def test_critical_fresh_publication_state_blocks_unpublished_peer_source(self):
+        self.db.rows('problems').append({
+            'slug': self.prob.pid, 'is_published': True, 'hidden': False})
+        with patch.object(server, 'PROBLEM_SOURCE', 'supabase'):
+            self.assertEqual(self.get().status_code, 200)
+            self.db.rows('problems')[0]['is_published'] = False
+            self.assertEqual(self.get().status_code, 403)
+
     def test_critical_owner_keeps_existing_practice_feedback(self):
         self.email = AUTHOR
         self.target['results'][0].update(practice_feedback=True, input=CANARY,

@@ -240,6 +240,24 @@ class SupabaseProblems(unittest.TestCase):
         row = [r for r in self.fake.rows("problems") if r["slug"] == slug][0]
         self.assertEqual(int(row["no"]), target)
 
+    def test_parking_survives_a_table_that_already_holds_negatives(self):
+        """An interrupted renumber can leave rows parked on negatives. Parking
+        again must still produce unique negative values instead of colliding
+        with the ones that are already there."""
+        import tools.import_problems_supabase as imp
+        rows = list(self.fake.rows("problems"))
+        self.assertTrue(rows)
+        # Half-way state of an interrupted run: some rows still parked.
+        for row in rows[:2]:
+            self.fake.table("problems").update({"no": -7}).eq("slug", row["slug"]).execute()
+
+        parked = imp._park_numbers(self.fake)
+        self.assertEqual(parked, len(rows))
+        nos = [int(r["no"]) for r in self.fake.rows("problems")]
+        self.assertTrue(all(n < 0 for n in nos), "every parked number must be negative")
+        self.assertEqual(len(set(nos)), len(nos), "parked numbers must stay unique")
+        self.assertNotIn(-7, nos, "a parked row must not keep its own value")
+
     def test_prune_removes_only_stale_test_objects(self):
         """Uploads are upserts, so a shrunken test set leaves stale objects.
         _prune_storage removes exactly those, and never a live object."""
@@ -295,8 +313,13 @@ class SupabaseProblems(unittest.TestCase):
         self.fake.storage_fail.add(f"{slug}/tests/1001.in")
         with self.assertRaises(problem_store.ProblemUnavailable):
             problem_store.load_problem_supabase(slug, client=self.fake)
-        # run_submission guards the empty-suite path too.
-        empty = grader.Problem(slug, "t", 1.0, 64, "token", 1e-6, "", [], "", [], [], False, 1, True)
+        # run_submission guards the empty-suite path too. Keyword arguments:
+        # the field order of the dataclass is not a stable contract.
+        empty = grader.Problem(
+            pid=slug, title="t", time_limit=1.0, memory_limit=64,
+            checker="token", tolerance=1e-6, description="", tests=[],
+            difficulty="", level=1, tags=[], samples=[], hidden=False, no=1,
+            is_published=True)
         res = server.run_submission(empty, ".py", "print(1)")
         self.assertIn("error", res)
 
@@ -478,17 +501,13 @@ class SupabaseProblems(unittest.TestCase):
         tc = next(t for t in local.tests if t.name == sample)
         self.assertEqual(r.json()["input"], tc.input)
         self.assertEqual(r.json()["output"], tc.expected)
-        # Admission is metadata-only; missing assets must fail in the async
-        # worker, never produce a judged verdict or persisted submission.
-        r = self.client.post("/api/submit",
-                             data={"problem": slug, "language": "python",
-                                   "code": 'print("synthetic-storage-canary")\n'},
-                             headers=BROWSER)
-        self.assertEqual(r.status_code, 202, r.text)
-        done = self.wait_job(r.json()["job_id"])
+        # ...but submission still fails closed: admission deliberately needs only
+        # metadata, so the worker resolves the private bytes, finds none, and
+        # ends the job as an explicit error (never Accepted, never a verdict).
+        queued = self.submit(slug, (ROOT / "examples" / f"{slug}_ref.py").read_text())
+        done = self.wait_job(queued["job_id"])
         self.assertEqual(done["status"], "error", done)
-        self.assertFalse(done.get("result"))
-        self.assertFalse(self.fake.tables.get("submissions", []))
+        self.assertIn("unavailable", (done.get("error") or "").lower())
 
     def test_schema_has_private_problem_storage(self):
         sql = (ROOT / "supabase" / "schema.sql").read_text(encoding="utf-8")

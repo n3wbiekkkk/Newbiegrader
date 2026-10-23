@@ -11,6 +11,9 @@ const state = {
   problems: [],
   stats: {},
   statsLoaded: false,
+  homeLevel: "easy",
+  homeSelected: null,
+  homeOffset: 0,
   myBest: {},
   myBestLoaded: false,
   detailCache: {},
@@ -143,10 +146,16 @@ function applyTheme(t) {
   try { localStorage.setItem("ng_theme", t); } catch (e) { /* ignore */ }
   const b = $("theme-btn");
   if (b) b.innerHTML = icon(t === "dark" ? "sun" : "moon");
+  document.querySelectorAll("[data-setting-theme]").forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.dataset.settingTheme === t));
+  });
 }
 try { applyTheme(localStorage.getItem("ng_theme") || "light"); } catch (e) { applyTheme("light"); }
 $("theme-btn").onclick = () =>
   applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
+document.querySelectorAll("[data-setting-theme]").forEach((button) => {
+  button.onclick = () => applyTheme(button.dataset.settingTheme);
+});
 
 /* ---------------- drafts, last language, last job (localStorage) ----------------
  * Judging is async, so wandering off mid-run is normal — a student who clicks
@@ -216,8 +225,34 @@ function lastLang() {
  * fastest way to make a beginner give up. Shift+Tab outdents, Enter keeps the
  * current indentation (and opens a block after `:` or `{`), Cmd/Ctrl+Enter
  * submits, Cmd/Ctrl+/ comments the selection out.
+ *
+ * The line numbers live in a gutter beside the textarea: a textarea cannot
+ * render one element per line. The gutter is positioned rather than laid out,
+ * so it always covers exactly the textarea's box, and it scrolls with it.
+ * The editor does not soft-wrap: a wrapped line occupies two visual rows and
+ * the numbers would drift out of step. Code scrolls sideways instead.
  */
 const INDENT = "    ";
+
+function syncEditorGutter() {
+  const ed = $("editor"), g = $("editor-gutter");
+  if (!ed || !g || typeof ed.value !== "string" || !g.dataset) return;
+  const lines = (ed.value.match(/\n/g) || []).length + 1;
+  if (g.dataset.lines !== String(lines)) {
+    g.dataset.lines = String(lines);
+    g.textContent = Array.from({ length: lines }, (_, i) => i + 1).join("\n");
+  }
+  g.scrollTop = ed.scrollTop;
+}
+
+/* Every write to the editor goes through here so the gutter never drifts:
+ * a programmatic value change does not fire `input`. */
+function setEditorValue(value, ed) {
+  const target = ed || $("editor");
+  if (!target) return;
+  target.value = value;
+  syncEditorGutter();
+}
 
 function commentToken() {
   return state.lang === "python" ? "#" : "//";
@@ -232,7 +267,7 @@ function lineRange(value, start, end) {
 function applyIndent(ed, outdent) {
   const v = ed.value, s = ed.selectionStart, e = ed.selectionEnd;
   if (s === e && !outdent) {                    // Tab with no selection: 4 spaces
-    ed.value = v.slice(0, s) + INDENT + v.slice(s);
+    setEditorValue(v.slice(0, s) + INDENT + v.slice(s), ed);
     ed.selectionStart = ed.selectionEnd = s + INDENT.length;
     return;
   }
@@ -244,7 +279,7 @@ function applyIndent(ed, outdent) {
     }
     return INDENT + line;
   }).join("\n");
-  ed.value = v.slice(0, from) + block + v.slice(to);
+  setEditorValue(v.slice(0, from) + block + v.slice(to), ed);
   if (s === e) {
     // Caret only: keep the caret where the student left it (no selection — a
     // selected block would be replaced by the very next keystroke).
@@ -272,7 +307,7 @@ function toggleComment(ed) {
     const pad = (line.match(/^\s*/) || [""])[0];
     return pad + tok + " " + line.slice(pad.length);
   }).join("\n");
-  ed.value = v.slice(0, from) + block + v.slice(to);
+  setEditorValue(v.slice(0, from) + block + v.slice(to), ed);
   ed.selectionStart = from;
   ed.selectionEnd = from + block.length;
 }
@@ -283,7 +318,7 @@ function newlineIndent(ed) {
   let pad = (line.match(/^[ \t]*/) || [""])[0];
   if (/[:{]\s*$/.test(line)) pad += INDENT;      // new block: indent one level
   const ins = "\n" + pad;
-  ed.value = v.slice(0, s) + ins + v.slice(ed.selectionEnd);
+  setEditorValue(v.slice(0, s) + ins + v.slice(ed.selectionEnd), ed);
   ed.selectionStart = ed.selectionEnd = s + ins.length;
 }
 
@@ -292,9 +327,12 @@ function bindEditorKeys() {
   if (!ed) return;
   let pending = null;
   ed.addEventListener("input", () => {           // autosave, debounced
+    syncEditorGutter();                          // numbers first: no visible lag
     clearTimeout(pending);
     pending = setTimeout(saveDraft, 400);
   });
+  ed.addEventListener("scroll", syncEditorGutter);
+  ed.addEventListener("focus", syncEditorGutter);
   ed.addEventListener("blur", saveDraft);
   ed.addEventListener("keydown", (ev) => {
     const meta = ev.metaKey || ev.ctrlKey;
@@ -308,6 +346,13 @@ function bindEditorKeys() {
       ev.preventDefault(); toggleComment(ed); saveDraft();
     }
   });
+  syncEditorGutter();
+  // A resized editor (the student drags the handle) changes the gutter's box.
+  if (typeof ResizeObserver === "function") {
+    try {
+      new ResizeObserver(syncEditorGutter).observe(ed);
+    } catch (e) { /* no observer: input/scroll/focus still keep it right */ }
+  }
 }
 
 /* ---------------- task tabs ---------------- */
@@ -907,7 +952,7 @@ function router() {
 window.addEventListener("hashchange", router);
 
 /* ---------------- home ---------------- */
-function renderHome() {
+function renderHome(animateSelection = false) {
   let subs = 0, acc = 0;
   Object.values(state.stats).forEach((s) => { subs += s.subs || 0; acc += s.accepted || 0; });
   $("stat-subs").textContent = state.statsLoaded ? subs : "—";
@@ -915,15 +960,60 @@ function renderHome() {
   $("stat-mine").textContent = state.user
     ? `${Object.values(state.myBest || {}).filter((v) => v === 100).length}`
     : "—";
-  const starters = state.problems.filter((p) => !p.hidden && p.difficulty === "easy")
-    .sort((a, b) => (a.no || 9999) - (b.no || 9999)).slice(0, 3);
-  $("home-problems").innerHTML = starters.length ? starters.map((p) =>
-    `<a class="home-problem" href="#/task/${encodeURIComponent(p.id)}">` +
+  const ledger = document.querySelector(".home-ledger");
+  if (ledger) ledger.classList.toggle("hidden", !state.statsLoaded && !state.user);
+  const pool = state.problems.filter((p) => !p.hidden && !p.contest_only && !p.config_hidden && p.difficulty === state.homeLevel)
+    .sort((a, b) => (a.no || 9999) - (b.no || 9999));
+  state.homeOffset = pool.length ? state.homeOffset % pool.length : 0;
+  const starters = Array.from({ length: Math.min(3, pool.length) }, (_, i) => pool[(state.homeOffset + i) % pool.length]);
+  $("home-next").disabled = pool.length <= 3;
+  const selected = starters.find((p) => p.id === state.homeSelected) || starters[0];
+  state.homeSelected = selected ? selected.id : null;
+  document.querySelectorAll("[data-home-level]").forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.dataset.homeLevel === state.homeLevel));
+  });
+  const box = $("home-problems");
+  const focusedProblem = document.activeElement && document.activeElement.dataset.homeProblem;
+  box.innerHTML = starters.map((p) =>
+    `<button type="button" class="home-problem" data-home-problem="${esc(p.id)}" aria-pressed="${p.id === state.homeSelected}">` +
     `<span class="home-problem-no">${esc(String(p.no || "—").padStart(2, "0"))}</span>` +
-    `<span>${problemNameHtml(p.title)}<span class="home-problem-topic">${esc((p.tags || []).slice(0, 2).join(" / "))}</span></span>` +
-    `<span class="row-arrow" aria-hidden="true">↗</span></a>`).join("")
-    : `<p class="dim">ยังไม่มีโจทย์แนะนำ <a class="text-link" href="#/tasks">ไปหน้าโจทย์ทั้งหมด</a></p>`;
+    `<span>${problemNameHtml(p.title)}</span><span class="selection-mark" aria-hidden="true"></span></button>`).join("");
+  box.querySelectorAll("[data-home-problem]").forEach((button) => {
+    button.onclick = (event) => {
+      state.homeSelected = button.dataset.homeProblem;
+      renderHome(true);
+      revealHomePreview(event);
+    };
+    if (button.dataset.homeProblem === focusedProblem) button.focus({ preventScroll: true });
+  });
+  $("home-featured").innerHTML = selected
+    ? `<div class="featured-meta"><div class="featured-number"><span>โจทย์</span><strong>${esc(String(selected.no || "—").padStart(2, "0"))}</strong></div>${diffBadge(selected.difficulty)}</div>` +
+      `<div class="featured-content"><h3>${problemNameHtml(selected.title)}</h3>` +
+      `<div class="featured-tags">${(selected.tags || []).slice(0, 3).map((tag) => `<span>${esc(tag)}</span>`).join("")}</div></div>` +
+      `<div class="featured-bottom"><dl class="featured-limits"><div><dt>เวลา</dt><dd>${esc(String(selected.time_limit))} วินาที</dd></div><div><dt>หน่วยความจำ</dt><dd>${esc(String(selected.memory_limit))} MB</dd></div></dl>` +
+      `<a class="featured-open" href="#/task/${encodeURIComponent(selected.id)}"><span>เปิดโจทย์</span>${icon("back")}</a></div>`
+    : `<p>ยังไม่มีโจทย์ในระดับนี้ <a href="#/tasks">ดูโจทย์ทั้งหมด</a></p>`;
+  if (animateSelection && selected && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    $("home-featured").querySelector(".featured-content").animate(
+      [{ opacity: .35, transform: "translateY(4px)" }, { opacity: 1, transform: "translateY(0)" }],
+      { duration: 180, easing: "ease-out" }
+    );
+  }
   renderResumeCard();
+}
+
+function revealHomePreview(event) {
+  const preview = $("home-featured");
+  const bounds = preview.getBoundingClientRect();
+  const headerBottom = document.querySelector(".topbar").getBoundingClientRect().bottom;
+  if (event.detail > 0 && (bounds.top < headerBottom || bounds.bottom > window.innerHeight)) {
+    preview.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
+  }
+}
+
+function emptyStateHtml(title, message, href, label) {
+  return `<div class="empty-state"><h3>${esc(title)}</h3><p>${esc(message)}</p>` +
+    (href ? `<a class="btn-ghost" href="${esc(href)}">${esc(label)}</a>` : "") + `</div>`;
 }
 
 function relTime(ts) {
@@ -999,8 +1089,8 @@ function byPidOf(list, pid) {
 
 function problemCell(pid) {
   const p = byPidOf(state.problems, pid);
-  const num = p && p.no ? `#${p.no} ` : "";
-  return `<a class="tlink" href="#/task/${encodeURIComponent(pid)}">${esc(num + pid)}</a>`;
+  const num = p && p.no ? `<span class="record-number">#${esc(String(p.no))}</span>` : "";
+  return `<a class="tlink problem-record" href="#/task/${encodeURIComponent(pid)}">${num}<span>${p ? problemNameHtml(p.title) : esc(pid)}</span></a>`;
 }
 
 function filteredProblems() {
@@ -1104,7 +1194,6 @@ function renderTasksTable() {
       <span class="tc-number">${esc(String(p.no || "—").padStart(2, "0"))}</span>
       <div class="tc-main">
         <div class="tc-title">${problemNameHtml(p.title)}</div>
-        <div class="tc-code">${esc(p.id)}</div>
         ${showTag ? `<div class="tc-tags">${tags || '<span class="dim">—</span>'}</div>` : ""}
         ${st.solvers > 0 || p.hidden ? `<div class="tc-meta">${st.solvers > 0 ? `<span>ผ่านแล้ว ${esc(String(st.solvers))} คน</span>` : ""}${p.hidden ? badge("ซ่อนจาก Task", "hidden") : ""}</div>` : ""}
       </div>
@@ -1157,62 +1246,30 @@ function renderArchive() {
     tagCount[t] = (tagCount[t] || 0) + 1;
   }));
   const box = $("archive-tags");
-  const tags = Object.keys(tagCount).sort();
+  const tags = Object.keys(tagCount).sort((a, b) => a.localeCompare(b));
   box.classList.remove("dim");
   box.innerHTML = tags.length
-    ? tags.map((t) => `<button class="tag-chip tag-click" data-tag="${esc(t)}">${esc(t)} × ${tagCount[t]}</button>`).join("")
-    : `<span class="dim">ยังไม่มี tag</span>`;
-  box.querySelectorAll("[data-tag]").forEach((b) => {
-    b.onclick = () => {
-      setTagFilter(b.dataset.tag);
-      location.hash = "#/tasks";
-    };
+    ? tags.map((t) => `<a class="archive-topic" href="#/tasks" data-tag="${esc(t)}"><span>${esc(t)}<small>${tagCount[t]} ข้อในหมวดนี้</small></span>${icon("back")}</a>`).join("")
+    : emptyStateHtml("ยังไม่มีหมวดโจทย์", "กลับมาเลือกหัวข้อได้เมื่อมีโจทย์พร้อมให้ฝึก", "#/tasks", "ดูโจทย์ทั้งหมด");
+  box.querySelectorAll("[data-tag]").forEach((link) => {
+    link.onclick = () => applyHomeFilter("", link.dataset.tag);
   });
-  const groups = {};
-  state.problems.forEach((p) => {
-    const d = p.difficulty || "unrated";
-    (groups[d] = groups[d] || []).push(p);
-  });
-  const order = ["easy", "medium", "hard"];
-  const keys = Object.keys(groups).sort((a, b) => {
-    const ia = order.indexOf(a), ib = order.indexOf(b);
-    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
-  });
-  // Personal progress per group (solved = best score 100), like programming.in.th archive cards.
-  const g = $("archive-groups");
-  let html = `<div class="archive-grid">`;
-  keys.forEach((d) => {
-    const list = groups[d];
-    const total = list.length;
-    let solved = 0;
-    list.forEach((p) => {
-      if (state.myBest && state.myBest[p.id] === 100) solved++;
-    });
-    const pct = total ? Math.round((100 * solved) / total) : 0;
-    html += `<div class="archive-card" data-diff="${esc(d)}" role="button" tabindex="0">` +
-      `<div class="arch-top"><div class="arch-title">${icon("archive")}<span>${esc(d)}</span></div>` +
-      `<svg class="ring" viewBox="0 0 36 36" aria-hidden="true">` +
-      `<circle class="ring-bg" cx="18" cy="18" r="15.9"></circle>` +
-      `<circle class="ring-fg" cx="18" cy="18" r="15.9" pathLength="100" stroke-dasharray="${pct} 100" transform="rotate(-90 18 18)"></circle>` +
-      `<text class="ring-lbl" x="18" y="22">${pct}</text></svg></div>` +
-      `<div class="arch-sub"><span>${pct}% solved</span><span>${solved}/${total}</span></div>` +
-      `</div>`;
-  });
-  html += `</div>`;
-  html += state.user
-    ? `<p class="dim">คลิกการ์ดเพื่อดูโจทย์ระดับนั้นใน Tasks</p>`
-    : `<p class="dim">login เพื่อดู progress ของตัวเอง</p>`;
-  g.innerHTML = html || `<span class="dim">ยังไม่มีโจทย์</span>`;
-  g.querySelectorAll("[data-diff]").forEach((card) => {
-    const go = () => {
-      const d = card.dataset.diff;
-      state.filter.diff = d === "unrated" ? "" : d;
-      const fd = $("f-diff");
-      if (fd) fd.value = state.filter.diff;
-      location.hash = "#/tasks";
-    };
-    card.onclick = go;
-    card.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } };
+  const labels = { easy: "เริ่มต้น", medium: "ปานกลาง", hard: "ท้าทาย", unrated: "ยังไม่จัดระดับ" };
+  const keys = [...new Set(state.problems.map((p) => p.difficulty || "unrated"))]
+    .sort((a, b) => (DIFF_RANK[a] ?? 9) - (DIFF_RANK[b] ?? 9));
+  const progressReady = state.user && state.myBestLoaded;
+  $("archive-groups").innerHTML = `<div class="archive-grid">` + keys.map((d) => {
+    const list = state.problems.filter((p) => (p.difficulty || "unrated") === d);
+    const solved = list.filter((p) => state.myBest && state.myBest[p.id] === 100).length;
+    const pct = list.length ? Math.round(100 * solved / list.length) : 0;
+    return `<a class="archive-card" data-diff="${esc(d)}" href="#/tasks">` +
+      `<div class="arch-top"><h4>${esc(labels[d] || d)}</h4>${diffBadge(d)}</div>` +
+      (progressReady ? `<div class="arch-sub"><span>ทำผ่าน ${solved} / ${list.length} ข้อ</span><span>${pct}%</span></div><span class="arch-bar"><span class="arch-fill" style="width:${pct}%"></span></span>` :
+        `<p class="arch-description">${state.user ? "กำลังโหลดผลการฝึก…" : "เปิดดูโจทย์ในระดับนี้"}</p>`) +
+      `<span class="archive-level-open">ดูโจทย์ ${icon("back")}</span></a>`;
+  }).join("") + `</div>`;
+  $("archive-groups").querySelectorAll("[data-diff]").forEach((link) => {
+    link.onclick = () => applyHomeFilter(link.dataset.diff === "unrated" ? "" : link.dataset.diff);
   });
   if (state.user && !state.myBestLoaded) {
     fetchMyBest().then(() => {
@@ -1243,12 +1300,12 @@ function showPdfFrame(url) {
 
 function fillTaskDetail(p) {
   setTitle("tasks", `#${p.no || "?"} ${p.title}`);
-  $("task-title").innerHTML = `<span class="task-number">PROBLEM ${esc(String(p.no || "—").padStart(2, "0"))} <span>/ ${esc(p.id)}</span></span>${problemNameHtml(p.title)}`;
+  $("task-title").innerHTML = `<span class="task-number">โจทย์ ${esc(String(p.no || "—").padStart(2, "0"))} <span>/ ${esc(p.id)}</span></span>${problemNameHtml(p.title)}`;
   $("task-meta").innerHTML =
     `${diffBadge(p.difficulty)}` +
-    `<span class="meta-chip">TL ${esc(String(p.time_limit))}s</span>` +
-    `<span class="meta-chip">MEM ${esc(String(p.memory_limit))}MB</span>` +
-    `<span class="meta-chip">${esc(String(p.checker))} · ${p.tests} tests</span>` +
+    `<span class="meta-chip">เวลา ${esc(String(p.time_limit))} วินาที</span>` +
+    `<span class="meta-chip">หน่วยความจำ ${esc(String(p.memory_limit))} MB</span>` +
+    `<span class="meta-chip">${p.tests} เทสต์ / ตัวตรวจ ${esc(String(p.checker))}</span>` +
     ((p.tags || []).map((t) => `<span class="meta-chip">${esc(t)}</span>`).join(""));
   const nSamples = (p.samples || []).length;
   $("task-counts").textContent = `ตัวอย่างสาธารณะ ${nSamples} ข้อ`;
@@ -1438,7 +1495,7 @@ async function selectProblem(pid) {
   }
   // Per-problem workspace: this problem's draft code, no leftover attached file.
   const draft = draftFor(pid);
-  $("editor").value = draft;
+  setEditorValue(draft);
   setDraftHint(!!draft.trim());
   state.file = null;
   fi.value = "";
@@ -1459,7 +1516,7 @@ async function selectProblem(pid) {
   if (state.jobResults[pid]) {      // verdict of this session's last run on this problem
     renderResults(state.jobResults[pid].result, state.jobResults[pid].secs);
   } else {
-    $("result-body").innerHTML = `<span class="dim">ส่งโค้ดแล้วผลจะขึ้นตรงนี้</span>`;
+    $("result-body").innerHTML = `<div class="feedback-empty"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg><h3>พร้อมตรวจคำตอบ</h3><p>ส่งโค้ดแล้วดูคะแนน เวลา และผลรายเทสต์ได้ตรงนี้</p></div>`;
     $("score-line").textContent = "";
   }
   $("your-score-num").textContent = "—";
@@ -1559,7 +1616,7 @@ async function loadTaskMine() {
   const body = $("task-mine-body");
   if (!state.current) return;
   if (!state.user) {
-    body.innerHTML = `<span class="dim">login ด้วย Google ก่อนดูของตัวเอง</span>`;
+    body.innerHTML = `<div class="empty-state"><h3>ดูการส่งของคุณ</h3><p>เข้าสู่ระบบเพื่อดูประวัติและผลตรวจของโจทย์ข้อนี้</p><a class="btn-ghost" href="#/login">เข้าสู่ระบบ</a></div>`;
     return;
   }
   body.innerHTML = skel(4);
@@ -1568,7 +1625,7 @@ async function loadTaskMine() {
     if (gen !== _getGen || pid !== state.current) return;
     const rows = (h.configured && h.submissions) || [];
     if (!rows.length) {
-      body.innerHTML = `<span class="dim">ยังไม่เคยส่งข้อนี้ — ไปแท็บ Submit เลย</span>`;
+      body.innerHTML = `<div class="empty-state"><h3>ยังไม่เคยส่งข้อนี้</h3><p>เปิดแท็บส่งโค้ดเพื่อส่งคำตอบแรก แล้วกลับมาดูผลตรวจได้ที่นี่</p></div>`;
       return;
     }
     body.classList.remove("dim");
@@ -1584,6 +1641,7 @@ async function refreshMe() {
   const seq = state.meSeq = (state.meSeq || 0) + 1;
   const previousIdentity = JSON.stringify([state.user && state.user.email, !!state.is_admin]);
   let embedded = null;
+  let restoreAvailable;
   try {
     const me = await apiGet("/api/auth/me");
     if (seq !== state.meSeq) return;
@@ -1591,6 +1649,7 @@ async function refreshMe() {
     state.user = (me && me.user) || null;
     state.is_admin = state.isAdmin = !!(me && me.is_admin);
     embedded = me && me.profile ? me : null;
+    restoreAvailable = me && me.restore_available;
   } catch (e) {
     if (seq !== state.meSeq) return;
     state.authError = true;
@@ -1632,12 +1691,14 @@ async function refreshMe() {
     chip.textContent = display;
     chip.title = state.user.email || "";
   }
+  return { restore_available: restoreAvailable };
 }
 
 async function restoreInitialSession() {
-  await refreshMe();
+  const me = await refreshMe();
   // A missing session cookie is not a final denial until remember-me is checked.
-  if (!state.user) {
+  // Older backends omit the hint: retain their existing restoration flow.
+  if (!state.user && (!me || me.restore_available !== false)) {
     try {
       const r = await apiGet("/api/auth/restore");
       if (r && r.restored) await refreshMe();
@@ -1671,7 +1732,7 @@ async function signOut() {
   try { localStorage.removeItem(PROBLEMS_CACHE_KEY); } catch (e) { /* ignore */ }
   clearGetCache();   // GET cache holds per-user answers (history?mine=1): must not leak to the next login
   clearLocalWorkspace();
-  $("editor").value = "";
+  setEditorValue("");
   $("run-input").value = "";
   fi.value = "";
   state.file = null;
@@ -1911,6 +1972,10 @@ let authBusy = false;
 
 function renderAuthStep() {
   const verifying = !!authPendingEmail;
+  $("auth-heading").textContent = verifying ? "ยืนยันอีเมล" : authMode === "login" ? "เข้าสู่ระบบ" : "สร้างบัญชี";
+  $("auth-description").textContent = verifying ? "กรอกรหัสที่ได้รับทางอีเมล แล้วตั้งรหัสผ่านสำหรับบัญชีของคุณ" :
+    authMode === "login" ? "ดูประวัติการส่ง บันทึกคะแนน และเปิดดูโค้ดของเพื่อน" : "ยืนยันอีเมลของคุณเพื่อเริ่มส่งคำตอบและเก็บประวัติการฝึก";
+  $("auth-fields").setAttribute("aria-labelledby", authMode === "login" ? "auth-tab-login" : "auth-tab-register");
   $("row-name").style.display = verifying ? "" : "none";
   $("row-auth-code").classList.toggle("hidden", !verifying);
   $("row-auth-pass").classList.toggle("hidden", authMode !== "login" && !verifying);
@@ -1920,6 +1985,7 @@ function renderAuthStep() {
     (authMode === "login" ? "เข้าสู่ระบบ" : "ส่งรหัสยืนยันอีเมล");
   $("auth-resend").classList.toggle("hidden", !verifying);
   $("auth-recover").classList.toggle("hidden", authMode !== "login");
+  globalThis.GraderBotVerification?.prepare(authMode === "register" && !verifying);
 }
 
 function setAuthMode(m) {
@@ -1928,13 +1994,25 @@ function setAuthMode(m) {
   authPendingEmail = "";
   $("auth-pass").value = "";
   $("auth-code").value = "";
-  document.querySelectorAll("[data-authtab]").forEach((b) =>
-    b.classList.toggle("active", b.dataset.authtab === m));
+  document.querySelectorAll("[data-authtab]").forEach((b) => {
+    const active = b.dataset.authtab === m;
+    b.classList.toggle("active", active);
+    b.setAttribute("aria-selected", String(active));
+    b.tabIndex = active ? 0 : -1;
+  });
   renderAuthStep();
   $("auth-err").classList.add("hidden");
 }
 document.querySelectorAll("[data-authtab]").forEach((b) => {
   b.onclick = () => setAuthMode(b.dataset.authtab);
+  b.onkeydown = (event) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    if (authBusy) return;
+    const mode = event.key === "Home" ? "login" : event.key === "End" ? "register" : authMode === "login" ? "register" : "login";
+    setAuthMode(mode);
+    document.querySelector(`[data-authtab="${mode}"]`).focus();
+  };
 });
 $("auth-recover").onclick = () => setAuthMode("register");
 
@@ -1948,7 +2026,7 @@ async function doPasswordAuth(resend = false) {
   err.classList.remove("bad");
   if (!email || ((verifying || authMode === "login") && !password)) {
     err.classList.add("bad");
-    err.textContent = "กรอกอีเมลและรหัสผ่านให้ครบ";
+    err.textContent = !email ? "กรอกอีเมลของคุณ" : "กรอกรหัสผ่านของคุณ";
     return;
   }
   if (verifying && !/^[0-9]{8}$/.test($("auth-code").value.trim())) {
@@ -1970,6 +2048,13 @@ async function doPasswordAuth(resend = false) {
   for (const id of ["auth-go", "auth-resend", "auth-recover", "google-btn"]) $(id).disabled = true;
   err.textContent = "กำลังดำเนินการ...";
   try {
+    if (path === "/api/auth/email/request") {
+      if (typeof globalThis.GraderBotVerification?.token !== "function") {
+        throw new Error("ระบบตรวจสอบผู้ใช้งานยังไม่พร้อม กรุณาโหลดหน้าเว็บใหม่");
+      }
+      const token = await globalThis.GraderBotVerification.token();
+      if (token) payload["cf-turnstile-response"] = token;
+    }
     const r = await fetch(API + path, {
       method: "POST", credentials: "include",
       headers: { "Content-Type": "application/json" },
@@ -2012,6 +2097,10 @@ async function doPasswordAuth(resend = false) {
     err.textContent = e.message;
   } finally {
     authBusy = false;
+    if (path === "/api/auth/email/request") {
+      globalThis.GraderBotVerification?.reset();
+      renderAuthStep();
+    }
     for (const id of ["auth-go", "auth-resend", "auth-recover", "google-btn"]) $(id).disabled = false;
   }
 }
@@ -2100,14 +2189,14 @@ $("file-clear").onclick = () => {
 
 $("file-load").onclick = async () => {
   if (!state.file) return;
-  $("editor").value = await state.file.text();
+  setEditorValue(await state.file.text());
   $("submit-status").textContent = "โหลดเนื้อหาไฟล์ลง editor แล้ว";
 };
 
 $("template-btn").onclick = () => {
   const t = (TEMPLATES[state.current] || {})[state.lang];
   if (t) {
-    $("editor").value = t;
+    setEditorValue(t);
     $("submit-status").textContent = `โหลด template แล้ว (${state.current} / ${state.lang})`;
   } else {
     $("submit-status").textContent = "ข้อนี้ยังไม่มี template";
@@ -2115,11 +2204,11 @@ $("template-btn").onclick = () => {
 };
 
 /* ---------------- judging jobs (async submit) ---------------- */
-// Base poll 700ms: prod is 1 vCPU and every poll is a proxied HTTPS round
-// trip; backoff below stretches it further while queued or unchanged.
+// Keep active jobs responsive; deep queues still back off to reduce API load.
 const POLL_MS = 700;
 const POLL_MIN_MS = 600;
 const POLL_CAP_MS = 4000;
+const POLL_ACTIVE_CAP_MS = 1000;
 const POLL_MAX_MS = 4 * 60 * 1000;
 const POLL_NET_RETRIES = 8;   // transient network blips: retry, don't drop the job id
 const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
@@ -2167,14 +2256,17 @@ async function pollJob(jid, onTick) {
     // checks don't add load to the judging host.
     const progressed = previous && (job.status !== previous.status ||
       (job.status === "queued" && Number(job.queued_ahead) < Number(previous.queued_ahead)));
-    delay = !previous || progressed ? POLL_MS : Math.min(POLL_CAP_MS, delay * 1.5);
+    const cap = job.status === "running" ||
+      (job.status === "queued" && !(Number(job.queued_ahead) > 0))
+      ? POLL_ACTIVE_CAP_MS : POLL_CAP_MS;
+    delay = !previous || progressed ? POLL_MS : Math.min(cap, delay * 1.5);
     if (job.status === "queued" && (Number(job.queued_ahead) || 0) > 0) {
       delay = Math.max(delay, 1500);
       if ((Number(job.queued_ahead) || 0) >= 5) delay = Math.max(delay, 3000);
     }
     previous = job;
     // Jitter prevents clients submitted together from polling in lockstep.
-    const jittered = Math.max(POLL_MIN_MS, Math.min(POLL_CAP_MS, delay * (0.8 + Math.random() * 0.4)));
+    const jittered = Math.max(POLL_MIN_MS, Math.min(cap, delay * (0.8 + Math.random() * 0.4)));
     await sleep(Math.min(remaining, jittered));
   }
 }
@@ -2602,14 +2694,15 @@ function shortTime(iso) {
 }
 
 function historyTable(rows, showProblem) {
-  let html = `<table class="tests"><thead><tr>
-    <th>เวลา</th>${showProblem ? "<th>ข้อ</th>" : ""}<th>ชื่อ</th><th>ภาษา</th><th>ผล</th><th>คะแนน</th><th></th>
-  </tr></thead><tbody>`;
+  let html = `<table class="tests history-table ${showProblem ? "history-with-problem" : "history-single-problem"}" role="table"><thead role="rowgroup"><tr role="row">
+    <th scope="col">เวลา</th>${showProblem ? '<th scope="col">ข้อ</th>' : ""}<th class="history-author" scope="col">ชื่อ</th><th scope="col">ภาษา</th><th scope="col">ผล</th><th scope="col">คะแนน</th><th scope="col"><span class="sr-only">ดูรายละเอียด</span></th>
+  </tr></thead><tbody role="rowgroup">`;
   rows.forEach((r) => {
-    html += `<tr>
-      <td title="${esc(r.created_at || "")}">${esc(shortTime(r.created_at))}</td>${showProblem ? `<td>${problemCell(r.problem)}</td>` : ""}<td>${esc(r.name || "—")}</td><td>${esc(r.language || "—")}</td>
-      <td>${badgeVerdict(rowVerdictCode(r))}</td><td>${r.passed}/${r.total} (<span class="${scoreCls(r.score)}">${r.score}</span>)</td>
-      <td><button class="icon-btn" data-view="${esc(r.id)}" title="ดูผลการตรวจ" aria-label="ดูผลการตรวจ">${icon("eye")}</button></td>
+    const language = { python: "Python", c: "C", cpp: "C++" }[r.language] || r.language || "—";
+    html += `<tr role="row">
+      <td class="history-time" role="cell" title="${esc(r.created_at || "")}">${esc(shortTime(r.created_at))}</td>${showProblem ? `<td class="history-problem" role="cell">${problemCell(r.problem)}</td>` : ""}<td class="history-author" role="cell">${esc(r.name || "—")}</td><td class="history-language" role="cell">${esc(language)}</td>
+      <td class="history-verdict" role="cell">${badgeVerdict(rowVerdictCode(r))}</td><td class="history-score" role="cell"><strong class="${scoreCls(r.score)}">${esc(String(r.score ?? "—"))}<small> / 100</small></strong><span>${esc(String(r.passed ?? "—"))} / ${esc(String(r.total ?? "—"))} เทสต์</span></td>
+      <td class="history-action" role="cell"><button class="icon-btn" data-view="${esc(r.id)}" title="ดูผลการตรวจ" aria-label="ดูผลการตรวจ">${icon("eye")}</button></td>
     </tr>`;
   });
   return html + `</tbody></table>`;
@@ -2627,7 +2720,7 @@ async function loadHistory(force) {
   const filt = $("hist-filter").value;
   if (!state.user) {
     $("hist-stats").textContent = "";
-    body.innerHTML = `<span class="dim">หน้านี้โชว์เฉพาะของตัวเอง — login ด้วย Google ก่อน (ของคนอื่นดูได้ในแท็บ Submissions ของแต่ละข้อ)</span>`;
+    body.innerHTML = `<div class="empty-state"><h3>ประวัติการฝึกของคุณอยู่ที่นี่</h3><p>เข้าสู่ระบบเพื่อย้อนดูโค้ด คะแนน และผลตรวจของแต่ละครั้ง</p><a class="btn-primary" href="#/login">เข้าสู่ระบบ</a></div>`;
     return;
   }
   body.innerHTML = skel(6);
@@ -2638,31 +2731,24 @@ async function loadHistory(force) {
     const h = await apiGetCached(path, 10000, force === true);
     if (gen !== _getGen || seq !== state.historySeq) return;
     if (!h.configured) {
-      body.innerHTML = `<span class="dim">ยังไม่เปิด history — ตั้งค่า SUPABASE_URL / SUPABASE_KEY ที่ backend (schema ใน supabase/schema.sql)</span>`;
+      body.innerHTML = `<div class="empty-state"><h3>ประวัติยังไม่พร้อมใช้งาน</h3><p>กลับมาดูอีกครั้งภายหลัง หรือเลือกโจทย์ที่อยากฝึกต่อได้เลย</p><a class="btn-ghost" href="#/tasks">เลือกโจทย์</a></div>`;
       $("hist-stats").textContent = "";
       return;
     }
     const rows = h.submissions || [];
-    const agg = {};
-    rows.forEach((r) => {
-      const p = agg[r.problem] || (agg[r.problem] = { subs: 0, accepted: 0, best: 0 });
-      p.subs++;
-      if (r.accepted) p.accepted++;
-      p.best = Math.max(p.best, r.score || 0);
-    });
-    const stats = Object.entries(agg)
-      .map(([k, v]) => `${esc(k)}: ส่ง ${v.subs} ครั้ง, ผ่าน ${v.accepted}, ดีสุด ${v.best}`)
-      .join(" &nbsp;|&nbsp; ");
-    $("hist-stats").innerHTML = stats || "ยังไม่มีการส่ง";
-    if (!rows.length) {
-      body.innerHTML = `<span class="dim">ยังไม่มีการส่ง</span>`;
-      return;
-    }
     const vf = ($("hist-verdict") || {}).value || "";
     const shown = rows.filter((r) =>
       vf === "pass" ? r.accepted : vf === "fail" ? !r.accepted : true);
+    $("hist-stats").innerHTML = shown.length ? `<div class="history-summary">` +
+      `<div><span>รายการล่าสุดที่แสดง</span><strong>${shown.length}</strong></div>` +
+      `<div><span>ผ่านแล้ว</span><strong>${shown.filter((r) => r.accepted).length}</strong></div>` +
+      `<div><span>คะแนนดีที่สุดในรายการ</span><strong>${Math.max(0, ...shown.map((r) => Number(r.score) || 0))}<small> / 100</small></strong></div></div>` : "";
+    if (!rows.length) {
+      body.innerHTML = `<div class="empty-state"><h3>เริ่มจากคำตอบแรก</h3><p>เมื่อส่งโค้ด ประวัติและผลตรวจจะเก็บไว้ให้กลับมาดูได้ที่นี่</p><a class="btn-primary" href="#/tasks">เลือกโจทย์</a></div>`;
+      return;
+    }
     if (!shown.length) {
-      body.innerHTML = `<span class="dim">ไม่มีการส่งที่ตรงกับตัวกรอง</span>`;
+      body.innerHTML = `<div class="empty-state"><h3>ไม่พบการส่งที่ตรงกัน</h3><p>ลองเลือก “ทุกผล” หรือเปลี่ยนโจทย์ในตัวกรองด้านบน</p></div>`;
       return;
     }
     body.classList.remove("dim");
@@ -2862,35 +2948,21 @@ async function renderContests() {
     state.contests = d.contests || [];
     state.contestsConfigured = !!d.configured;
     if (!d.configured) {
-      body.innerHTML = `<div style="padding:4px">${esc(CONTESTS_UNCONFIGURED)}</div>`;
+      body.innerHTML = emptyStateHtml("สนามแข่งขันยังไม่พร้อมใช้งาน", "ระหว่างนี้เลือกโจทย์ฝึกด้วยตัวเองได้ เมื่อมีการแข่งขันจะดูรายละเอียดได้จากหน้านี้", "#/tasks", "ไปฝึกโจทย์");
       return;
     }
     const rows = state.contests;
     if (!rows.length) {
-      body.innerHTML = `<div style="padding:4px">ยังไม่มีคอนเทสต์</div>`;
+      body.innerHTML = emptyStateHtml("ยังไม่มีการแข่งขัน", "เมื่อมีการแข่งขันใหม่ วันเวลาและรายละเอียดจะแสดงที่นี่", "#/tasks", "ไปฝึกโจทย์ระหว่างรอ");
       return;
     }
     body.classList.remove("dim");
-    body.innerHTML = `<table class="tests"><thead><tr>
-      <th>#</th><th>คอนเทสต์</th><th>สถานะ</th><th>ช่วงเวลา (เวลาไทย)</th><th>โจทย์</th><th>ผู้ลงทะเบียน</th>
-    </tr></thead><tbody>` + rows.map((c, i) =>
-      `<tr class="test-row" data-contest="${esc(c.id)}" tabindex="0" role="link" aria-label="${esc("เปิดคอนเทสต์ " + (c.title || c.id))}">
-        <td>${String(i + 1).padStart(2, "0")}</td>
-        <td><strong>${esc(c.title || c.id)}</strong> <span class="dim">${esc(c.id)}</span></td>
-        <td>${contestStatusBadge(c.status)}${c.registered ? ` ${badge("ลงทะเบียนแล้ว", "OK")}` : ""}</td>
-        <td>${esc(contestWindowText(c))}</td>
-        <td>${c.status === "upcoming" && !state.is_admin ? "ยังไม่เปิดเผย" : `${(c.problems || []).length} ข้อ`}</td>
-        <td>${c.participants || 0} คน</td>
-      </tr>`).join("") + `</tbody></table>`;
-    body.querySelectorAll("tr[data-contest]").forEach((tr) => {
-      const open = () => {
-        location.hash = "#/contests/" + encodeURIComponent(tr.dataset.contest);
-      };
-      tr.onclick = open;
-      tr.onkeydown = (e) => {
-        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
-      };
-    });
+    body.innerHTML = `<div class="contest-list">` + rows.map((c) =>
+      `<a class="contest-event" href="#/contests/${encodeURIComponent(c.id)}">` +
+      `<div class="contest-event-main"><div class="contest-event-status">${contestStatusBadge(c.status)}${c.registered ? badge("ลงทะเบียนแล้ว", "OK") : ""}</div>` +
+      `<h3>${esc(c.title || c.id)}</h3><p>${c.status === "upcoming" && !state.is_admin ? "โจทย์เปิดเมื่อเริ่มแข่ง" : `${(c.problems || []).length} โจทย์`}<span>ผู้ลงทะเบียน ${Number(c.participants) || 0} คน</span></p></div>` +
+      `<dl class="contest-event-dates"><div><dt>เริ่ม / เวลาไทย</dt><dd>${esc(thaiTime(c.starts_at))}</dd></div><div><dt>สิ้นสุด</dt><dd>${esc(thaiTime(c.ends_at))}</dd></div></dl>` +
+      `<span class="contest-event-arrow" aria-hidden="true">${icon("back")}</span></a>`).join("") + `</div>`;
   } catch (e) {
     body.innerHTML = `<div style="padding:4px">โหลดคอนเทสต์ไม่ได้: ${esc(e.message)}</div>`;
   }
@@ -3052,7 +3124,7 @@ function renderContestProblems(d) {
     <th>#</th><th>ข้อ</th><th>ระดับ</th><th>เทสต์</th><th></th>
   </tr></thead><tbody>` + list.map((p, i) => {
     const nS = p.samples || 0;
-    const label = esc((p.no ? "#" + p.no + " " : "") + p.id);
+    const label = esc((p.no ? "#" + p.no + " " : "") + (p.title || p.id));
     const link = d.problems_open
       ? `<a class="tlink contest-open" href="#/task/${encodeURIComponent(p.id)}">${label}</a>`
       : `<span class="dim" title="โจทย์จะเปิดตอนเริ่มแข่ง">${label} <span class="badge b-hidden">ล็อก</span></span>`;
@@ -3063,7 +3135,7 @@ function renderContestProblems(d) {
       : `<a class="ghost-btn contest-open" href="#/task/${encodeURIComponent(p.id)}">${icon("eye")}<span>ดูโจทย์</span></a>`;
     return `<tr>
       <td>${String(i + 1).padStart(2, "0")}</td>
-      <td>${link} <span class="dim">${esc(p.title || "")}</span></td>
+      <td class="contest-problem-name">${link}</td>
       <td>${diffBadge(p.difficulty)}</td>
       <td>${nS} ตัวอย่าง</td>
       <td>${action}</td>
@@ -3197,7 +3269,7 @@ function setLang(lang) {
 async function renderSettings() {
   const body = $("settings-body");
   if (!state.user) {
-    body.innerHTML = `<span class="dim">เข้าสู่ระบบเพื่อแก้ไขข้อมูลบัญชี</span>`;
+    body.innerHTML = emptyStateHtml("ตั้งค่าบัญชีของคุณ", "เข้าสู่ระบบเพื่อเปลี่ยนชื่อที่แสดงและภาษาที่ใช้ส่งคำตอบ", "#/login", "เข้าสู่ระบบ");
     return;
   }
   body.innerHTML = skel(3);
@@ -3205,19 +3277,19 @@ async function renderSettings() {
     const data = await apiGet("/api/profile");
     const p = data.profile || {};
     if (!data.configured) {
-      body.innerHTML = `<p><strong>บัญชี:</strong> ${esc(p.name || "")} (${esc(p.email || "")})</p>
-        <p class="dim">ยังไม่เปิด profile (ตั้งค่า Supabase ที่ backend) — ชื่อโชว์จะใช้ชื่อ Google</p>`;
+      body.innerHTML = `<div class="account-identity"><strong>${esc(p.name || "บัญชีของคุณ")}</strong><span>${esc(p.email || "")}</span></div><p class="dim">ยังแก้ไขข้อมูลบัญชีไม่ได้ในขณะนี้</p>`;
       return;
     }
     body.classList.remove("dim");
     body.innerHTML = `
-      <p><strong>บัญชี Google:</strong> ${esc(p.name || "")} (${esc(p.email || "")})</p>
+      <div class="account-identity"><strong>${esc(p.name || "บัญชีของคุณ")}</strong><span>${esc(p.email || "")}</span></div>
       <div class="settings-row">
-        <label for="set-display">Display name <span class="dim">(ชื่อที่โชว์ใน history ว่าง = ใช้ชื่อ Google)</span></label>
+        <label for="set-display">ชื่อที่แสดง</label>
         <input id="set-display" type="text" maxlength="50" value="${esc(p.display_name || "")}" placeholder="${esc(p.name || "")}">
+        <p class="field-hint">เว้นว่างเพื่อใช้ชื่อจากบัญชีของคุณ</p>
       </div>
       <div class="settings-row">
-        <label for="set-lang">ภาษา default ตอนส่ง</label>
+        <label for="set-lang">ภาษาที่ใช้เป็นค่าเริ่มต้น</label>
         <select id="set-lang">
           <option value="python">Python</option>
           <option value="c">C</option>
@@ -3225,7 +3297,7 @@ async function renderSettings() {
         </select>
       </div>
       <div class="submit-row">
-        <button id="settings-save" type="button" class="submit-btn"><svg class="ic"><use href="#i-check"/></svg><span>บันทึก</span></button>
+        <button id="settings-save" type="button" class="submit-btn"><svg class="ic"><use href="#i-check"/></svg><span>บันทึกการตั้งค่า</span></button>
       </div>
       <div id="settings-status" class="status dim"></div>`;
     $("set-lang").value = p.default_language || state.lang;
@@ -3977,7 +4049,7 @@ $("ct-save").onclick = async () => {
 
 /* ---------------- init (cache-first, parallel, non-blocking) ---------------- */
 // Catalog numbers changed in the approved difficulty-order migration.
-const PROBLEMS_CACHE_KEY = "ng_problems_v3";
+const PROBLEMS_CACHE_KEY = "ng_problems_v4";
 const PROBLEMS_CACHE_TTL = 3600 * 1000;
 
 function loadProblemsCache() {
@@ -4075,6 +4147,11 @@ function renderTagList() {
 function setTagFilter(t) {
   state.filter.tag = state.filter.tag === t ? "" : t;
   renderTagList();
+  const disclosure = $("tag-filters");
+  if (disclosure && disclosure.open) {
+    disclosure.open = false;
+    disclosure.querySelector("summary").focus({ preventScroll: true });
+  }
   if (document.querySelector("#view-tasks.active")) renderTasksTable();
 }
 
@@ -4086,6 +4163,35 @@ function setStatusFilter(s) {
   });
   renderTasksTable();
 }
+
+function applyHomeFilter(diff = "", tag = "") {
+  state.filter.q = "";
+  state.filter.diff = diff;
+  state.filter.tag = tag;
+  $("q").value = "";
+  $("f-diff").value = diff;
+  renderTagList();
+  setStatusFilter("all");
+}
+
+document.querySelectorAll("[data-home-level]").forEach((button) => {
+  button.onclick = () => {
+    state.homeLevel = button.dataset.homeLevel;
+    state.homeSelected = null;
+    state.homeOffset = 0;
+    renderHome(true);
+  };
+});
+document.querySelectorAll("[data-home-tag]").forEach((link) => {
+  link.onclick = () => applyHomeFilter("", link.dataset.homeTag);
+});
+$("home-level-all").onclick = () => applyHomeFilter(state.homeLevel);
+$("home-next").onclick = (event) => {
+  state.homeOffset += 3;
+  state.homeSelected = null;
+  renderHome(true);
+  revealHomePreview(event);
+};
 
 function buildFilterOptions() {
   const diffs = [...new Set(state.problems.map((p) => p.difficulty).filter(Boolean))].sort();
@@ -4115,10 +4221,17 @@ async function init() {
   $("quick-search").onclick = openPalette;
   $("cookie-settings").onclick = () => maybeShowCookieBanner(true);
   maybeShowCookieBanner();
-  const wideFilters = window.matchMedia("(min-width: 901px)");
-  const fitFilters = () => { $("tag-filters").open = wideFilters.matches; };
-  fitFilters();
-  wideFilters.addEventListener("change", fitFilters);
+  const tagFilters = $("tag-filters");
+  tagFilters.open = false;
+  document.addEventListener("click", (event) => {
+    if (tagFilters.open && !tagFilters.contains(event.target)) tagFilters.open = false;
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && tagFilters.open) {
+      tagFilters.open = false;
+      tagFilters.querySelector("summary").focus();
+    }
+  });
   bindEditorKeys();
   setLang(lastLang() || state.lang);   // remember the language, default Python
   window.addEventListener("beforeunload", saveDraft);
@@ -4208,6 +4321,9 @@ async function init() {
   // to gate everything, so a slow proxy cost two round trips before the list
   // was even requested; now it only drives the status label.
   const problemsFresh = problemsCacheAgeMs() < 60 * 1000 && state.problems.length > 0;
+  // Stats contain only public aggregates and need not wait for identity or
+  // remember-me. Start their network round trip alongside the catalog.
+  const statsP = fetchStats();
   let healthErr = null;
   const healthP = apiGet("/api/health").then(() => {
     $("health").textContent = "online";
@@ -4226,7 +4342,7 @@ async function init() {
   ]);
   if (healthErr && !state.problems.length && location.hash !== "#/admin") {
     show("home");
-    document.querySelector("#view-home .hero .lede").textContent =
+    document.querySelector("#view-home .practice-description").textContent =
       "เชื่อมต่อระบบไม่ได้ในขณะนี้ ลองโหลดหน้าอีกครั้งในอีกสักครู่";
     return;
   }
@@ -4253,7 +4369,7 @@ async function init() {
   }
 
   // 4. stats never block rendering
-  fetchStats().then(() => {
+  statsP.then(() => {
     if (document.querySelector("#view-home.active")) renderHome();
     else if (document.querySelector("#view-tasks.active")) renderTasksTable();
   });

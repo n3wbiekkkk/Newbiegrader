@@ -26,6 +26,8 @@ function harness() {
   vm.runInContext(`const DETAIL_CACHE_TTL = 60000; const _detailInflight = new Map();
     const _getCache = new Map(); const _getInflight = new Map(); let _getGen = 0;
     const _sampleInflight = new Map(); const _pdfPrefetched = new Set();`, context);
+  vm.runInContext(source.slice(source.indexOf("/* ---------------- editor keys"),
+    source.indexOf("/* ---------------- task tabs")), context);
   vm.runInContext(source.slice(source.indexOf("function clearGetCache()"),
     source.indexOf("function apiPostJson")), context);
   vm.runInContext(source.slice(source.indexOf("function getProblemDetail("),

@@ -223,13 +223,24 @@ class CriticalRedaction(unittest.TestCase):
                 "stdout": self.canary, "stderr": self.canary,
                 "reason": "", "returncode": 7}
         for reason, code, err in (("", 7, self.canary), ("signal:SIGSEGV", -11, self.canary),
-                                  ("spawn-fail", -1, self.canary), ("oom", -9, self.canary),
+                                  ("oom", -9, self.canary),
                                   ("sigkill", -9, self.canary), ("", 1, "MemoryError " + self.canary)):
             with self.subTest(reason=reason, code=code), \
                     patch.object(grader, "run_one", return_value=base | {
                         "reason": reason, "returncode": code, "stderr": err}):
                 verdict = grader.judge_test([], tc, self.problem, False, True)
                 self.assertNotIn(self.canary, verdict[4])
+
+    def test_critical_spawn_failure_is_an_environment_error_not_a_verdict(self):
+        """Host exhaustion must never be recorded as the submission's RE."""
+        tc = self.problem.tests[1]
+        base = {"wall": 0.0, "cpu": 0.0, "peak_mb": 0,
+                "stdout": self.canary, "stderr": self.canary,
+                "reason": "spawn-fail", "returncode": -1}
+        with patch.object(grader, "run_one", return_value=base):
+            with self.assertRaises(grader.SandboxUnavailable) as raised:
+                grader.judge_test([], tc, self.problem, False, True)
+        self.assertNotIn(self.canary, str(raised.exception))
 
     def test_critical_redactor_covers_all_reveal_modes_and_raw_stream_keys(self):
         for reveal in ("all", "samples", "none"):

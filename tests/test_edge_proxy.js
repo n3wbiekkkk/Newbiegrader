@@ -84,7 +84,7 @@ test('service transport uses only the bound Worker with sanitized headers', asyn
   } } });
   assert.equal(await result.text(), 'bound');
   assert.equal(h.calls.length, 0);
-  assert.equal(bound[0].url, 'https://newbiegrader-aws.internal/api/health?q=1');
+  assert.equal(bound[0].url, 'https://newbiegrader-backend.internal/api/health?q=1');
   assert.equal(bound[0].init.headers.get('x-forwarded-for'), '192.0.2.7');
   assert.equal(bound[0].init.redirect, 'manual');
 });

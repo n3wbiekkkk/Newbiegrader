@@ -1,0 +1,64 @@
+{
+  "date": "2026-10-22",
+  "platform": "Ubuntu 26.04 x86_64 PC; Python 3.11",
+  "workers": 4,
+  "per_worker": {
+    "cpu": 1,
+    "memory_mib": 1024,
+    "swap_mib": 0,
+    "workspace_tmpfs_mib": 128
+  },
+  "fleet": {
+    "cpu": 4,
+    "memory_mib": 4096
+  },
+  "declared_memory_cap_mib": 128,
+  "critical_linux_tests": {
+    "run": 296,
+    "skipped": 0,
+    "passed": 296
+  },
+  "full_linux_tests": {
+    "run": 492,
+    "skipped": 0,
+    "passed": 492
+  },
+  "native_isolation_canaries": {
+    "per_allocation": 11,
+    "concurrent_allocations": 4,
+    "all_passed": true
+  },
+  "native_file_and_verdict_checks": 21,
+  "https_boundary_checks": 15,
+  "public_authenticated_submission_and_history": {
+    "python": "AC",
+    "c": "AC",
+    "cpp": "AC",
+    "cases_each": 17
+  },
+  "fresh_oauth_or_password_login_tested": false,
+  "privileged_durable_queue_probe": {
+    "jobs": 8,
+    "successful": 8,
+    "peak_simultaneous_running": 4,
+    "distinct_workers": 4,
+    "unique_sandbox_uids": 8,
+    "public_per_user_limits_unchanged": true
+  },
+  "files": {
+    "physical_sha256_matches": 2987,
+    "problems": 89,
+    "cases": 1594,
+    "pdfs": 89,
+    "public_sample_objects_verified": 269,
+    "hidden_file_urls_denied": 89
+  },
+  "recovery": {
+    "reboot_tailscale_and_four_workers": true,
+    "encrypted_off_host_file_restore_and_package_parity": true,
+    "scheduled_encrypted_configuration_and_table_export_recovered": true,
+    "table_exports": 12,
+    "complete_database_auth_restore_proved": false
+  },
+  "scope": "Measured migration verification; no problem rules, fixtures, schema or judging-engine changes."
+}

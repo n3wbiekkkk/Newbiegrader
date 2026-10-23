@@ -10,8 +10,30 @@ venv/
 agent.md
 problems/
 examples/
-output/
+# Local screenshots, previews and generated reports
+/output/
 tmp/pdfs/
 
 # Local agent instructions
 AGENTS.md
+
+# Local editor and agent artifacts
+.agent/
+.agents/
+.idea/
+.omp/
+.playwright-mcp/
+/review.diff
+
+# Private audit reports, release records and working notes
+/AUDIT_INTEGRATION_*.md
+/MAIN_RECONCILIATION_REPORT.md
+/RELEASE_BLOCKER_*.md
+/RELEASE_VALIDATION_*.md
+/docs/audits/*.md
+/docs/releases/*.md
+/docs/superpowers/**/*.md
+/docs/catalog/NEW_PROBLEMS_*.md
+/docs/linux-validation-todo.md
+/docs/statement-errata.md
+/docs/statement-stories.md

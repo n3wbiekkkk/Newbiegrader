@@ -1,0 +1,140 @@
+{
+  "date": "2026-10-22",
+  "application_release": "91d81a0942e0bf1b4e9debe92487ec1fad109ccf",
+  "build_sha256": "0a8f219e98d0f12b6ffa77523c236e2e48045451f95fa8098095760cb4cea15e",
+  "changes": [
+    "Move shared submission/playground execution and feedback helpers into a standard-library module; isolated jobs no longer import the HTTP/database stack",
+    "Avoid spawning ps for reaped/zombie Linux processes; retain live VmHWM sampling and non-Linux/error fallback"
+  ],
+  "unchanged": {
+    "workers": 4,
+    "worker_cpu_cores": 1,
+    "worker_memory_mib": 1024,
+    "fleet_cpu_cores": 4,
+    "fleet_memory_mib": 4096,
+    "declared_memory_cap_mib": 128,
+    "api_cpu_cores": 1,
+    "api_memory_mib": 320,
+    "fixture_bytes_limits_checkers_sandbox_and_authorization": true
+  },
+  "controlled_synthetic_17_case": {
+    "scope": "Same PC, serial tests, same bounded one-CPU/one-GiB unit, two repetitions per language; baseline already precompiled",
+    "before_seconds": {
+      "python": [
+        3.569,
+        3.51
+      ],
+      "cpp": [
+        3.733,
+        3.845
+      ]
+    },
+    "after_seconds": {
+      "python": [
+        2.82,
+        2.831
+      ],
+      "cpp": [
+        3.001,
+        3.027
+      ]
+    },
+    "interpretation": "About 20% shorter worker wall time for these short jobs; not an all-problem or sustained-user-capacity guarantee"
+  },
+  "public_https": {
+    "problem": "sum_even",
+    "cases": 17,
+    "before": [
+      {
+        "language": "python",
+        "admission_s": 0.496,
+        "queue_wait_s": 0.339,
+        "worker_execution_s": 3.708,
+        "observed_submit_to_result_s": 4.689,
+        "passed": 17,
+        "history_verified": true
+      },
+      {
+        "language": "c",
+        "admission_s": 0.415,
+        "queue_wait_s": 0.104,
+        "worker_execution_s": 3.764,
+        "observed_submit_to_result_s": 4.456,
+        "passed": 17,
+        "history_verified": true
+      },
+      {
+        "language": "cpp",
+        "admission_s": 0.359,
+        "queue_wait_s": 0.251,
+        "worker_execution_s": 4.112,
+        "observed_submit_to_result_s": 5.29,
+        "passed": 17,
+        "history_verified": true
+      }
+    ],
+    "after": [
+      {
+        "language": "python",
+        "admission_s": 0.518,
+        "queue_wait_s": 0.152,
+        "worker_execution_s": 2.994,
+        "observed_submit_to_result_s": 3.749,
+        "passed": 17,
+        "history_verified": true
+      },
+      {
+        "language": "c",
+        "admission_s": 0.409,
+        "queue_wait_s": 0.275,
+        "worker_execution_s": 2.903,
+        "observed_submit_to_result_s": 4.813,
+        "passed": 17,
+        "history_verified": true
+      },
+      {
+        "language": "cpp",
+        "admission_s": 0.321,
+        "queue_wait_s": 0.45,
+        "worker_execution_s": 3.275,
+        "observed_submit_to_result_s": 4.364,
+        "passed": 17,
+        "history_verified": true
+      }
+    ],
+    "accepted_and_linked_history_verified": true,
+    "existing_verified_operator_session": true,
+    "fresh_login_tested": false,
+    "interpretation": "One request per language in each phase; queue/network/polling variance remains. C observed end-to-end time increased despite shorter worker execution."
+  },
+  "frontend_lab_baseline": {
+    "url": "https://newbiegrader.pages.dev",
+    "first_contentful_paint_ms": 440,
+    "largest_contentful_paint_ms": 512,
+    "cumulative_layout_shift": 0.03995,
+    "ttfb_ms": 69,
+    "scope": "Single desktop Playwright page load, unthrottled; PerformanceObserver buffered entries. No INP, field population or Chrome performance trace collected. Frontend assets unchanged.",
+    "method_reference": "https://web.dev/articles/vitals"
+  },
+  "validation": {
+    "linux_critical": 301,
+    "linux_full": 497,
+    "linux_skips": 0,
+    "native_isolation": 11,
+    "frontend": 127,
+    "problem_references": "89/89",
+    "plagiarism": "4/4",
+    "extracted_execution_AST_parity": true,
+    "github_ci_run": 39778553117,
+    "github_jobs": "all three successful",
+    "pages_deployment": "f9ce8f64-6440-49fb-bfcf-85aef3569381"
+  },
+  "operations": {
+    "drained_queued_running_live_leases_before_cutover": true,
+    "four_workers_active_without_restarts": true,
+    "watchdog_check_only": "healthy",
+    "post_verification_encrypted_backup_downloaded_and_authenticated_off_host": true,
+    "backup_application_tables": 12,
+    "complete_hosted_database_auth_storage_restore_proved": false
+  }
+}

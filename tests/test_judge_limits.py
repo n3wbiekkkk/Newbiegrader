@@ -68,12 +68,19 @@ class MemoryLimitPolicy(unittest.TestCase):
     def test_correct_python_solution_is_ac(self):
         """The regression that failed CI: a correct Python program must pass."""
         prob = grader.load_problem("hanoi")
-        src = ROOT / "examples" / "hanoi_ref.py"
-        cmd, _disp, _warnings = grader.prepare_command(src, pathlib.Path(tempfile.mkdtemp()))
-        verdicts = [grader.judge_test(cmd, tc, prob, False, False, "python")[0]
-                    for tc in prob.tests]
+        # Keep private references inaccessible to sandbox identities. As with
+        # real submissions, execute a copy in the job's temporary workspace.
+        with tempfile.TemporaryDirectory() as tmp:
+            workdir = pathlib.Path(tmp)
+            src = workdir / "solution.py"
+            src.write_bytes((ROOT / "examples" / "hanoi_ref.py").read_bytes())
+            cmd, _disp, _warnings = grader.prepare_command(src, workdir)
+            verdicts = [grader.judge_test(cmd, tc, prob, False, False, "python")[0]
+                        for tc in prob.tests]
         self.assertEqual(set(verdicts), {"AC"}, f"reference solution verdicts: {verdicts}")
 
+    @unittest.skipUnless(sys.platform.startswith("linux"),
+                         "RLIMIT_AS kernel ceiling is enforced on Linux, not macOS mmap")
     def test_python_over_the_kernel_ceiling_is_mle(self):
         """Far over the allowance: the RLIMIT_AS ceiling stops it (SIGKILL)."""
         declared = 64

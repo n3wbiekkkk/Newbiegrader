@@ -105,6 +105,7 @@ function harness(initialRoute = '#/history') {
   load('function esc(', '/* ---------------- starter templates');
   load('function setTaskTab(tab)', 'function esc(');
   load('function ioBlockHtml(', 'function renderSample(');
+  load('/* ---------------- editor keys', '/* ---------------- task tabs');
   load('function clearGetCache(', 'function apiPostJson(');
   load('function show(view)', '/* ---------------- home');
   load('async function selectProblem(', 'async function refreshYourScore(');

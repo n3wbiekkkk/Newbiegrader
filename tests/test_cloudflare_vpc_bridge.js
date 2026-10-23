@@ -4,7 +4,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const { test } = require('node:test');
 const { webcrypto, timingSafeEqual } = require('node:crypto');
-const source = fs.readFileSync(path.join(__dirname, '../deploy/ec2/cloudflare/worker.js'), 'utf8')
+const source = fs.readFileSync(path.join(__dirname, '../deploy/host/cloudflare/worker.js'), 'utf8')
   .replace('export default', 'this.worker =');
 
 function harness(vars = {}) {

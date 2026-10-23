@@ -16,6 +16,8 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import grader  # noqa: E402
+
 TEMPLATES = ROOT / "tools" / "templates" / "problem"
 ID_RE = re.compile(r"[a-z][a-z0-9]*(?:_[a-z0-9]+)*\Z")
 SAMPLES_HEADING = "## ตัวอย่าง"
@@ -28,7 +30,7 @@ def problem_id(value: str) -> str:
 
 
 def create_problem(root: Path, pid: str, thai: str, english: str, no: int,
-                   hidden: bool = False) -> Path:
+                   hidden: bool = False, level: int = 2) -> Path:
     problem_id(pid)
     if (not thai.strip() or not english.strip()
             or not any("\u0e00" <= c <= "\u0e7f" for c in thai)
@@ -46,9 +48,13 @@ def create_problem(root: Path, pid: str, thai: str, english: str, no: int,
         if cfg.get("no") == no:
             raise ValueError(f"problem number {no} is already in use")
     title = f"{thai.strip()} ({english.strip()})"
+    if level not in (1, 2, 3, 4, 5):
+        raise ValueError("level must be 1..5")
     cfg = {"title": title, "time_limit": 1.0, "memory_limit": 256,
-           "checker": "token", "tolerance": 1e-6, "difficulty": "easy",
-           "tags": ["Implementation"], "samples": ["01", "02", "03"], "no": no}
+           "checker": "token", "tolerance": 1e-6,
+           "difficulty": grader.band_for_level(level),
+           "level": level, "tags": ["Implementation"], "samples": ["01", "02", "03"],
+           "no": no}
     if hidden:
         cfg["hidden"] = True
     # Read every template before creating anything. Drafts deliberately fail
@@ -107,6 +113,8 @@ def main(argv: list[str] | None = None) -> int:
     new.add_argument("--english", required=True)
     new.add_argument("--no", required=True, type=int)
     new.add_argument("--hidden", action="store_true")
+    new.add_argument("--level", type=int, default=2, choices=(1, 2, 3, 4, 5),
+                     help="calibrated difficulty 1..5 (1-2 easy, 3 medium, 4-5 hard)")
     sync = commands.add_parser("sync-samples", help="derive statement examples from declared public tests only")
     sync.add_argument("id")
     sync.add_argument("--write", action="store_true", help="replace only the sample section (default: check, exit 1 if stale)")
@@ -114,7 +122,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         problem_id(args.id)
         if args.command == "new":
-            create_problem(ROOT, args.id, args.thai, args.english, args.no, args.hidden)
+            create_problem(ROOT, args.id, args.thai, args.english, args.no, args.hidden,
+                           level=args.level)
             print(f"Created draft {args.id}; complete TODOs and run strict validation before publishing")
             return 0
         same = sync_samples(ROOT / "problems" / args.id, args.write)

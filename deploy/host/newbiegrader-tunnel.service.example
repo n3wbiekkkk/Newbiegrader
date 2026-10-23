@@ -1,0 +1,36 @@
+[Unit]
+Description=Newbiegrader approved named Cloudflare tunnel
+After=network-online.target nginx.service
+Wants=network-online.target
+Requires=nginx.service
+
+[Service]
+User=newbiegrader-tunnel
+Group=newbiegrader-tunnel
+# Root:root 0600 token. systemd copies it into a private read-only credential
+# directory for this unit; it never appears in argv or the process environment.
+LoadCredential=tunnel-token:/etc/newbiegrader/tunnel-token
+ExecStart=/usr/local/bin/cloudflared tunnel --no-autoupdate --metrics 127.0.0.1:20242 --protocol quic run --token-file ${CREDENTIALS_DIRECTORY}/tunnel-token
+Restart=on-failure
+RestartSec=10
+MemoryMax=128M
+MemorySwapMax=0
+CPUQuota=20%
+TasksMax=32
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectProc=invisible
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+UMask=0077
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=100
+
+[Install]
+WantedBy=multi-user.target

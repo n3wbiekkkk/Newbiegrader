@@ -4,19 +4,45 @@ Hashes detect accidental drift, not a malicious author or rendering defects.
 Visual review of every final page is still required.
 """
 import hashlib
+import io
 import json
+import tokenize
 from pathlib import Path
 
 TOOLS = Path(__file__).resolve().parent
 BRAND_ASSETS = (TOOLS.parent / "static" / "logo-icon.png",)
+
+# Whitespace and comment tokens carry no rendering decision, so they are left
+# out of the layout fingerprint.
+_IGNORED_TOKENS = frozenset({
+    tokenize.COMMENT, tokenize.NL, tokenize.NEWLINE, tokenize.ENCODING,
+})
 
 
 def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def renderer_source(path: Path) -> bytes:
+    """The renderer's token stream, with comments and line breaks removed.
+
+    A licence header or a code comment cannot change a rendered page, so it
+    must not invalidate the provenance record of every statement in the
+    catalog. The tokenizer decides what a comment is, so a `#` inside a string
+    literal is left alone, and the remaining tokens keep their types and text,
+    which is what the renderer actually acts on.
+    """
+    raw = path.read_bytes()
+    try:
+        tokens = [tok for tok in tokenize.tokenize(io.BytesIO(raw).readline)
+                  if tok.type not in _IGNORED_TOKENS]
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        return raw
+    return b"".join(f"{tok.type}:{tok.string}\n".encode() for tok in tokens)
+
+
 def build_record(cfg: dict, md: str, pdf: bytes) -> dict:
-    layout = (TOOLS / "make_statement_tex.py").read_bytes()
+    layout = renderer_source(TOOLS / "make_statement_tex.py")
     fonts = [p for p in (TOOLS / "fonts").iterdir() if p.suffix.lower() in (".ttf", ".otf")]
     for font in sorted(fonts):
         layout += font.name.encode() + bytes.fromhex(digest(font.read_bytes()))
