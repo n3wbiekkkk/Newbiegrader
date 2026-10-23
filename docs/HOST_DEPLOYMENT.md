@@ -63,7 +63,7 @@ worker slots; this changes neither its own cgroup budget nor judging semantics.
    qualification, `verify-workers.sh` and the Linux critical gate. A skip,
    unsupported control or missing cleanup is a failure. Qualify all four
    synthetic worker allocations concurrently before enabling real consumers.
-6. Verify the gated HTTPS transport, session continuity, CSRF, body limits and
+6. Verify the gated HTTPS transport, session authorization, CSRF, body limits and
    anonymous access boundaries. Stop admission on the previous active host,
    drain queued/running jobs and live leases, stop every previous consumer, and
    merge the final UID reservations before enabling the new workers.
@@ -180,3 +180,14 @@ configuration. Changing the destination preserves the bot token and host label;
 verify the exact guild/channel and posting permissions before replacing it.
 
 See [Discord Gateway behavior](https://docs.discord.com/developers/events/gateway).
+
+## Session schema and release activation
+
+The current session release requires the maintainer-applied additive
+[SQL Editor patch](../supabase/session_revocation.sql) before API activation.
+Verify backend-only grants, staging revocation and concurrency, then pause
+admission and drain queued/running jobs and leases. Rotate the host signing key
+once during activation; users sign in again. Keep the new key on rollback.
+Backups omit ephemeral session rows and recovery uses a fresh key. Follow the
+[full session runbook](SESSION_REVOCATION.md) and
+[measured qualification](releases/session-revocation-2026-10-23.json).

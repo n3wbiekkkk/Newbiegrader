@@ -3,7 +3,7 @@
 Current production is Cloudflare Pages with a private tunnel to the Ubuntu PC.
 The PC runs four isolated workers and a separate API; Supabase retains metadata,
 identities, history and the durable queue. The current verified application code
-is `b290e8ca074e77b6ea681551fa74ed572e0cad8b` (2026-10-22). Documentation-only
+is `8b2a484962e154a6806088823af4c005edafcba4` (2026-10-23). Documentation-only
 updates can follow that release without changing the running application.
 
 ## Operating the current deployment
@@ -17,6 +17,7 @@ updates can follow that release without changing the running application.
 | Queue bounds, scheduling, latency and load testing | [Load handling](load-handling.md) |
 | Public website security scope and accepted limitations | [Public security](PUBLIC_SECURITY.md) |
 | Release validation and remaining accounting limits | [Security readiness](SECURITY_READINESS.md) |
+| Session revocation, signing-key rotation and recovery | [Website sessions](SESSION_REVOCATION.md) |
 | Routine release and recovery gates | [Release checklist](release/README.md) |
 
 ## Problems, files and user access
@@ -33,15 +34,20 @@ updates can follow that release without changing the running application.
 
 ## Checkpoint records
 
+- [Session revocation qualification](releases/session-revocation-2026-10-23.json)
+  records the current session release, copied-cookie denial, SQL concurrency,
+  real HTTPS jobs and recovery with no restored sessions.
+- [Earlier public readiness](releases/public-readiness-2026-10-23.json) records
+  worker transport, Turnstile and Discord presence qualification.
 - [Public website security qualification](releases/public-security-2026-10-22.json)
-  records the current security release, actual HTTPS checks and operator decisions.
+  records the earlier security release, actual HTTPS checks and operator decisions.
 - [PC migration qualification](releases/pc-host-qualification-2026-10-22.json)
   records the initial migration and recovery checks.
 - [PC latency qualification](releases/pc-latency-2026-10-22.json) records the
   later runtime optimization, public HTTPS timings and 493-test Linux gate.
 - [Credential-free execution qualification](releases/pc-execution-performance-2026-10-22.json)
-  records the current release, roughly 20% shorter synthetic jobs, public before/after
-  timings and the 497-test Linux gate.
+  records the earlier execution release, roughly 20% shorter synthetic jobs,
+  public before/after timings and the 497-test Linux gate.
 - [Earlier single-worker benchmark](releases/single-worker-benchmark.json) is
   historical synthetic evidence and does not describe current PC capacity.
 - [Codex MCP setup](CODEX_MCP_SETUP.md) is a dated operator integration record;

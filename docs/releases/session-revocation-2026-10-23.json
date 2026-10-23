@@ -1,0 +1,126 @@
+{
+  "date": "2026-10-23",
+  "scope": "Server-side revocation of current website session and remember family; no MFA, SSH or OS changes",
+  "application_release": "8b2a484962e154a6806088823af4c005edafcba4",
+  "build_sha256": "8aeaa385c7eec825ca453c83b4630ffdad48bf56aad5c5a86f2b63397d5e746b",
+  "validation": {
+    "linux_critical": 330,
+    "linux_full": 537,
+    "linux_skips": 0,
+    "native_canaries": 12,
+    "frontend_tests": 144,
+    "private_reference_packages": "89/89",
+    "plagiarism": "4/4",
+    "installed_source_files_match_git": 232,
+    "code_ci": 39936370506,
+    "all_three_ci_jobs": "success",
+    "pages_code_deployment": "758ff6b8-7d0c-4805-8ff4-007f4da0a221",
+    "mac_full_suite_qualified": false,
+    "mac_full_limitation": "Linux isolation is unavailable; production controls were not weakened"
+  },
+  "schema": {
+    "applied_by": "maintainer via Supabase SQL Editor",
+    "app_tables_with_rls": 13,
+    "web_sessions_client_access": false,
+    "session_rpcs": 3,
+    "security_invoker": true,
+    "fixed_empty_search_path": true,
+    "service_role_minimal_grants": true,
+    "idempotent_patch": true
+  },
+  "session": {
+    "hash_only_database_state": true,
+    "cookie_has_only_opaque_session_reference": true,
+    "positive_auth_cache": false,
+    "protected_authorization_database_round_trips": 1,
+    "normal_cookie_rolling_days": 30,
+    "remember_days": 365,
+    "logout_db_failure_status": 503,
+    "password_account_version_invalidates_prior_families": true,
+    "legacy_signing_key_rotated_once": true,
+    "rollback_retains_new_key": true
+  },
+  "sql_concurrency": {
+    "parallel_finish_attempts": 32,
+    "finish_winners": 1,
+    "idempotent_revokes": 8,
+    "checks_denied_after_revoke": 16,
+    "password_reset_races_verified": true
+  },
+  "staging_latency_ms": {
+    "vantage": "PC loopback API with actual Supabase; alternating warmed samples",
+    "samples_per_version": 20,
+    "before_median": 61.71,
+    "after_median": 62.11,
+    "before_p95": 63.27,
+    "after_p95": 64.38,
+    "capacity_test": false
+  },
+  "public_https": {
+    "opaque_cookies_and_flags": true,
+    "handoff_replay_denied": true,
+    "legacy_cookies_denied": true,
+    "copied_session_after_logout": 401,
+    "copied_remember_restored": false,
+    "other_device_after_logout": 200,
+    "public_jobs": [
+      {
+        "language": "python",
+        "passed": 17,
+        "history_verified": true,
+        "first_status_after_logout": "running",
+        "admission_s": 0.413,
+        "worker_execution_s": 2.957,
+        "observed_submit_to_result_s": 4.449
+      },
+      {
+        "language": "c",
+        "passed": 17,
+        "history_verified": true,
+        "first_status_after_logout": null,
+        "admission_s": 0.377,
+        "worker_execution_s": 2.908,
+        "observed_submit_to_result_s": 4.952
+      },
+      {
+        "language": "cpp",
+        "passed": 17,
+        "history_verified": true,
+        "first_status_after_logout": null,
+        "admission_s": 0.325,
+        "worker_execution_s": 3.193,
+        "observed_submit_to_result_s": 4.656
+      }
+    ],
+    "temporary_sessions_revoked": true
+  },
+  "public_boundary_checks": 15,
+  "login_proof_scope": "Temporary handoffs for an existing verified operator; fresh Google/OTP/password proof was not repeated and no email was sent",
+  "recovery": {
+    "backup_authenticated": true,
+    "postgres_major": 17,
+    "tables_restored": 12,
+    "web_sessions_restored": 0,
+    "new_schema_tables": 13,
+    "all_row_values_match": true,
+    "schema_applied_twice": true,
+    "server_only_privilege_checks": true,
+    "tcp_listener": false,
+    "production_database_modified": false,
+    "scope": "Application table exports only; not hosted Auth/Storage/PITR restoration"
+  },
+  "monitoring": {
+    "watchdog_passes": 9,
+    "journal_error_lines_last_hour": 0,
+    "workers": 4,
+    "worker_restarts": 0,
+    "discord_label": "Newbiegrader website",
+    "discord_presence_sends_messages": false
+  },
+  "retained_limits": [
+    "Existing SSH/password configuration",
+    "Ubuntu updates deferred by operator",
+    "Shared host kernel; no VM boundary",
+    "No exhaustive distributed-abuse or sustained-capacity qualification"
+  ]
+}

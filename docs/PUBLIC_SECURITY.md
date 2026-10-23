@@ -1,11 +1,12 @@
 # Public website security qualification
 
 Verified 2026-10-23. Application release:
-`6e178c0ed3568572c68e8830da693f0086675887`.
+`8b2a484962e154a6806088823af4c005edafcba4`.
 The deployed controls passed the scoped public-website checks below. This is
 release evidence for the existing PC deployment, with the operator's retained
 limitations; it is not a guarantee against every vulnerability or kernel escape.
-See the [current record](releases/public-readiness-2026-10-23.json) and the
+See the [current session qualification](releases/session-revocation-2026-10-23.json),
+[earlier public readiness](releases/public-readiness-2026-10-23.json) and
 [previous security qualification](releases/public-security-2026-10-22.json).
 
 ## Browser and API boundary
@@ -92,7 +93,7 @@ report RE if they do not handle it. Ordinary Python/C/C++ code, threads,
 processes and anonymous stream socketpairs remain supported within the limits.
 
 The native host gate passed 12 probes, including the new syscall denial probe;
-Linux critical tests passed 311 and the full suite passed 517 with zero skips.
+Linux critical tests passed 330 and the full suite passed 537 with zero skips.
 Frontend tests passed 144, all 89 private reference validations passed and the
 three CI jobs passed. Actual public Python/C/C++ submissions received AC17/17
 and linked history was verified. This used an existing verified operator
@@ -108,11 +109,14 @@ The installed 36-package runtime matches the host lock, which has zero known
 vulnerabilities in this audit. CI now audits both direct requirements and the
 host lock; future findings require fresh review.
 
-Live catalog checks confirmed RLS and no client SELECT grants on 12 application
-tables, invoker-security views, server-only RPC execution and two private Storage
-buckets. RLS-without-policy advisor notices are intentional deny-by-default for
-these server-only tables, not a reason to add public policies. No database DDL
-or authorization policy change was made. Supabase's leaked-password protection
+Live catalog checks confirmed RLS and no client SELECT grants on 13 application
+tables, including the new server-only session table; invoker-security views,
+server-only RPC execution and two private Storage buckets remain protected.
+RLS-without-policy advisor notices are intentional deny-by-default for
+these server-only tables, not a reason to add public policies. The maintainer
+applied the reviewed additive session patch through SQL Editor. The three new
+invoker RPCs and table have only the required backend service-role grants.
+Supabase's leaked-password protection
 warning remains: it does not screen this application's separately stored
 passwords; provider OTP proof and the existing custom password verifier remain.
 
@@ -120,27 +124,42 @@ The reviewed source index passed secret scanning. A historical scan of 370
 commits flagged five documentation/example values; review identified hashes,
 numeric configuration and an RPC name, not credentials. History was preserved.
 Private fixtures, references, credentials and operator notes are absent from the
-root-controlled application release. All 226 release file hashes match Git.
+root-controlled application release. All 232 release file hashes match Git.
 
 After deployment, an encrypted backup was downloaded and authenticated off host,
-with valid UID reservations and 12 readable application table exports. All 12
-tables were restored into a disposable Unix-socket-only PostgreSQL 17 instance,
+with valid UID reservations and 12 readable durable application table exports.
+Ephemeral session rows are excluded. All 12 tables were restored into a disposable Unix-socket-only PostgreSQL 17 instance,
 matched by row values and passed the real privilege checks after applying the
-committed schema twice. The instance and plaintext database were removed.
+committed schema twice. The thirteenth table, `web_sessions`, remained empty;
+recovery requires a fresh signing key before admission. The instance and
+plaintext database were removed.
 This supplements the earlier protected-file restore rehearsal; it does not
 prove complete hosted Auth/Storage/PITR recovery or transactional consistency
 across separately exported tables.
+
+## Revocable sessions
+
+The earlier browser-only logout choice was superseded by the operator-approved
+[server-side revocation](SESSION_REVOCATION.md). Logout now revokes the current
+session/remember family in the database. A real HTTPS check rejected copied
+session credentials with 401 and could not restore their remember cookie, while
+a separate device remained authorized. An admitted Python job continued running
+after logout and completed AC; Python/C/C++ jobs all passed 17 cases with history.
+The check used temporary families for an existing verified operator, without
+repeating provider login or sending email. Temporary credentials were revoked
+and removed. A new host signing key invalidated legacy cookies once.
+
+Protected requests still use one database authorization round trip. Twenty
+alternating staging samples per version measured median 61.71 ms before and
+62.11 ms after (p95 63.27/64.38 ms), from PC loopback to the actual database.
+This is a scoped comparison, not a capacity guarantee. Database failure returns
+503 instead of accepting stale identity or claiming successful logout.
 
 ## Explicitly retained limitations
 
 The operator chose to keep the existing SSH configuration: password access and
 all-interface listeners remain; firewall/router/network exposure still needs
 operator management. No SSH/firewall policy was changed in this release.
-
-The operator also chose to keep browser-only logout. A copied valid session or
-remember cookie is not individually revoked by logout and can remain valid
-until expiry or an account-version change. Server-side session revocation or
-account-wide logout requires a separate product decision.
 
 The host's cached package upgrade simulation reported 37 upgrades, no additions
 or removals, and two packages held back. The operator explicitly deferred OS

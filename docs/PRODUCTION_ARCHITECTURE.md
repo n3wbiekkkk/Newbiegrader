@@ -1,7 +1,7 @@
 # Current production architecture
 
-Updated 2026-10-23 after worker transport and public abuse-protection changes.
-Verified application release: `6e178c0ed3568572c68e8830da693f0086675887`.
+Updated 2026-10-23 after server-side session revocation was deployed.
+Verified application release: `8b2a484962e154a6806088823af4c005edafcba4`.
 Documentation-only updates do not change that running application release.
 
 - **Frontend:** Cloudflare Pages, `https://newbiegrader.pages.dev`, vanilla SPA.
@@ -37,6 +37,11 @@ Documentation-only updates do not change that running application release.
   Worker PostgREST connections use pooled HTTP/1.1 with certificate verification;
   the API retains the pinned SDK's existing transport. Ambiguous claim failures
   are not automatically replayed.
+- **Website sessions:** opaque cookies identify a hash-only server-side family.
+  One database RPC checks revocation and current account identity per protected
+  request. Logout revokes that browser family; other devices remain active.
+  Password/account recovery invalidates prior versions. See
+  [session lifecycle and recovery](SESSION_REVOCATION.md).
 - **Public abuse controls:** the private Worker limits API, authentication and
   execution requests by trusted client IP, with shared classroom IPs in mind.
   Turnstile protects email-code requests before their existing handler; password
@@ -51,7 +56,9 @@ Documentation-only updates do not change that running application release.
   submission history remain intact. The calibrated catalog number map is
   unchanged.
 - **Backup:** the active PC runs the daily encrypted configuration/UID/table-row
-  export to the private Supabase backup bucket. Protected file bytes have a
+  export to the private Supabase backup bucket. Ephemeral `web_sessions` rows are
+  excluded; restore starts with no sessions and a fresh signing key. Protected
+  file bytes have a
   separate verified encrypted off-host backup. The age private identity stays
   off-host. See the recovery guide for the exact coverage and limits.
 - **Discord presence:** a separate unprivileged service checks the public HTTPS
@@ -69,4 +76,5 @@ See [deployment](HOST_DEPLOYMENT.md), [private transport](HOST_CLOUDFLARE_SETUP.
 [file storage](BACKEND_PROBLEM_FILES.md) and [backup/recovery](HOST_BACKUP_RESTORE.md).
 Private release records retain measured test results and host configuration.
 Application rollback uses a verified compatible release on this PC, retaining
-current files and the newest append-only UID ledger.
+current files, the newest append-only UID ledger and the newly rotated signing
+key. Never restore the retired signing key from saved configuration.

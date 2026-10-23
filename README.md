@@ -111,7 +111,8 @@ establish all-problem latency or simultaneous-user capacity. See
 The current [public website security qualification](docs/PUBLIC_SECURITY.md)
 records the browser protections, sandbox restrictions, patched CA bundle,
 edge rate limits and Turnstile email-request gate, together with measured live
-checks and retained SSH/session/OS limitations. Worker database traffic uses
+checks, revocable database sessions and retained SSH/OS limitations. Worker
+database traffic uses
 pooled HTTP/1.1 to avoid the observed HTTP/2 connection-turnover failures;
 ambiguous queue claims are never automatically replayed.
 

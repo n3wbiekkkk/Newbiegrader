@@ -4,7 +4,7 @@ Updated 2026-10-23 for the four-worker PC deployment. This describes verified
 controls and their limits; each release must repeat the applicable checks.
 See [current architecture](PRODUCTION_ARCHITECTURE.md),
 [host deployment](HOST_DEPLOYMENT.md) and the
-[latest measured qualification](releases/public-readiness-2026-10-23.json).
+[latest measured qualification](releases/session-revocation-2026-10-23.json).
 
 ## Execution and identity controls
 
@@ -28,10 +28,11 @@ See [current architecture](PRODUCTION_ARCHITECTURE.md),
 - Isolated execution imports the standard-library `judge_execution.py` module,
   not the HTTP app or database clients. Budgets are passed explicitly and the
   shared feedback helpers remain the same on API, persistence and runner paths.
-- Session authorization requires a currently verified, versioned identity.
-  Password/OTP and Google provider linking use the existing identity contract;
-  the PC move preserved identities and `SESSION_SECRET`. That move tested an
-  existing verified session, without claiming a fresh OTP/Google login.
+- Session authorization requires a live, unrevoked database session joined with
+  a currently verified, versioned identity. No positive auth cache is used.
+  Logout revokes the current session/remember family; password/account recovery
+  invalidates all prior account versions. Identity proof and linking are unchanged.
+  Activation rotated the signing key once. See [session lifecycle](SESSION_REVOCATION.md).
 - Visibility, CSRF, proxy-header trust, body bounds and result allowlists remain
   enforced. Owner practice feedback and peer/contest restrictions follow the
   [feedback policy](submission-feedback-policy.md).
@@ -50,7 +51,7 @@ canaries, cleanup recovery, file-access/verdict checks and read-only worker
 preflights. Test all four allocations concurrently before changing their budgets.
 Use the reviewed host runbook to pause/drain when a check requires idle workers.
 
-The latest code release passed 311 critical tests and 517 full Linux tests with
+The latest code release passed 330 critical tests and 537 full Linux tests with
 zero skips, 144 frontend tests, 12 native isolation canaries and 15 public HTTPS checks.
 These counts describe that checkpoint, not a substitute for future validation.
 
@@ -88,7 +89,8 @@ versions, configuration, credentials, file contents or sandbox posture.
 ## Public website qualification
 
 See [public security](PUBLIC_SECURITY.md) for the current release, browser CSP,
-certificate patch, live database grants and explicitly retained SSH/logout risks.
+certificate patch, live database grants, retained SSH/OS risks and verified
+session-revocation behavior.
 The private Worker applies IP-based API/auth/execution limits before the PC and
 verifies Turnstile hostname/action for email-code requests. These generous
 shared-IP limits supplement account quotas; Cloudflare's local rate counters
