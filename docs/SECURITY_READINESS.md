@@ -1,10 +1,10 @@
 # Security release checks
 
-Updated 2026-10-22 for the four-worker PC deployment. This describes verified
+Updated 2026-10-23 for the four-worker PC deployment. This describes verified
 controls and their limits; each release must repeat the applicable checks.
 See [current architecture](PRODUCTION_ARCHITECTURE.md),
 [host deployment](HOST_DEPLOYMENT.md) and the
-[latest measured qualification](releases/public-security-2026-10-22.json).
+[latest measured qualification](releases/public-readiness-2026-10-23.json).
 
 ## Execution and identity controls
 
@@ -50,8 +50,8 @@ canaries, cleanup recovery, file-access/verdict checks and read-only worker
 preflights. Test all four allocations concurrently before changing their budgets.
 Use the reviewed host runbook to pause/drain when a check requires idle workers.
 
-The latest code release passed 306 critical tests and 502 full Linux tests with
-zero skips, 127 frontend tests, 12 native isolation canaries and public HTTPS checks.
+The latest code release passed 311 critical tests and 517 full Linux tests with
+zero skips, 144 frontend tests, 12 native isolation canaries and 15 public HTTPS checks.
 These counts describe that checkpoint, not a substitute for future validation.
 
 ## Verify the deployed backend
@@ -89,6 +89,10 @@ versions, configuration, credentials, file contents or sandbox posture.
 
 See [public security](PUBLIC_SECURITY.md) for the current release, browser CSP,
 certificate patch, live database grants and explicitly retained SSH/logout risks.
+The private Worker applies IP-based API/auth/execution limits before the PC and
+verifies Turnstile hostname/action for email-code requests. These generous
+shared-IP limits supplement account quotas; Cloudflare's local rate counters
+are approximate and do not establish a strict global budget or DDoS guarantee.
 The operator approved denying SysV IPC, keyring, BPF and performance tracing in
 sandboxed compiler/runtime processes. Ordinary threads/processes remain supported
 under the existing budgets; programs relying on the denied APIs receive EPERM.

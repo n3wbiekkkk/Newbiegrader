@@ -55,8 +55,9 @@ off-host backup after each operational or problem-file change.
 durable queue, disk and backup age. Its root-only webhook configuration retains
 the existing token and host label. Use `--check-only` for validation without
 sending a message; schedule the watchdog only on the intended active host.
+With `NEWBIEGRADER_PUBLIC_URL` configured it also checks the public HTTPS chain.
 
-The latest post-optimization scheduled export was downloaded and decrypted
+The latest 2026-10-23 scheduled export was downloaded and decrypted
 off-host: the one-CPU API unit, UID ledger and 12 application table exports were
 readable. This supplements the earlier protected-file restore rehearsal; it
 does not extend the stated Database/Auth/Storage recovery coverage.

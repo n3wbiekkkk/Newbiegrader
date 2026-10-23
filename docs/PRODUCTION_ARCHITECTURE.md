@@ -1,7 +1,7 @@
 # Current production architecture
 
-Updated 2026-10-22 after the PC migration and submission-startup optimization.
-Verified application release: `b290e8ca074e77b6ea681551fa74ed572e0cad8b`.
+Updated 2026-10-23 after worker transport and public abuse-protection changes.
+Verified application release: `6e178c0ed3568572c68e8830da693f0086675887`.
 Documentation-only updates do not change that running application release.
 
 - **Frontend:** Cloudflare Pages, `https://newbiegrader.pages.dev`, vanilla SPA.
@@ -34,6 +34,15 @@ Documentation-only updates do not change that running application release.
   admin console and must be reviewed for unattended operation.
 - **Database, identities and durable queue:** the existing Supabase project;
   no database migration or identity rewrite was needed to move hosts.
+  Worker PostgREST connections use pooled HTTP/1.1 with certificate verification;
+  the API retains the pinned SDK's existing transport. Ambiguous claim failures
+  are not automatically replayed.
+- **Public abuse controls:** the private Worker limits API, authentication and
+  execution requests by trusted client IP, with shared classroom IPs in mind.
+  Turnstile protects email-code requests before their existing handler; password
+  login, OTP verification and judging keep their established authorization.
+  Exact settings and approximate local-counter limits are in the
+  [transport guide](HOST_CLOUDFLARE_SETUP.md).
 - **Files:** protected local public/private roots under
   `/var/lib/newbiegrader/problem-files/g1-4e9ba14273bc/`. Public files are
   root:newbiegrader-api with 0750 directories / 0440 files; private files are
@@ -45,8 +54,15 @@ Documentation-only updates do not change that running application release.
   export to the private Supabase backup bucket. Protected file bytes have a
   separate verified encrypted off-host backup. The age private identity stays
   off-host. See the recovery guide for the exact coverage and limits.
+- **Discord presence:** a separate unprivileged service checks the public HTTPS
+  identity path, local API and all four workers every 30 seconds. It displays
+  `Newbiegrader website` while online and goes invisible when those checks fail.
+  Discord/network outages can delay or obscure status; it is an indicator rather
+  than independent off-host monitoring. Alert routing stays in private configuration.
 - **Watchdog:** the PC checks API, all four workers, tunnel, queue, disk, backup
-  age and journal every five minutes. Its existing bot token stays in root-only
+  age, journal and the public HTTPS anonymous-identity endpoint every five minutes.
+  The public check traverses Pages, the private bridge and tunnel without a session.
+  Its existing bot token stays in root-only
   configuration; validation uses check-only mode without sending messages.
 
 See [deployment](HOST_DEPLOYMENT.md), [private transport](HOST_CLOUDFLARE_SETUP.md),

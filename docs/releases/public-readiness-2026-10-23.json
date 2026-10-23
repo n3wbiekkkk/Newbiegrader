@@ -1,0 +1,143 @@
+{
+  "date": "2026-10-23",
+  "scope": "Public website, worker connection reliability, edge abuse protection, encrypted recovery, Discord availability presence; retained operator SSH/logout/OS choices",
+  "application_release": "6e178c0ed3568572c68e8830da693f0086675887",
+  "build_sha256": "b7e18f4917158ba3f04c0e3a2e9a0684674e3c1cf26ba5fc6d9417d17cb45bb1",
+  "validation": {
+    "linux_critical": 311,
+    "linux_full": 517,
+    "linux_skips": 0,
+    "native_canaries": 12,
+    "frontend_tests": 144,
+    "private_reference_packages": "89/89",
+    "plagiarism": "4/4",
+    "known_vulnerabilities_in_direct_and_host_lock_audits": 0,
+    "installed_source_files_match_git": 226,
+    "code_ci": 39906896035,
+    "all_three_ci_jobs": "success",
+    "pages_code_deployment": "0c631265-3c3d-404b-9cc4-361e4fdcb2bd",
+    "discord_presence_regressions": 8,
+    "code_ci_commit": "6e178c0ed3568572c68e8830da693f0086675887",
+    "equivalent_qualified_source_tree_commit": "c876718fa492be1eef129efce8670ba86e8b438a"
+  },
+  "worker_transport": {
+    "postgrest": "HTTP/1.1 only for dedicated workers",
+    "api_transport_changed": false,
+    "tls_verified": true,
+    "actual_read_only_rpc_passes": 20,
+    "automatic_ambiguous_claim_replay": false,
+    "journal_alerts_suppressed": false,
+    "short_observation_proves_overnight_cure": false
+  },
+  "edge": {
+    "private_worker_and_preview_urls_disabled": true,
+    "query_strings_redacted": true,
+    "automatic_invocation_logs": false,
+    "rate_limits_per_60_seconds_per_ip": {
+      "api": 6000,
+      "auth": 600,
+      "execution": 600
+    },
+    "counter_scope": "approximate, local to Cloudflare location; not a strict global quota",
+    "account_and_queue_quotas_preserved": true
+  },
+  "turnstile": {
+    "enabled": true,
+    "hostname": "newbiegrader.pages.dev",
+    "action": "email_request",
+    "protected_routes": [
+      "POST /api/auth/email/request",
+      "POST /api/auth/register"
+    ],
+    "secret_kept_in_worker_secret_binding": true,
+    "invalid_token_production_status": 403,
+    "real_widget": "Operator passed the real challenge in their browser",
+    "human_assisted_real_backend_probe": {
+      "first_status": 400,
+      "first_meaning": "Fresh real token reached original invalid-email validation",
+      "replay_status": 403,
+      "same_token_rejected": true,
+      "email_sent": false
+    },
+    "fresh_otp_delivery_or_signup_verified": false
+  },
+  "public_https": {
+    "boundary_checks": 15,
+    "session_samesite": "none",
+    "authenticated_submissions": [
+      {
+        "language": "python",
+        "admission_s": 1.825,
+        "queue_wait_s": 0.164,
+        "worker_execution_s": 2.992,
+        "observed_submit_to_result_s": 5.043,
+        "passed": 17,
+        "history_verified": true
+      },
+      {
+        "language": "c",
+        "admission_s": 0.529,
+        "queue_wait_s": 0.213,
+        "worker_execution_s": 3.181,
+        "observed_submit_to_result_s": 4.287,
+        "passed": 17,
+        "history_verified": true
+      },
+      {
+        "language": "cpp",
+        "admission_s": 0.616,
+        "queue_wait_s": 0.062,
+        "worker_execution_s": 3.171,
+        "observed_submit_to_result_s": 4.803,
+        "passed": 17,
+        "history_verified": true
+      }
+    ],
+    "existing_verified_operator_session": true,
+    "fresh_google_otp_password_login_tested": false,
+    "manual_external_email_sent": false
+  },
+  "operations": {
+    "workers": 4,
+    "memory_cap_mb": 128,
+    "resource_budgets_unchanged": true,
+    "watchdog_checks_passed": 9,
+    "journal_matching_errors_in_last_hour": 0,
+    "public_https_watchdog_enabled": true,
+    "timers_enabled": true,
+    "discord_presence": "online; boot enabled",
+    "temporary_operator_headers_and_qa": "removed",
+    "discord_presence_activity": "Newbiegrader website",
+    "discord_presence_check_seconds": 30,
+    "discord_presence_memory_limit_mb": 64,
+    "discord_presence_cpu_quota_percent": 5,
+    "alert_destination": "operator-selected Discord #bot channel; permissions verified",
+    "manual_discord_test_message_sent": false,
+    "final_activity_change_restarted_api_or_workers": false
+  },
+  "recovery": {
+    "latest_deployed_configuration_backup_authenticated_off_host": true,
+    "uid_ledger_verified": true,
+    "application_tables_restored": 12,
+    "postgres_major": 17,
+    "all_row_values_match": true,
+    "schema_applied_twice": true,
+    "server_only_privilege_checks": true,
+    "disposable_database_used_unix_socket_only_and_removed": true,
+    "production_database_modified": false,
+    "protected_files_prior_restore_hashes": 2987,
+    "protected_problems": 89,
+    "protected_cases": 1594,
+    "selected_pdfs": 89,
+    "hosted_auth_storage_pitr_or_transactional_export_consistency_proved": false
+  },
+  "retained_limits": [
+    "Shared host kernel, no VM boundary",
+    "No guarantee against all attacks or sustained distributed abuse",
+    "Sustained user capacity was not load tested",
+    "Whole-job cgroups do not prove exact descendant accounting for each test",
+    "Existing all-interface/password SSH retained by operator",
+    "Copied valid cookies survive ordinary logout by operator choice",
+    "Ubuntu upgrades explicitly deferred by operator; no reboot or OS patching performed"
+  ]
+}
