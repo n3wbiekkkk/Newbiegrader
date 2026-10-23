@@ -87,12 +87,29 @@ Install `/etc/newbiegrader/host.env` as root:root 0600 with the complete fleet:
 
 ```ini
 NEWBIEGRADER_WORKER_UNITS="newbiegrader-worker@1.service newbiegrader-worker@2.service newbiegrader-worker@3.service newbiegrader-worker@4.service"
+NEWBIEGRADER_PUBLIC_URL=https://newbiegrader.pages.dev
 ```
 
 The watchdog reads this through its unit's `EnvironmentFile`. Without this
 setting its compatibility default checks the old singleton unit. Preserve the
 root-only webhook/token and host label, run `--check-only` with the same host
 environment, then enable the backup/alert/health timers on the active PC.
+The optional HTTPS origin adds an anonymous `/api/auth/me` check through the
+entire public transport. It must return an uncached 200 JSON object with
+`user: null`; redirects, invalid TLS, oversized replies and unexpected identities
+fail the check. Journal checks remain enabled with their original one-hour window.
+
+## Worker database transport
+
+`database_client.py` selects a pooled, TLS-verified HTTP/1.1 PostgREST client only
+for the dedicated worker role. The pinned SDK's API/combined transport is
+unchanged. Include this module in every release and container. Keep SDK versions
+pinned and repeat transport tests before upgrading its private session factory.
+
+This addresses observed HTTP/2 GOAWAY connection turnover during idle queue
+polling. It is not a claim that all future network failures are prevented.
+Do not replay a failed claim automatically: a disconnected POST can already
+have leased a job. Preserve durable lease recovery and journal alerting.
 
 ## Automatic recovery and availability
 
@@ -132,3 +149,34 @@ The public HTTPS verification used an existing verified operator session; it
 did not repeat a fresh Google/OTP login. Both Python/C/C++ results and linked
 history were checked. See [security validation](SECURITY_READINESS.md) for the
 source fingerprint and the limits of these checks.
+
+## Discord website presence
+
+`newbiegrader-discord-presence.service` maintains the existing bot's Gateway
+session with no subscribed intents. It reads the root-only alert configuration
+through a systemd credential, under a dedicated `newbiegrader-presence` system
+account with no home, login shell, sudo or capabilities,
+64 MiB memory and a 5% CPU ceiling. The host lock already includes `websockets`;
+no additional runtime dependency is required. Install the reviewed unit and
+enable it for boot only on the active PC. Bootstrap creates the dedicated account;
+existing installations must create that system account before starting the unit.
+Run one presence process for this bot.
+
+Every 30 seconds it requires all four workers, API and project tunnel to be active,
+local catalog health to pass and public HTTPS `/api/auth/me` to return anonymous
+identity. It displays Online after these checks and Invisible/Offline when they
+fail. Startup and reconnect begin invisible until fresh checks pass. Graceful
+shutdown closes the Gateway session normally; power/network loss appears offline
+after Discord's session timeout, which may take a few minutes. A Discord outage
+can make the bot offline while the website still works. Presence is an indicator,
+not an independent external uptime monitor or proof that every submission works.
+
+Heartbeat ACKs, resumable reconnects, backoff and a three-minute minimum between
+new Identify sessions prevent reconnect storms. Permanent authentication/intent
+errors stop the process rather than printing credentials or retrying rapidly.
+The service sends no channel messages. The existing watchdog independently sends
+ALERT/RECOVERED through REST to the operator-selected channel in the root-only
+configuration. Changing the destination preserves the bot token and host label;
+verify the exact guild/channel and posting permissions before replacing it.
+
+See [Discord Gateway behavior](https://docs.discord.com/developers/events/gateway).

@@ -1,0 +1,43 @@
+[Unit]
+Description=Newbiegrader Discord presence follows website health
+After=network-online.target newbiegrader-api.service newbiegrader-tunnel.service
+Wants=network-online.target
+StartLimitIntervalSec=3600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=newbiegrader-presence
+WorkingDirectory=/opt/newbiegrader/current
+Environment=PYTHONDONTWRITEBYTECODE=1
+EnvironmentFile=/etc/newbiegrader/host.env
+LoadCredential=discord-alert:/etc/newbiegrader/alert-webhook
+ExecStart=/usr/local/lib/newbiegrader/venv/bin/python -u deploy/host/discord_presence.py
+Restart=on-failure
+RestartSec=180
+TimeoutStopSec=15
+MemoryMax=64M
+MemorySwapMax=0
+CPUQuota=5%
+TasksMax=16
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=20
+
+[Install]
+WantedBy=multi-user.target

@@ -67,6 +67,7 @@ CONFIG_FILES = (
     "etc/systemd/system/newbiegrader-backup.timer",
     "etc/systemd/system/newbiegrader-alert.service",
     "etc/systemd/system/newbiegrader-alert.timer",
+    "etc/systemd/system/newbiegrader-discord-presence.service",
     "etc/systemd/system/newbiegrader-health.service",
     "etc/systemd/system/newbiegrader-health.timer",
     "etc/systemd/sleep.conf.d/60-newbiegrader-server.conf",

@@ -13,6 +13,7 @@ apt-get update -q
 apt-get install -y --no-install-recommends python3-venv gcc g++ nginx curl ca-certificates rsync age
 id newbiegrader-api >/dev/null 2>&1 || useradd --system --home /nonexistent --shell /usr/sbin/nologin newbiegrader-api
 id newbiegrader-tunnel >/dev/null 2>&1 || useradd --system --home /nonexistent --shell /usr/sbin/nologin newbiegrader-tunnel
+id newbiegrader-presence >/dev/null 2>&1 || useradd --system --user-group --no-create-home --home /nonexistent --shell /usr/sbin/nologin newbiegrader-presence
 install -d -m 0755 /opt/newbiegrader/releases /usr/local/lib/newbiegrader /var/lib/newbiegrader
 install -d -m 0700 /etc/newbiegrader /var/lib/newbiegrader/sandbox-identities /var/lib/newbiegrader/capacity
 install -d -m 0755 /var/lib/newbiegrader/workspaces /etc/systemd/journald.conf.d
