@@ -37,3 +37,6 @@ AGENTS.md
 /docs/linux-validation-todo.md
 /docs/statement-errata.md
 /docs/statement-stories.md
+
+# graphify local state
+graphify-out/.graphify_*
