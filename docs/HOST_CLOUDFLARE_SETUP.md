@@ -31,3 +31,49 @@ the staging Pages project. Keep API admission off and all worker gates absent.
 The smoke CLI verifies missing/wrong staging keys and production credential
 separation. `--production` probes the canonical production URL without reading
 or sending staging credentials.
+
+## API abuse protection
+
+Production enables `ABUSE_PROTECTION=1` on the private bridge. Three Cloudflare
+rate-limit bindings reject excess requests before they reach the PC:
+
+| Binding | Requests per 60 seconds, per client IP |
+| --- | ---: |
+| `API_RATE_LIMIT` | 6,000 across API routes |
+| `AUTH_RATE_LIMIT` | 600 across `/api/auth/` routes |
+| `EXECUTION_RATE_LIMIT` | 600 across submit/run POSTs |
+
+These deliberately generous network ceilings accommodate shared classroom IPs.
+The database's stricter account quotas, one-active-job rule and 25-job queue cap
+remain authoritative. Rate counts are approximate and local to a Cloudflare
+location; they are not a worldwide admission budget or a guaranteed DDoS limit.
+Use dedicated, stable rate-limit namespace IDs for this project. Missing bindings
+or limiter failures fail closed with 503; exceeded limits return 429/Retry-After.
+The bridge checks its shared key before accepting the IP supplied by Pages;
+cookies and client-supplied forwarding headers cannot select a quota identity.
+
+## Email-request bot verification
+
+The existing private bridge also validates Turnstile before forwarding POSTs to
+`/api/auth/email/request` and its `/api/auth/register` alias. It checks Siteverify
+success, action `email_request`, and exact hostname `newbiegrader.pages.dev`.
+Keep `TURNSTILE_SECRET` as a Worker secret. `TURNSTILE_SITEKEY` is public;
+`TURNSTILE_ENABLED=1` requires both values. Never enable the gate before deploying
+the frontend widget and verifying the destination configuration. Preserve existing
+secret bindings when updating Worker code; secret values must not enter source,
+command arguments or deployment output.
+
+`GET /api/auth/bot-config` returns only the public sitekey and enabled flag with
+`Cache-Control: no-store`. The widget loads when email signup/recovery needs it,
+and resets after every request attempt. Expired, replayed, wrong-action and
+wrong-host tokens are refused. Provider/network errors fail closed. Existing
+password login, OTP verification, Google sign-in and judging handlers keep their
+own authentication and authorization checks. No email is sent by the widget.
+
+The Pages CSP allows the specific `https://challenges.cloudflare.com` script and
+frame origin. It still denies inline scripts, plugins, injected base URLs and
+cross-origin framing. Existing tabs with older auth JavaScript may need a reload
+when the gate is first enabled.
+
+See [rate-limit behavior](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/)
+and [mandatory Siteverify checks](https://developers.cloudflare.com/turnstile/get-started/server-side-validation/).

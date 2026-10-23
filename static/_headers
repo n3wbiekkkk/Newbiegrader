@@ -6,7 +6,7 @@
 # Static HTML is served by Pages, outside the API's security middleware.
 # Same-origin API/PDF frames and the existing fonts/avatars remain supported.
 /*
-  Content-Security-Policy: default-src 'self'; base-uri 'none'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self'; frame-src 'self'; frame-ancestors 'self'; form-action 'self' https://accounts.google.com
+  Content-Security-Policy: default-src 'self'; base-uri 'none'; object-src 'none'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self'; frame-src 'self' https://challenges.cloudflare.com; frame-ancestors 'self'; form-action 'self' https://accounts.google.com
   X-Content-Type-Options: nosniff
   X-Frame-Options: SAMEORIGIN
   Referrer-Policy: no-referrer
@@ -17,6 +17,8 @@
 /styles.css
   Cache-Control: public, max-age=31536000, immutable
 /config.js
+  Cache-Control: public, max-age=31536000, immutable
+/turnstile.js
   Cache-Control: public, max-age=31536000, immutable
 /logo.png
   Cache-Control: public, max-age=31536000, immutable

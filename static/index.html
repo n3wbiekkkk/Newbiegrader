@@ -394,6 +394,10 @@
       <div class="settings-row">
         <label class="check-row" for="auth-remember"><input id="auth-remember" type="checkbox"> จดจำการเข้าสู่ระบบนานขึ้น (สูงสุด 1 ปี)</label>
       </div>
+      <div class="settings-row hidden" id="auth-bot-row">
+        <div id="auth-turnstile"></div>
+        <p id="auth-bot-status" class="status" role="status" aria-live="polite"></p>
+      </div>
       <div class="submit-row">
         <button id="auth-go" type="button" class="submit-btn">เข้าสู่ระบบ</button>
         <button id="auth-resend" type="button" class="ghost-btn hidden">ส่งรหัสอีกครั้ง</button>
@@ -766,6 +770,7 @@
 </div>
 
 <script src="/config.js?v=6"></script>
-<script src="/app.js?v=75"></script>
+<script src="/turnstile.js?v=1"></script>
+<script src="/app.js?v=76"></script>
 </body>
 </html>

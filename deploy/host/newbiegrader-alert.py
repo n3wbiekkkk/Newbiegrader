@@ -25,6 +25,7 @@ import socket
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -86,6 +87,26 @@ def _get_json(url: str, timeout: float = 15.0):
     request = urllib.request.Request(url, headers={"Accept": "application/json"})
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def _public_identity(base: str) -> None:
+    """Exercise the public Pages/binding/key/tunnel chain without a session."""
+    url = urllib.parse.urlsplit(base)
+    if url.scheme != "https" or not url.hostname or url.username or url.password \
+            or url.path not in ("", "/") or url.query or url.fragment:
+        raise ValueError("public URL must be an HTTPS origin")
+    request = urllib.request.Request(base.rstrip("/") + "/api/auth/me", headers={
+        "Accept": "application/json", "Cache-Control": "no-cache",
+        "User-Agent": "Newbiegrader-watchdog/1"})
+    with urllib.request.urlopen(request, timeout=15) as response:
+        if response.status != 200 or response.geturl() != request.full_url:
+            raise ValueError("public API returned a non-200 response")
+        body = response.read(65537)
+        if len(body) > 65536:
+            raise ValueError("public API response too large")
+        payload = json.loads(body.decode("utf-8"))
+    if not isinstance(payload, dict) or "user" not in payload or payload["user"] is not None:
+        raise ValueError("public API did not return the anonymous identity contract")
 
 
 def _post_json(url: str, payload: dict, token: str = "", timeout: float = 20.0) -> None:
@@ -287,6 +308,16 @@ def collect_checks() -> list[dict]:
     # 8. The journal shows no repeating infrastructure failure.
     hits = _journal_hits(60)
     add("journal errors", not hits, f"{len(hits)} error lines in the last hour")
+
+    # Optional for local-only hosts; production enables this fixed HTTPS origin.
+    # A cached health route can pass even when a bridge key is misconfigured.
+    public_url = os.environ.get("NEWBIEGRADER_PUBLIC_URL", "").strip()
+    if public_url:
+        try:
+            _public_identity(public_url)
+            add("public HTTPS", True, "anonymous identity reachable through public transport")
+        except Exception as exc:
+            add("public HTTPS", False, type(exc).__name__ + ": public transport unavailable")
 
     return checks
 

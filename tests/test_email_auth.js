@@ -8,6 +8,9 @@ const source = fs.readFileSync(path.join(__dirname, '../static/app.js'), 'utf8')
 const code = source.slice(source.indexOf('let authMode = "login";'), source.indexOf('/* A versioned notice'));
 
 function harness(replies) {
+  const bot = { value: null, resets: 0, checks: 0, prepare() {},
+    async token() { this.checks++; return this.value; },
+    reset() { this.resets++; this.value = null; } };
   const nodes = new Map();
   const calls = [];
   let refreshed = 0;
@@ -35,6 +38,7 @@ function harness(replies) {
     querySelector: (selector) => tabs.find((tab) => selector === `[data-authtab="${tab.dataset.authtab}"]`),
   },
     API: '', location: { hash: '#/login' }, refreshMe: async () => { refreshed++; },
+    GraderBotVerification: bot,
     fetch: async (url, init) => {
       calls.push({ url, payload: JSON.parse(init.body), init });
       const next = replies.shift();
@@ -44,8 +48,30 @@ function harness(replies) {
     } });
   vm.runInContext(code, context);
   node('auth-email').value = '  PROOF@example.invalid  ';
-  return { node, context, calls, refreshed: () => refreshed, focused: () => focused };
+  return { node, context, calls, bot, refreshed: () => refreshed, focused: () => focused };
 }
+
+test('email request submits a fresh bot token and resets it after success or failure', async () => {
+  const h = harness([{ status: 503 }, { status: 202, body: { verification_required: true } }]);
+  h.context.setAuthMode('register');
+  h.bot.value = 'first-synthetic-token';
+  await h.context.doPasswordAuth();
+  assert.equal(h.calls[0].payload['cf-turnstile-response'], 'first-synthetic-token');
+  assert.equal(h.bot.resets, 1);
+  h.bot.value = 'second-synthetic-token';
+  await h.context.doPasswordAuth();
+  assert.equal(h.calls[1].payload['cf-turnstile-response'], 'second-synthetic-token');
+  assert.equal(h.bot.resets, 2);
+});
+
+test('unavailable bot module fails closed before requesting an email', async () => {
+  const h = harness([]);
+  h.context.setAuthMode('register');
+  h.context.GraderBotVerification = undefined;
+  await h.context.doPasswordAuth();
+  assert.equal(h.calls.length, 0);
+  assert.match(h.node('auth-err').textContent, /โหลดหน้าเว็บใหม่/);
+});
 
 test('auth tabs expose the active panel and support keyboard navigation without a request', () => {
   const h = harness([]);

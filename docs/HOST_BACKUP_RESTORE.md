@@ -60,3 +60,13 @@ The latest post-optimization scheduled export was downloaded and decrypted
 off-host: the one-CPU API unit, UID ledger and 12 application table exports were
 readable. This supplements the earlier protected-file restore rehearsal; it
 does not extend the stated Database/Auth/Storage recovery coverage.
+
+On 2026-10-23 an authenticated configuration/data archive was also restored into
+a disposable PostgreSQL 17 instance on the operator Mac. It accepted the committed
+schema twice, restored all 12 exported application tables, matched every row value
+(normalizing equivalent timestamp/numeric representations), and passed the real
+server-only privilege checks. The instance listened only on a private Unix socket
+and was removed after testing. No production database was modified. This proves
+the tested application-table recovery path; hosted Auth, Storage-service state,
+point-in-time recovery and transactional consistency across table exports remain
+outside that rehearsal.

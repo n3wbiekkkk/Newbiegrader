@@ -16,12 +16,12 @@ class PublicHeaders(unittest.TestCase):
         for entry in headers['Content-Security-Policy'].split(';'):
             key, *values = entry.strip().split()
             directives[key] = values
-        self.assertEqual(directives['script-src'], ["'self'"])
+        self.assertEqual(directives['script-src'], ["'self'", 'https://challenges.cloudflare.com'])
         self.assertEqual(directives['connect-src'], ["'self'"])
         self.assertEqual(directives['base-uri'], ["'none'"])
         self.assertEqual(directives['object-src'], ["'none'"])
         self.assertEqual(directives['frame-ancestors'], ["'self'"])
-        self.assertEqual(directives['frame-src'], ["'self'"])
+        self.assertEqual(directives['frame-src'], ["'self'", 'https://challenges.cloudflare.com'])
         self.assertIn('https://fonts.googleapis.com', directives['style-src'])
         self.assertIn('https://fonts.gstatic.com', directives['font-src'])
         self.assertEqual(headers['X-Content-Type-Options'], 'nosniff')

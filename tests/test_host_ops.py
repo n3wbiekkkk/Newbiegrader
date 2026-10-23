@@ -28,6 +28,34 @@ backup = _load("ng_backup", "deploy/host/newbiegrader-backup.py")
 
 
 class AlertWatchdog(unittest.TestCase):
+    def test_public_check_uses_https_without_cookies_or_credentials(self):
+        response = SimpleNamespace(status=200, read=lambda size: b'{"user":null}',
+            geturl=lambda: 'https://public.example.invalid/api/auth/me')
+        from unittest.mock import MagicMock
+        context = MagicMock()
+        context.__enter__.return_value = response
+        with patch.object(alert.urllib.request, 'urlopen', return_value=context) as open_url:
+            alert._public_identity('https://public.example.invalid')
+        request = open_url.call_args.args[0]
+        self.assertEqual(request.full_url, 'https://public.example.invalid/api/auth/me')
+        self.assertIsNone(request.get_header('Cookie'))
+        self.assertIsNone(request.get_header('Authorization'))
+        self.assertEqual(request.get_header('Cache-control'), 'no-cache')
+
+    def test_public_check_rejects_wrong_payload_and_unsafe_urls(self):
+        from unittest.mock import MagicMock
+        for body in (b'{}', b'{"user":{"email":"synthetic@example.invalid"}}', b'[]', b'not JSON'):
+            context = MagicMock()
+            context.__enter__.return_value = SimpleNamespace(status=200, read=lambda size: body,
+                geturl=lambda: 'https://public.example.invalid/api/auth/me')
+            with patch.object(alert.urllib.request, 'urlopen', return_value=context):
+                with self.assertRaises((ValueError, json.JSONDecodeError)):
+                    alert._public_identity('https://public.example.invalid')
+        for url in ('http://public.example.invalid', 'https://user:password@example.invalid',
+                    'https://example.invalid/path', 'https://example.invalid?token=synthetic'):
+            with self.assertRaises(ValueError):
+                alert._public_identity(url)
+
     def test_journal_checks_every_configured_worker(self):
         units = [f"newbiegrader-worker@{i}.service" for i in range(1, 5)]
         with patch.dict(os.environ, {"NEWBIEGRADER_WORKER_UNITS": " ".join(units)}), \

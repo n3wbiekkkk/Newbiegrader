@@ -1985,6 +1985,7 @@ function renderAuthStep() {
     (authMode === "login" ? "เข้าสู่ระบบ" : "ส่งรหัสยืนยันอีเมล");
   $("auth-resend").classList.toggle("hidden", !verifying);
   $("auth-recover").classList.toggle("hidden", authMode !== "login");
+  globalThis.GraderBotVerification?.prepare(authMode === "register" && !verifying);
 }
 
 function setAuthMode(m) {
@@ -2047,6 +2048,13 @@ async function doPasswordAuth(resend = false) {
   for (const id of ["auth-go", "auth-resend", "auth-recover", "google-btn"]) $(id).disabled = true;
   err.textContent = "กำลังดำเนินการ...";
   try {
+    if (path === "/api/auth/email/request") {
+      if (typeof globalThis.GraderBotVerification?.token !== "function") {
+        throw new Error("ระบบตรวจสอบผู้ใช้งานยังไม่พร้อม กรุณาโหลดหน้าเว็บใหม่");
+      }
+      const token = await globalThis.GraderBotVerification.token();
+      if (token) payload["cf-turnstile-response"] = token;
+    }
     const r = await fetch(API + path, {
       method: "POST", credentials: "include",
       headers: { "Content-Type": "application/json" },
@@ -2089,6 +2097,10 @@ async function doPasswordAuth(resend = false) {
     err.textContent = e.message;
   } finally {
     authBusy = false;
+    if (path === "/api/auth/email/request") {
+      globalThis.GraderBotVerification?.reset();
+      renderAuthStep();
+    }
     for (const id of ["auth-go", "auth-resend", "auth-recover", "google-btn"]) $(id).disabled = false;
   }
 }
