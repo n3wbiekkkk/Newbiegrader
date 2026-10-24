@@ -64,6 +64,21 @@
     "watchdog_correction_tests": {
       "tests": 21,
       "passed": true
+    },
+    "github_ci": {
+      "commit": "df16c419c0adb1c168709a492d26eb351a53fca0",
+      "url": "https://github.com/n3wbiekkkk/Newbiegrader/actions/runs/40107010182",
+      "conclusion": "success",
+      "jobs": [
+        "validate",
+        "critical-security",
+        "queue-sql"
+      ],
+      "critical_tests": 380,
+      "critical_skips": 0,
+      "validate_tests": 506,
+      "validate_skips": 19,
+      "scope": "Public checkout; private package/reference qualification is separately recorded above."
     }
   },
   "production_https": {
@@ -123,10 +138,19 @@
       "passed": 9,
       "total": 9,
       "external_messages_sent_by_validation": false,
-      "catalog_compatibility_fix": "Expected count updated from 89 to 100. Active watchdog uses reviewed root-owned host-ops copy through a unit drop-in; application source remains immutable."
+      "catalog_compatibility_fix": "Expected count updated from 89 to 100. Active watchdog uses the immutable CI-qualified df16c41 source through a unit drop-in; the API/worker application remains c3ba9ad."
     },
     "daily_account_retention_enabled": true,
-    "off_host_backup_retention": "Not yet enforced on every operator archive destination"
+    "off_host_backup_retention": "Not yet enforced on every operator archive destination",
+    "off_host_inventory": {
+      "known_operator_mac_archives": 51,
+      "canonical_timestamp_names": 27,
+      "other_formats_require_review": 24,
+      "known_host_backup_directory_expired_archives": 0,
+      "payloads_read": false,
+      "archives_deleted": 0,
+      "scope": "Known operator Mac roots only; retired cloud resources remain operator-managed. No universal 30-day enforcement claim."
+    }
   },
   "probe_corrections": [
     "Default urllib User-Agent received Cloudflare 1010 before fixture creation; the named readiness client reached the API.",
@@ -147,5 +171,15 @@
     "No SMTP provider/domain was replaced.",
     "Public preparation notices remain until the uncompleted gates are resolved.",
     "SECURITY.md was separately approved and written locally; it is not part of the application release."
-  ]
+  ],
+  "frontend": {
+    "commit": "df16c419c0adb1c168709a492d26eb351a53fca0",
+    "cloudflare_pages": "success",
+    "app_js_and_privacy_exact_bytes_verified": true,
+    "browser": [
+      "Privacy in light and dark themes",
+      "Terms and FAQ navigation"
+    ],
+    "preparation_notice_retained": true
+  }
 }
