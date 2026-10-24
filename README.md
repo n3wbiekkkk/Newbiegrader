@@ -2,9 +2,9 @@
 
 # Newbiegrader
 
-**An online judge for Thai competitive-programming instruction.**
+**A public programming practice platform with Thai problem statements.**
 
-Strict limits · Undisclosed tests · Asynchronous judging · Contests · Teacher tooling
+Python 3 · C11 · C++17 · Automatic judging · Contests · Official solutions
 
 <br>
 
@@ -15,78 +15,83 @@ Strict limits · Undisclosed tests · Asynchronous judging · Contests · Teache
 ![Grader](https://img.shields.io/badge/grader-v2.0.8-informational)
 ![Frontend](https://img.shields.io/badge/frontend-no%20build%20step-orange)
 
-[Live Demo](https://newbiegrader.pages.dev) · [Report a Bug](../../issues) · [Discord](https://discord.gg/7NQDHFBpf6) · [Documentation](docs)
+[Start Practicing](https://newbiegrader.pages.dev) · [Documentation](docs/README.md) · [Report a Bug](https://github.com/n3wbiekkkk/Newbiegrader/issues) · [Discord](https://discord.gg/7NQDHFBpf6) · [Contributors](https://github.com/n3wbiekkkk/Newbiegrader/graphs/contributors)
 
 </div>
 
 ---
 
-## Table of Contents
+## Contents
 
 - [About](#about)
 - [Features](#features)
+- [Feedback and access](#feedback-and-access)
 - [Verdicts](#verdicts)
+- [Local development](#local-development)
 - [Architecture](#architecture)
-- [Design Principles](#design-principles)
-- [Stack](#stack)
 - [Contributing](#contributing)
-- [Team](#team)
+- [Contributors](#contributors)
 - [License](#license)
 
 ## About
 
-Newbiegrader is a web-based programming judge designed for teaching competitive programming in Thai. Students submit solutions in **Python 3**, **C (C11)** or **C++ (C++17)** and receive automatic verdicts under real time and memory limits, the same way they would on a professional contest platform.
+Newbiegrader is an online judge for anyone who wants to practice competitive
+programming in Thai. Choose a problem, write a solution in **Python 3**, **C11**
+or **C++17**, and receive a verdict with execution time and memory measurements.
 
-Guests can view the landing page and use login, registration and recovery.
-Opening problems, contests, history and other member pages requires login;
-the API enforces the same boundary, including statement PDFs and samples.
+The catalog contains **100 problems and 1,814 test cases**, from basic
+implementation and strings to graphs, data structures and dynamic programming.
+Problems have five calibrated levels, grouped into easy, medium and hard.
+Stable problem IDs preserve links and submission history; the
+[catalog number map](docs/catalog/problem-numbers-2026-10-24.csv) records the
+approved numbering.
 
-Practice submissions show input, expected output and actual output for failed cases to their owner. Contest submissions keep hidden tests private; upcoming/running contest problems also withhold extra feedback through the practice path. Previously disclosed practice data cannot be made secret again by reusing it in a contest. See the [feedback policy](docs/submission-feedback-policy.md).
-
-<div align="center">
-
-| 100 | 1,814 | v2.0.8 | 3 |
-| :---: | :---: | :---: | :---: |
-| problems | test cases | grader engine | languages |
-
-</div>
-
-The catalog contains 100 problems, numbered by a calibrated difficulty order under an explicit operator-approved migration. Every problem carries a `level` (1–5) that reflects the technique it actually demands, and the coarse easy/medium/hard badge is derived from it. Stable slug IDs and submission history are preserved; the [current number map](docs/catalog/problem-numbers-2026-10-24.csv) records previous numbers.
-
-The latest addition is a set of 11 Thai fantasy reading exercises, with stories
-about zombies, gods, dragons, paladins, dwarves and witches. They span basic
-implementation, sorting, sliding windows and dynamic programming. Each includes
-three worked examples, a statement PDF and 20 test cases. See the
-[problem catalog](https://newbiegrader.pages.dev/#/tasks); login is required to
-open statements, samples and PDFs.
-
-Private authoring packages contain reference solutions. Recorded verdicts identify the test set and grader version; private fixtures and references are excluded from this public repository.
+Visit [Newbiegrader](https://newbiegrader.pages.dev) and create an account to
+open the problem catalog, submit code, join contests and read solutions.
+The landing page and account registration/recovery are available to guests.
 
 ## Features
 
-### Strict and honest limits
-Wall-clock timeouts, measured peak memory and bounded execution. The production Linux host uses private job identities, Landlock filesystem rules, seccomp network endpoint denial, per-job cgroups and bounded workspaces. Each test reports its own time and memory figures; see the [security checks and accounting limits](docs/SECURITY_READINESS.md).
+| Feature | What you can do |
+| --- | --- |
+| Thai problem statements | Read statements and PDFs, inspect public examples, and choose a problem by topic or level. |
+| Multiple catalog filters | Select several topics and difficulty bands together, search by title/ID/number, sort results, and remove individual filters. Choices persist in the browser. |
+| Shared code editor | Write code with line numbers and indentation shortcuts, attach a source file, and keep the same code when switching between submission and trial-run tabs. |
+| Trial runs | Run code against your own input without adding a scored submission to your history. |
+| Asynchronous judging | Submit a solution and follow its queued/running state until the verdict is ready. |
+| Official solution PDFs | Read the approach, correctness argument, complexity and complete **C++17 and Python 3** implementations. C++17 appears first. |
+| Submission history | Review your results and inspect eligible completed submissions from other members, subject to visibility and contest rules. |
+| Contests | Join timed rounds with registration, organizer announcements and frozen scoreboards. |
+| Administration | Manage contests, inspect queue health, review problem reports, rejudge submissions and screen for code similarity. |
+| Light and dark themes | Use the same interface on desktop and mobile, with keyboard navigation and a Ctrl/Command + K problem search. |
 
-### Undisclosed tests
-Contest hidden tests return verdicts and resource figures. In practice, an owner can inspect input, expected output and actual output for failed cases. Upcoming/running contest problems withhold that extra practice feedback. The same policy applies to responses, history and persisted results.
+## Feedback and access
 
-### Asynchronous judging
-Submissions return a job ID for polling. With `GRADER_QUEUE_MODE=database`, admission is durable and completion/history commit together under a worker lease. The default `local` mode uses an in-memory queue with best-effort persistence; it cannot guarantee recovery after a restart or database outage. Database workers back off while idle and during outages to reduce unnecessary RPC traffic.
+Problem statements, PDFs, samples, solutions and other member pages require
+login. These checks are enforced by the API as well as the frontend.
 
-### Contests
-Timed Codeforces-style rounds with registration, frozen scoreboards and organizer announcements. Contest-only problems stay out of the public task list. Practice statistics exclude contest submissions.
+- **Practice:** owners can inspect bounded input, expected output, actual output
+  and diagnostics for failed cases. Accepted private cases expose measurements
+  only.
+- **Contests:** hidden test data stays private. Upcoming or running contests
+  also restrict extra feedback through the practice path.
+- **Solutions:** signed-in members can read available solutions without first
+  solving the problem. Solutions for problems in upcoming or running contests
+  are withheld until those contests end.
+- **Peer submissions:** eligible completed submissions can be inspected by
+  signed-in members without a prior attempt. Private test I/O and diagnostics
+  are excluded, and current visibility/contest checks still apply.
 
-### Teacher tooling
-Submission history, per-problem statistics, plagiarism screening, one-click rejudging, problem reporting and an admin overview with queue monitoring.
-
-### Lightweight frontend
-Plain HTML, CSS and JavaScript. No bundler, no transpiler and no framework.
+See the [submission feedback policy](docs/submission-feedback-policy.md) and
+[solution access rules](docs/making-solutions.md#member-access-and-protected-backend-files)
+for the complete boundaries. Previously disclosed practice data must not be
+reused as a secret contest suite.
 
 ## Verdicts
 
 | Verdict | Meaning |
 | :---: | --- |
-| `AC` | Accepted. Every test passed. |
+| `AC` | Accepted: every test passed. |
 | `WA` | Wrong answer. |
 | `TLE` | Time limit exceeded. |
 | `MLE` | Memory limit exceeded. |
@@ -94,67 +99,113 @@ Plain HTML, CSS and JavaScript. No bundler, no transpiler and no framework.
 | `RE` | Runtime error. |
 | `CE` | Compilation error. |
 
+## Local development
+
+Use **Python 3.13**, **Node.js**, and **GCC/G++**. The frontend is plain HTML,
+CSS and JavaScript; it has no bundler or build step.
+
+```sh
+git clone https://github.com/n3wbiekkkk/Newbiegrader.git
+cd Newbiegrader
+python3.13 -m venv .venv
+. .venv/bin/activate
+python -m pip install -r requirements.txt
+cp .env.example .env
+```
+
+Configure your own development environment in `.env`, then start the server:
+
+```sh
+python server.py
+```
+
+Open [localhost:8000](http://127.0.0.1:8000). Account and database features need
+a configured development Supabase project; see the
+[metadata and file-storage guide](docs/migration-supabase.md) and
+[email setup](docs/EMAIL_VERIFICATION_SETUP.md). Keep credentials server-side
+and use a separate development environment for experiments.
+
+**A public clone does not contain the problem packages.** Statements, private
+tests, reference solutions and editable solution sources are excluded from Git.
+Maintainers transfer authoring packages separately through the
+[private synchronization workflow](docs/making-solutions.md#sync-private-authoring-packages-between-development-machines).
+A server starting successfully does not establish that judging is configured.
+
+For frontend changes, run:
+
+```sh
+node --check static/app.js
+node tools/check_frontend.js
+node tools/check_styles.js
+node --test tests/test_*.js
+```
+
+For Python/API changes, also run `python -m unittest discover -s tests -v`.
+The [CI workflow](.github/workflows/ci.yml) defines the complete checks, including
+Linux isolation and disposable PostgreSQL qualification. A frontend check or
+an empty problem directory does not qualify a judge deployment.
+
 ## Architecture
 
 | Component | Responsibility |
 | --- | --- |
-| `grader.py` | The single judging engine, built on the Python standard library only |
-| `server.py` | FastAPI application: authentication, job queue, quota and visibility policy, result redaction |
-| `judge_execution.py` · `judge_runner.py` · `worker.py` | Supervised bounded execution and the dedicated worker role |
-| `static/` | The web interface |
-| `problems/` | Local working copy of the problem set (configuration, statement, tests). Not versioned here — runtime files are published to protected backend storage; metadata lives in Supabase |
-| `supabase/` | Database schema with append-only, re-runnable migrations |
+| `static/` | Vanilla frontend, served through Cloudflare Pages in production. |
+| `functions/api/[[proxy]].js` | Same-origin edge API proxy. |
+| `server.py` | FastAPI: identity, admission, visibility, feedback policy and API responses. |
+| `grader.py` | Shared standard-library judging engine, checkers and language limits. |
+| `judge_execution.py`, `judge_runner.py`, `worker.py` | Supervised jobs and dedicated judge workers. |
+| `job_sandbox.py`, `job_resources.py` | Linux isolation, resource enforcement and descendant cleanup. |
+| `problem_store.py`, `problems/` | Protected runtime files and private local authoring packages. |
+| `supabase/` | Metadata, identities, history and durable queue schema. |
+| `tools/`, `tests/` | Authoring, publication, validation and regression checks. |
 
-Host capacity is read from the service or container at startup, and worker counts, memory ceilings, queue bounds and timeouts are derived from it automatically. Current production is Cloudflare Pages + an Ubuntu PC with four isolated judge workers. Problem PDFs, public samples and private tests are served from backend disk (`GRADER_FILE_STORAGE=local`); Supabase holds metadata, auth and the durable queue. See [current architecture](docs/PRODUCTION_ARCHITECTURE.md), [backend file storage](docs/BACKEND_PROBLEM_FILES.md), and the [host runbook](docs/HOST_DEPLOYMENT.md).
+Every submission uses the same judging engine. Submission requests return a job
+ID for polling; full judging does not run inside the API request. Database queue
+mode coordinates worker leases and commits completion/history together. Local
+queue mode is single-process and best-effort, with no durable restart guarantee.
 
-The four workers execute four jobs concurrently, with up to 25 additional
-queued jobs. The API has one CPU / 320 MiB; judging has a separate four-CPU /
-four-GiB budget and a 128 MiB declared-memory cap. For the measured 17-case
-short-job workload, trusted runtime precompilation first reduced worker time
-from about eight seconds to 3.4–3.8 seconds. Removing web-stack startup and
-redundant exited-process sampling reduced the same synthetic workload by a
-further 20%, to 2.82–3.03 seconds. Public Python/C/C++ checks took 3.75–4.81
-seconds from submit to observed result. These scoped measurements do not
-establish all-problem latency or simultaneous-user capacity. See
-[load handling](docs/load-handling.md) and the
-[current measurement record](docs/releases/pc-execution-performance-2026-10-22.json).
+Production uses separate API and worker roles. The executor remains
+credential-free, with per-job identities, cgroups, Landlock, seccomp and bounded
+workspaces. Memory accounting preserves the difference between measured usage
+and address-space safety limits.
 
-The current [public website security qualification](docs/PUBLIC_SECURITY.md)
-records the browser protections, sandbox restrictions, patched CA bundle,
-edge rate limits and Turnstile email-request gate, together with measured live
-checks, revocable database sessions and retained SSH/OS limitations. Worker
-database traffic uses
-pooled HTTP/1.1 to avoid the observed HTTP/2 connection-turnover failures;
-ambiguous queue claims are never automatically replayed.
-
-## Design Principles
-
-1. **One judging engine.** Every verdict flows through the same grader entry points, and no judging logic is duplicated in request handlers.
-2. **Controlled feedback.** Every result passes through the practice/contest disclosure policy before it reaches a client and before it is stored.
-
-## Stack
-
-| Layer | Technology |
-| --- | --- |
-| Judging engine | Python (standard library only) |
-| API | FastAPI |
-| Database | PostgreSQL via Supabase |
-| Frontend | HTML, CSS and JavaScript on Cloudflare Pages |
-| Production backend | Ubuntu PC, Python 3.13, separate systemd API and four worker services |
-| Local packaging | Docker |
+Problem and solution PDFs are served through authenticated backend endpoints.
+Private fixtures, references and author archives are excluded from static
+hosting. See [backend file storage](docs/BACKEND_PROBLEM_FILES.md),
+[security readiness](docs/SECURITY_READINESS.md),
+[queue and capacity](docs/load-handling.md), and the
+[documentation index](docs/README.md) for detailed guides.
 
 ## Contributing
 
-For problem authors, start with the [shared authoring workflow](docs/making-problems.md) and versioned templates in `tools/templates/problem/`. Official solution PDFs use the [solution authoring workflow](docs/making-solutions.md), which also documents private package transfer between development machines.
+Bug reports, problem proposals and pull requests are welcome. Describe the
+behavior you are changing and the checks you ran. Please report security issues
+through the [maintainer's profile](https://github.com/n3wbiekkkk), rather than a
+public issue.
 
-Contributions are welcome. You can suggest features or report bugs by opening an issue, chat with the community on [Discord](https://discord.gg/7NQDHFBpf6), or submit a pull request with a clear description of the change. Please report security issues through the maintainer's profile rather than a public issue.
+- **Problems:** use the [problem authoring workflow](docs/making-problems.md)
+  and versioned templates in `tools/templates/problem/`.
+- **Solutions:** use the [solution authoring workflow](docs/making-solutions.md)
+  and `tools/solution_authoring.py`; qualify both C++17 and Python against the
+  shipped cases before publication.
+- **Frontend:** keep the vanilla stack, support both themes, and verify desktop
+  and mobile behavior. Include screenshots for visual changes.
+- **Backend:** preserve asynchronous judging, authorization, disclosure and
+  sandbox boundaries. Add regression coverage for behavior changes.
 
-## Team
+Keep private packages, credentials, local configuration and operator archives
+out of pull requests.
 
-| Role | Person | Scope |
+## Contributors
+
+| Role | Contributor | Contributions |
 | --- | --- | --- |
-| Maintainer | [@n3wbiekkkk](https://github.com/n3wbiekkkk) | Judging engine, API, frontend, problem set, deployment |
-| Contributor | [@Piyaph4t](https://github.com/Piyaph4t) | Judge-worker split, queue test coverage |
+| Maintainer | [@n3wbiekkkk](https://github.com/n3wbiekkkk) | Judging engine, API, frontend, problem set and deployment. |
+| Contributor | [@Piyaph4t](https://github.com/Piyaph4t) | Judge-worker separation and queue regression coverage. |
+| Contributor | [@pxsit](https://github.com/pxsit) | Python 3.13 runtime upgrade and upgrade documentation. |
+
+See the [full contributor history](https://github.com/n3wbiekkkk/Newbiegrader/graphs/contributors)
+on GitHub.
 
 ## License
 
