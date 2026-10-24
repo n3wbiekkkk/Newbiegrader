@@ -10,8 +10,8 @@ Strict limits · Undisclosed tests · Asynchronous judging · Contests · Teache
 
 [![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue)](LICENSE)
 ![Python](https://img.shields.io/badge/python-3.11-3776AB?logo=python&logoColor=white)
-![Problems](https://img.shields.io/badge/problems-89-brightgreen)
-![Test cases](https://img.shields.io/badge/test%20cases-1594-brightgreen)
+![Problems](https://img.shields.io/badge/problems-100-brightgreen)
+![Test cases](https://img.shields.io/badge/test%20cases-1814-brightgreen)
 ![Grader](https://img.shields.io/badge/grader-v2.0.7-informational)
 ![Frontend](https://img.shields.io/badge/frontend-no%20build%20step-orange)
 
