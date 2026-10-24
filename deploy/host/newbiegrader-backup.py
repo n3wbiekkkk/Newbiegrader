@@ -218,7 +218,8 @@ def prune(base: str, key: str, bucket: str, keep: int, days: int = 30) -> list[s
     # List every object before mutating the bucket: offset pagination stays stable.
     for name in sorted(stale):
         remove = urllib.request.Request(
-            f"{base.rstrip('/')}/storage/v1/object/{bucket}/{urllib.parse.quote(name)}",
+            f"{base.rstrip('/')}/storage/v1/object/{bucket}",
+            data=json.dumps({"prefixes": [name]}).encode(),
             method="DELETE", headers=headers)
         with urllib.request.urlopen(remove, timeout=60) as response:
             response.read()

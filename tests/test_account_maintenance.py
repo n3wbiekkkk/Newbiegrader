@@ -47,7 +47,10 @@ class BackupRetention(unittest.TestCase):
             self.assertEqual(backup.prune('https://synthetic.invalid', 'synthetic-secret',
                 'synthetic-bucket', 14), [old])
         self.assertEqual(sum(r.get_method() == 'DELETE' for r in calls), 1)
-        self.assertTrue(calls[-1].full_url.endswith(old))
+        self.assertEqual(calls[-1].full_url,
+            'https://synthetic.invalid/storage/v1/object/synthetic-bucket')
+        self.assertEqual(json.loads(calls[-1].data), {'prefixes': [old]})
+        self.assertEqual(calls[-1].get_header('Content-type'), 'application/json')
 
     def test_remote_prune_errors_are_visible_to_backup_monitoring(self):
         with patch.object(backup.urllib.request, 'urlopen', side_effect=OSError('synthetic')):
