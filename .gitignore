@@ -38,5 +38,6 @@ AGENTS.md
 /docs/statement-errata.md
 /docs/statement-stories.md
 
-# graphify local state
-graphify-out/.graphify_*
+# Local code analysis and tool settings
+graphify-out/
+.claude/settings.json

@@ -45,8 +45,10 @@ Behavior changes that could matter, checked against this code base:
 Run as root on the host.
 
 1. Stop admission and drain: set `GRADER_ACCEPT_JOBS=0` in the API and worker
-   configuration, remove `/etc/newbiegrader/worker-enabled`, and wait until no
-   job is queued or running and no lease is live.
+   configuration and restart the API so its new environment takes effect. Keep
+   workers running until no durable job is queued/running and no lease is live.
+   Then remove `/etc/newbiegrader/worker-enabled`. Editing an EnvironmentFile
+   alone never changes an already running process.
 2. Stop the services:
 
    ```sh
@@ -68,7 +70,8 @@ Run as root on the host.
    unprivileged API user. If any step fails, the old venv is restored and the
    script exits non-zero. It never starts a service.
 4. Point `/opt/newbiegrader/current` at the new release if it does not already.
-5. Verify before opening admission:
+5. Start the API with admission still closed and confirm local health. Keep
+   workers stopped and the worker gate absent, then verify before opening admission:
 
    ```sh
    deploy/host/verify-workers.sh
@@ -77,9 +80,12 @@ Run as root on the host.
 
    Then run the native kernel canaries and the Linux critical gate from the
    [deployment guide](HOST_DEPLOYMENT.md). A skip or missing cleanup is a failure.
-6. Start the API, check `/api/health` locally and through the public URL, then
-   create `/etc/newbiegrader/worker-enabled`, enable instances 1 to 4, set
-   `GRADER_ACCEPT_JOBS=1` and open admission.
+6. Check `/api/health` locally and through the public URL. Restore
+   `GRADER_ACCEPT_JOBS=1` in API and all worker configurations, restart the API
+   to load it, create `/etc/newbiegrader/worker-enabled`, and start instances 1
+   to 4. Start `newbiegrader-discord-presence.service` and confirm a fresh
+   `Website presence: online` journal entry after its HTTPS/worker health checks.
+   Preserve the bot token, activity and channel routing.
 7. Submit one real Python, C and C++ solution and confirm the verdicts and
    linked history.
 
@@ -98,7 +104,7 @@ With services stopped and drained again:
 This swaps `venv.previous` back into place and keeps the upgraded venv as
 `venv.failed` for inspection. Point `current` back at the previous release,
 because the old `precompile_runtime.py` only accepts 3.11, then repeat steps 5
-to 7. Rollback needs the previous release's dependency lock to match
+to 7, including the admission reload and presence restart. Rollback needs the previous release's dependency lock to match
 `venv.previous`, which it does unless the venv was changed by hand.
 
 ## Troubleshooting

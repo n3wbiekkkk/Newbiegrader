@@ -51,6 +51,8 @@ if test -e "$PREVIOUS"; then
     exit 1
 fi
 
+# Public runtime files must be readable by the API and private job UIDs.
+umask 0022
 "$PREFIX/bootstrap/bin/pip" install --disable-pip-version-check "uv==$UV"
 export UV_PYTHON_INSTALL_DIR="$PREFIX/python"
 "$PREFIX/bootstrap/bin/uv" python install "$PYTHON"
