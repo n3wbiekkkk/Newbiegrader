@@ -34,7 +34,7 @@ const state = {
   authError: false,
   is_admin: false,
   isAdmin: false,        // alias of is_admin (same value)
-  filter: { q: "", diff: "", tag: "", status: "all", sort: "no" },
+  filter: { q: "", diff: [], tag: [], status: "all", sort: "no" },
 };
 
 const _sampleInflight = new Map();   // "<pid>/<name>" -> Promise
@@ -1192,11 +1192,25 @@ function problemCell(pid) {
   return `<a class="tlink problem-record" href="#/task/${encodeURIComponent(pid)}">${num}<span>${p ? problemNameHtml(p.title) : esc(pid)}</span></a>`;
 }
 
+/* Read old single-value saved filters as one selection. */
+function filterValues(value) {
+  return [...new Set((Array.isArray(value) ? value : [value]).filter((v) => typeof v === "string" && v))];
+}
+
+function syncDifficultyFilters() {
+  const selected = filterValues(state.filter.diff);
+  document.querySelectorAll("[data-difficulty]").forEach((input) => {
+    input.checked = selected.includes(input.dataset.difficulty);
+  });
+  $("difficulty-filter-label").textContent = selected.length ? `ระดับ (${selected.length})` : "ทุกระดับ";
+}
+
 function filteredProblems() {
   const q = state.filter.q.trim().toLowerCase();
+  const levels = filterValues(state.filter.diff), tags = filterValues(state.filter.tag);
   const list = state.problems.filter((p) => {
-    if (state.filter.diff && (p.difficulty || "") !== state.filter.diff) return false;
-    if (state.filter.tag && !(p.tags || []).includes(state.filter.tag)) return false;
+    if (levels.length && !levels.includes(p.difficulty || "")) return false;
+    if (tags.length && !tags.some((tag) => (p.tags || []).includes(tag))) return false;
     if (q) {
       const qq = q.startsWith("#") ? q.slice(1) : q;
       const hay = `${p.no || ""} ${p.id} ${p.title} #${p.no || ""}`.toLowerCase();
@@ -1237,7 +1251,48 @@ function taskScoreHtml(pid) {
   return `<span class="${scoreCls(s)}">${esc(String(s))} <span class="dim">/ 100</span></span>`;
 }
 
+function clearCatalogFilter(key, value) {
+  if (!["q", "diff", "tag", "status", "all"].includes(key)) return;
+  for (const field of ["q", "diff", "tag", "status"]) {
+    if (key !== "all" && key !== field) continue;
+    if (field === "diff" || field === "tag") {
+      state.filter[field] = key !== "all" && value ? filterValues(state.filter[field]).filter((v) => v !== value) : [];
+    } else state.filter[field] = field === "status" ? "all" : "";
+  }
+  clearTimeout(state._qTimer);
+  $("q").value = state.filter.q;
+  document.querySelectorAll("[data-status]").forEach((button) => {
+    const active = button.dataset.status === state.filter.status;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+  renderTagList();
+  renderTasksTable();
+  // A removed chip must not leave keyboard focus on a detached element.
+  const next = $("catalog-active-filters").querySelector("button");
+  (next || $("q")).focus({ preventScroll: true });
+}
+
+function renderCatalogFilters() {
+  const f = state.filter;
+  const filters = [
+    ["q", f.q.trim() ? `ค้นหา: ${f.q.trim()}` : ""],
+    ...filterValues(f.diff).map((value) => ["diff", `ระดับ: ${value}`, value]),
+    ...filterValues(f.tag).map((value) => ["tag", `หมวด: ${value}`, value]),
+    ["status", ({ tried: "เคยลองทำ", solved: "ทำผ่านแล้ว" })[f.status] || ""],
+  ].filter(([, label]) => label);
+  const box = $("catalog-active-filters");
+  box.innerHTML = filters.map(([key, label, value = ""]) =>
+    `<button type="button" class="catalog-filter-chip" data-clear-filter="${key}" data-clear-value="${esc(value)}" aria-label="${esc(`ลบตัวกรอง ${label}`)}"><span>${esc(label)}</span><span aria-hidden="true">×</span></button>`
+  ).join("") + (filters.length > 1 ? `<button type="button" class="catalog-reset" data-clear-filter="all">ล้างทั้งหมด</button>` : "");
+  box.querySelectorAll("[data-clear-filter]").forEach((button) => {
+    button.onclick = () => clearCatalogFilter(button.dataset.clearFilter, button.dataset.clearValue);
+  });
+}
+
 function renderTasksTable() {
+  syncDifficultyFilters();
+  renderCatalogFilters();
   try {
     const f0 = state.filter;
     localStorage.setItem("ng_filter", JSON.stringify({ q: f0.q, diff: f0.diff, tag: f0.tag, status: f0.status }));
@@ -1247,7 +1302,7 @@ function renderTasksTable() {
   // The total problem count is not published: show how many matched only while a
   // filter/search is active (otherwise the number is just the total in disguise).
   const f = state.filter;
-  const filtering = !!(f.q.trim() || f.diff || f.tag || (f.status && f.status !== "all"));
+  const filtering = !!(f.q.trim() || filterValues(f.diff).length || filterValues(f.tag).length || (f.status && f.status !== "all"));
   $("filter-count").textContent = (filtering ? `พบ ${list.length} ข้อ` : "") +
     (state.is_admin && hiddenCount ? ` (มี ${hiddenCount} ข้อซ่อนจากผู้ใช้ทั่วไป)` : "");
   const box = $("task-cards");
@@ -1269,16 +1324,7 @@ function renderTasksTable() {
       <button class="btn-ghost" type="button" id="filter-reset">ล้างตัวกรองทั้งหมด</button>
     </div>`;
     $("tasks-empty").classList.remove("hidden");
-    $("filter-reset").onclick = () => {
-      state.filter.q = "";
-      $("q").value = "";
-      state.filter.diff = "";
-      const fd = $("f-diff");
-      if (fd) fd.value = "";
-      setStatusFilter("all");
-      if (state.filter.tag) setTagFilter(state.filter.tag);
-      else renderTasksTable();
-    };
+    $("filter-reset").onclick = () => clearCatalogFilter("all");
     return;
   }
   const showTag = $("show-tag").checked;
@@ -4210,7 +4256,9 @@ let tagsExpanded = false;
 function renderTagList() {
   const box = $("tag-list");
   if (!box) return;
-  $("tag-filter-label").textContent = state.filter.tag ? `หมวดโจทย์ · ${state.filter.tag}` : "หมวดโจทย์";
+  const selected = filterValues(state.filter.tag);
+  const focusedTag = document.activeElement && document.activeElement.dataset.tag;
+  $("tag-filter-label").textContent = selected.length ? `หมวดโจทย์ (${selected.length})` : "หมวดโจทย์";
   // Rank by how many problems carry the tag: the useful ones come first instead
   // of opening the sidebar with 28 equal chips.
   const counts = {};
@@ -4221,11 +4269,9 @@ function renderTagList() {
     (counts[b] || 0) - (counts[a] || 0) || a.localeCompare(b));
   const shown = tagsExpanded ? ranked : ranked.slice(0, TAG_SHOWN);
   // never hide the tag that is currently filtering the list
-  if (!tagsExpanded && state.filter.tag && !shown.includes(state.filter.tag)) {
-    shown.push(state.filter.tag);
-  }
+  if (!tagsExpanded) selected.forEach((tag) => { if (!shown.includes(tag)) shown.push(tag); });
   box.innerHTML = shown.map((t) =>
-    `<button class="tag-row${state.filter.tag === t ? " on" : ""}" data-tag="${esc(t)}">${esc(t)}</button>`
+    `<label class="tag-row${selected.includes(t) ? " on" : ""}"><input type="checkbox" data-tag="${esc(t)}"${selected.includes(t) ? " checked" : ""}><span>${esc(t)}</span></label>`
   ).join("");
   if (ranked.length > TAG_SHOWN) {
     box.insertAdjacentHTML("beforeend",
@@ -4234,18 +4280,15 @@ function renderTagList() {
     $("tag-more").onclick = () => { tagsExpanded = !tagsExpanded; renderTagList(); };
   }
   box.querySelectorAll("[data-tag]").forEach((b) => {
-    b.onclick = () => setTagFilter(b.dataset.tag);
+    b.onchange = () => setTagFilter(b.dataset.tag);
+    if (focusedTag === b.dataset.tag) b.focus({ preventScroll: true });
   });
 }
 
 function setTagFilter(t) {
-  state.filter.tag = state.filter.tag === t ? "" : t;
+  const selected = filterValues(state.filter.tag);
+  state.filter.tag = selected.includes(t) ? selected.filter((tag) => tag !== t) : [...selected, t];
   renderTagList();
-  const disclosure = $("tag-filters");
-  if (disclosure && disclosure.open) {
-    disclosure.open = false;
-    disclosure.querySelector("summary").focus({ preventScroll: true });
-  }
   if (document.querySelector("#view-tasks.active")) renderTasksTable();
 }
 
@@ -4260,10 +4303,10 @@ function setStatusFilter(s) {
 
 function applyHomeFilter(diff = "", tag = "") {
   state.filter.q = "";
-  state.filter.diff = diff;
-  state.filter.tag = tag;
+  state.filter.diff = diff ? [diff] : [];
+  state.filter.tag = tag ? [tag] : [];
   $("q").value = "";
-  $("f-diff").value = diff;
+  syncDifficultyFilters();
   renderTagList();
   setStatusFilter("all");
 }
@@ -4288,37 +4331,38 @@ $("home-next").onclick = (event) => {
 };
 
 function buildFilterOptions() {
-  const diffs = [...new Set(state.problems.map((p) => p.difficulty).filter(Boolean))].sort();
-  const fd = $("f-diff"), hf = $("hist-filter");
-  const keep = [fd.value, hf.value];
-  fd.querySelectorAll("option:not([value=''])").forEach((o) => o.remove());
+  const hf = $("hist-filter"), keep = hf.value;
   hf.querySelectorAll("option:not([value=''])").forEach((o) => o.remove());
-  diffs.forEach((d) => {
-    const o = document.createElement("option");
-    o.value = d; o.textContent = d;
-    fd.appendChild(o);
-  });
   state.problems.forEach((p) => {
     const o = document.createElement("option");
     o.value = p.id;
     o.textContent = `${p.id} — ${p.title}`;
     hf.appendChild(o);
   });
-  [fd, hf].forEach((sel, i) => {
-    if ([...sel.options].some((o) => o.value === keep[i])) sel.value = keep[i];
-  });
+  if ([...hf.options].some((o) => o.value === keep)) hf.value = keep;
+  syncDifficultyFilters();
   renderTagList();
 }
 
 /* ---------------- init ---------------- */
 async function init() {
+  if (typeof ResizeObserver === "function") {
+    const topbar = document.querySelector(".topbar");
+    new ResizeObserver(() => {
+      document.documentElement.style.setProperty("--topbar-height", `${topbar.getBoundingClientRect().height}px`);
+    }).observe(topbar);
+  }
   $("quick-search").onclick = openPalette;
   $("cookie-settings").onclick = () => maybeShowCookieBanner(true);
   maybeShowCookieBanner();
   const tagFilters = $("tag-filters");
-  tagFilters.open = false;
+  const catalogDesktop = window.matchMedia("(min-width: 1181px)");
+  tagFilters.open = catalogDesktop.matches;
+  if (catalogDesktop.addEventListener) {
+    catalogDesktop.addEventListener("change", (event) => { tagFilters.open = event.matches; });
+  }
   document.addEventListener("click", (event) => {
-    if (tagFilters.open && !tagFilters.contains(event.target)) tagFilters.open = false;
+    if (!catalogDesktop.matches && tagFilters.open && !event.composedPath().includes(tagFilters)) tagFilters.open = false;
   });
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && tagFilters.open) {
@@ -4329,17 +4373,18 @@ async function init() {
   bindEditorKeys();
   setLang(lastLang() || state.lang);   // remember the language, default Python
   window.addEventListener("beforeunload", saveDraft);
-  const fd = $("f-diff"), hf = $("hist-filter"), fs = $("f-sort");
+  const hf = $("hist-filter"), fs = $("f-sort");
   try {
     const saved = localStorage.getItem("ng_sort");
     if (saved) state.filter.sort = saved;
     const ff = JSON.parse(localStorage.getItem("ng_filter") || "null");
     if (ff && typeof ff === "object") {
-      for (const k of ["q", "diff", "tag", "status"]) {
+      for (const k of ["q", "status"]) {
         if (typeof ff[k] === "string") state.filter[k] = ff[k];
       }
       if ($("q")) $("q").value = state.filter.q;
-      if ($("f-diff")) $("f-diff").value = state.filter.diff || "";
+      state.filter.diff = filterValues(ff.diff).filter((v) => ["easy", "medium", "hard"].includes(v));
+      state.filter.tag = filterValues(ff.tag).filter((v) => TAGS.includes(v));
       document.querySelectorAll("[data-status]").forEach((b) =>
         {
         const on = (b.dataset.status || "all") === (state.filter.status || "all");
@@ -4353,7 +4398,26 @@ async function init() {
     clearTimeout(state._qTimer);
     state._qTimer = setTimeout(renderTasksTable, 180);
   };
-  fd.onchange = (e) => { state.filter.diff = e.target.value; renderTasksTable(); };
+  document.querySelectorAll("[data-difficulty]").forEach((input) => {
+    input.onchange = () => {
+      const selected = filterValues(state.filter.diff), value = input.dataset.difficulty;
+      state.filter.diff = input.checked ? [...new Set([...selected, value])] : selected.filter((v) => v !== value);
+      renderTasksTable();
+    };
+  });
+  const difficultyFilters = $("difficulty-filters");
+  document.addEventListener("click", (event) => {
+    if (difficultyFilters.open && !difficultyFilters.contains(event.target)) difficultyFilters.open = false;
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && difficultyFilters.open) {
+      difficultyFilters.open = false;
+      difficultyFilters.querySelector("summary").focus();
+    }
+  });
+  [["difficulty-done", difficultyFilters], ["tag-filter-done", tagFilters]].forEach(([id, panel]) => {
+    $(id).onclick = () => { panel.open = false; panel.querySelector("summary").focus(); };
+  });
   if (fs) {
     fs.value = state.filter.sort || "no";
     fs.onchange = (e) => {
@@ -4368,7 +4432,7 @@ async function init() {
   document.querySelectorAll("[data-status]").forEach((b) => {
     b.onclick = () => setStatusFilter(b.dataset.status);
   });
-  $("tag-clear-side").onclick = () => setTagFilter(state.filter.tag);
+  $("tag-clear-side").onclick = () => clearCatalogFilter("tag");
   hf.onchange = loadHistory;
   if ($("hist-verdict")) $("hist-verdict").onchange = loadHistory;
   if ($("hist-group")) $("hist-group").onchange = loadHistory;

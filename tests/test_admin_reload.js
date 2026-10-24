@@ -72,6 +72,7 @@ function harness({ me, restore = async () => ({ restored: false }), stats = asyn
   load('async function refreshMe()', '$("login-btn").onclick');
   load('async function refreshProblems()', '/* Canonical tag taxonomy');
   load('const ADMIN_TABS =', 'function setAdminsStatus(');
+  load('function filterValues(', 'function syncDifficultyFilters(');
   load('async function init()', '\ninit();');
   return { context, state: vm.runInContext('state', context), node, location, calls, replaced,
     loads: () => adminLoads,

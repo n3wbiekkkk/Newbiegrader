@@ -18,7 +18,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anuphan:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600;700&display=swap">
-<link rel="stylesheet" href="/styles.css?v=48">
+<link rel="stylesheet" href="/styles.css?v=54">
 </head>
 <body>
 <a class="skip-link" href="#main">ข้ามไปเนื้อหา</a>
@@ -82,7 +82,7 @@
         <h1>ฝึกคิด<br> เขียนโค้ด</h1>
         <p class="practice-description">สนามฝึกเขียนโปรแกรมภาษาไทย<br>เลือกโจทย์ ส่งโค้ด แล้วดูผลตรวจได้ทันที</p>
         <div class="practice-languages" aria-label="ภาษาที่รองรับ"><span>Python</span><span>C</span><span>C++</span></div>
-        <a class="practice-all" href="#/tasks"><span>ดูโจทย์ทั้งหมด</span><span class="practice-all-arrow" aria-hidden="true"><svg class="ic"><use href="#i-back"/></svg></span></a>
+        <a class="practice-all" href="#/tasks"><span>เลือกโจทย์</span><span class="practice-all-arrow" aria-hidden="true"><svg class="ic"><use href="#i-back"/></svg></span></a>
       </div>
     <section class="problem-explorer" aria-labelledby="explorer-title">
       <div class="explorer-toolbar">
@@ -128,34 +128,49 @@
   <section id="view-tasks" class="view">
     <div class="page-head catalog-heading">
       <div><a class="page-context" href="#/">หน้าแรก / โจทย์</a><h2>โจทย์ฝึกฝน</h2></div>
-      <p class="dim">หาเรื่องที่อยากฝึก<br>แล้วเริ่มจากข้อที่สนใจ</p>
     </div>
     <div class="filterbar">
       <label class="problem-search"><svg class="ic" aria-hidden="true"><use href="#i-search"/></svg><input id="q" type="search" placeholder="ค้นหาชื่อ รหัส หรือเลขโจทย์" aria-label="ค้นหาโจทย์"></label>
-      <select id="f-sort" aria-label="เรียงลำดับโจทย์">
-        <option value="no">เรียงตามเลขโจทย์</option>
-        <option value="difficulty">เรียงตามระดับ</option>
-        <option value="title">เรียงตามชื่อ</option>
-      </select>
-      <select id="f-diff" aria-label="กรองระดับความยาก">
-        <option value="">ทุกระดับ</option>
-      </select>
+      <label class="catalog-sort"><svg class="ic" aria-hidden="true"><use href="#i-tasks"/></svg>
+        <select id="f-sort" aria-label="เรียงลำดับโจทย์">
+          <option value="no">เลขโจทย์</option>
+          <option value="difficulty">ระดับความยาก</option>
+          <option value="title">ชื่อโจทย์</option>
+        </select>
+      </label>
+      <details id="difficulty-filters" class="multi-filter">
+        <summary><svg class="ic" aria-hidden="true"><use href="#i-settings"/></svg><span id="difficulty-filter-label">ทุกระดับ</span></summary>
+        <div class="multi-filter-panel">
+          <p class="filter-help">เลือกได้หลายระดับ</p>
+          <div id="f-diff" role="group" aria-label="ระดับความยาก">
+            <label class="filter-option"><input type="checkbox" data-difficulty="easy"> เริ่มต้น <small>easy</small></label>
+            <label class="filter-option"><input type="checkbox" data-difficulty="medium"> ปานกลาง <small>medium</small></label>
+            <label class="filter-option"><input type="checkbox" data-difficulty="hard"> ท้าทาย <small>hard</small></label>
+          </div>
+          <button id="difficulty-done" class="filter-done" type="button">เสร็จแล้ว</button>
+        </div>
+      </details>
       <label class="mine-check"><input type="checkbox" id="show-tag" checked> แสดงหมวด</label>
-      <span id="filter-count" class="meta"></span>
+    </div>
+    <div class="catalog-selection-summary">
+      <div id="catalog-active-filters" class="catalog-active-filters" role="group" aria-label="ตัวกรองที่กำลังใช้"></div>
+      <span id="filter-count" class="meta" role="status" aria-live="polite"></span>
     </div>
     <div class="tasks-layout">
       <aside class="side">
         <div class="side-group" role="group" aria-label="กรองตามสถานะการฝึก">
-          <button class="side-btn active" data-status="all" type="button" aria-pressed="true">ทั้งหมด</button>
-          <button class="side-btn" data-status="tried" type="button" aria-pressed="false">เคยลองทำ</button>
-          <button class="side-btn" data-status="solved" type="button" aria-pressed="false">ทำผ่านแล้ว</button>
+          <button class="side-btn active" data-status="all" type="button" aria-pressed="true"><svg class="ic" aria-hidden="true"><use href="#i-tasks"/></svg><span>ทั้งหมด</span></button>
+          <button class="side-btn" data-status="tried" type="button" aria-pressed="false"><svg class="ic" aria-hidden="true"><use href="#i-history"/></svg><span>เคยลองทำ</span></button>
+          <button class="side-btn" data-status="solved" type="button" aria-pressed="false"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg><span>ทำผ่านแล้ว</span></button>
         </div>
         <hr class="sep">
         <details id="tag-filters" class="tag-disclosure">
           <summary><span id="tag-filter-label">หมวดโจทย์</span></summary>
           <div class="tag-filter-content">
           <div class="side-head"><h3>เลือกหมวดโจทย์</h3><button id="tag-clear-side" type="button" class="link-btn">ล้าง</button></div>
+          <p class="filter-help">เลือกได้หลายหมวด · ตรงหมวดใดหมวดหนึ่ง</p>
           <div id="tag-list"></div>
+          <button id="tag-filter-done" class="filter-done" type="button">เสร็จแล้ว</button>
           </div>
         </details>
       </aside>
@@ -781,6 +796,6 @@
 
 <script src="/config.js?v=6"></script>
 <script src="/turnstile.js?v=1"></script>
-<script src="/app.js?v=79"></script>
+<script src="/app.js?v=83"></script>
 </body>
 </html>
