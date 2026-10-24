@@ -30,6 +30,10 @@ Behavior changes that could matter, checked against this code base:
   `asyncore`, `cgi`, `telnetlib` and similar) are the only visible difference
   for typical solutions.
 
+New submissions record grader version `2.0.8` because switching the contestant
+Python runtime can change accepted syntax, execution time and verdicts. Existing
+history keeps its original version; no automatic rejudge is performed.
+
 ## Before you start
 
 1. Install the new release into `/opt/newbiegrader/releases/<release>` as usual

@@ -42,7 +42,7 @@ OUTPUT_LIMIT_BYTES = 32 * 1024 * 1024  # stdout เกินนี้ -> OLE (�
 # score differently (checker rules, limits handling, verdict mapping). Stored on
 # every submission together with the per-problem tests hash so old rows can be
 # told apart from new ones (and optionally rejudged).
-GRADER_VERSION = "2.0.7"
+GRADER_VERSION = "2.0.8"
 
 # ---------- host capability (container aware) ----------
 def cgroup_root() -> str:
