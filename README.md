@@ -45,13 +45,20 @@ Practice submissions show input, expected output and actual output for failed ca
 
 <div align="center">
 
-| 89 | 1,594 | v2.0.7 | 3 |
+| 100 | 1,814 | v2.0.7 | 3 |
 | :---: | :---: | :---: | :---: |
 | problems | test cases | grader engine | languages |
 
 </div>
 
-The catalog contains 89 problems, numbered by a calibrated difficulty order under an explicit operator-approved migration. Every problem carries a `level` (1–5) that reflects the technique it actually demands, and the coarse easy/medium/hard badge is derived from it. Stable slug IDs and submission history are preserved; the [number map](docs/catalog/problem-numbers-2026-10-22.csv) records previous numbers.
+The catalog contains 100 problems, numbered by a calibrated difficulty order under an explicit operator-approved migration. Every problem carries a `level` (1–5) that reflects the technique it actually demands, and the coarse easy/medium/hard badge is derived from it. Stable slug IDs and submission history are preserved; the [current number map](docs/catalog/problem-numbers-2026-10-24.csv) records previous numbers.
+
+The latest addition is a set of 11 Thai fantasy reading exercises, with stories
+about zombies, gods, dragons, paladins, dwarves and witches. They span basic
+implementation, sorting, sliding windows and dynamic programming. Each includes
+three worked examples, a statement PDF and 20 test cases. See the
+[problem catalog](https://newbiegrader.pages.dev/#/tasks); login is required to
+open statements, samples and PDFs.
 
 Private authoring packages contain reference solutions. Recorded verdicts identify the test set and grader version; private fixtures and references are excluded from this public repository.
 
