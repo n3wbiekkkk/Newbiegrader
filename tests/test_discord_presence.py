@@ -76,6 +76,17 @@ class PresenceConfiguration(unittest.TestCase):
                 patch.object(presence, 'get_json', side_effect=OSError('synthetic outage')):
             self.assertFalse(presence.health_ok('https://public.example.invalid', units))
 
+    def test_catalog_growth_does_not_hide_healthy_website(self):
+        units = [f'newbiegrader-worker@{i}.service' for i in range(1, 5)]
+        result = SimpleNamespace(returncode=0, stdout='active\n' * 6)
+        for count in (89, 100, 101, 0, -1, True, "100", None):
+            with self.subTest(count=count), \
+                    patch.object(presence.subprocess, 'run', return_value=result), \
+                    patch.object(presence, 'get_json', side_effect=[
+                        {'ok': True, 'count': count}, {'user': None}]):
+                self.assertEqual(presence.health_ok('https://public.example.invalid', units),
+                                 type(count) is int and count > 0)
+
     def test_public_probe_never_follows_redirects_or_sends_credentials(self):
         from unittest.mock import MagicMock
         for body in [b'{"user":null}', b'{}']:

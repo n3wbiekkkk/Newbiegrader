@@ -10,8 +10,8 @@ Strict limits · Undisclosed tests · Asynchronous judging · Contests · Teache
 
 [![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue)](LICENSE)
 ![Python](https://img.shields.io/badge/python-3.13-3776AB?logo=python&logoColor=white)
-![Problems](https://img.shields.io/badge/problems-89-brightgreen)
-![Test cases](https://img.shields.io/badge/test%20cases-1594-brightgreen)
+![Problems](https://img.shields.io/badge/problems-100-brightgreen)
+![Test cases](https://img.shields.io/badge/test%20cases-1814-brightgreen)
 ![Grader](https://img.shields.io/badge/grader-v2.0.7-informational)
 ![Frontend](https://img.shields.io/badge/frontend-no%20build%20step-orange)
 
@@ -45,13 +45,20 @@ Practice submissions show input, expected output and actual output for failed ca
 
 <div align="center">
 
-| 89 | 1,594 | v2.0.7 | 3 |
+| 100 | 1,814 | v2.0.7 | 3 |
 | :---: | :---: | :---: | :---: |
 | problems | test cases | grader engine | languages |
 
 </div>
 
-The catalog contains 89 problems, numbered by a calibrated difficulty order under an explicit operator-approved migration. Every problem carries a `level` (1–5) that reflects the technique it actually demands, and the coarse easy/medium/hard badge is derived from it. Stable slug IDs and submission history are preserved; the [number map](docs/catalog/problem-numbers-2026-10-22.csv) records previous numbers.
+The catalog contains 100 problems, numbered by a calibrated difficulty order under an explicit operator-approved migration. Every problem carries a `level` (1–5) that reflects the technique it actually demands, and the coarse easy/medium/hard badge is derived from it. Stable slug IDs and submission history are preserved; the [current number map](docs/catalog/problem-numbers-2026-10-24.csv) records previous numbers.
+
+The latest addition is a set of 11 Thai fantasy reading exercises, with stories
+about zombies, gods, dragons, paladins, dwarves and witches. They span basic
+implementation, sorting, sliding windows and dynamic programming. Each includes
+three worked examples, a statement PDF and 20 test cases. See the
+[problem catalog](https://newbiegrader.pages.dev/#/tasks); login is required to
+open statements, samples and PDFs.
 
 Private authoring packages contain reference solutions. Recorded verdicts identify the test set and grader version; private fixtures and references are excluded from this public repository.
 
@@ -138,7 +145,7 @@ ambiguous queue claims are never automatically replayed.
 
 ## Contributing
 
-For problem authors, start with the [shared authoring workflow](docs/making-problems.md) and versioned templates in `tools/templates/problem/`.
+For problem authors, start with the [shared authoring workflow](docs/making-problems.md) and versioned templates in `tools/templates/problem/`. Official solution PDFs use the [solution authoring workflow](docs/making-solutions.md), which also documents private package transfer between development machines.
 
 Contributions are welcome. You can suggest features or report bugs by opening an issue, chat with the community on [Discord](https://discord.gg/7NQDHFBpf6), or submit a pull request with a clear description of the change. Please report security issues through the maintainer's profile rather than a public issue.
 

@@ -10,8 +10,8 @@ sys.path.insert(0, str(ROOT))
 
 import grader  # noqa: E402
 
-CURRENT_MAP = ROOT / 'docs/catalog/problem-numbers-2026-10-22.csv'
-PREVIOUS_MAP = ROOT / 'docs/catalog/problem-numbers-2026-10-20.csv'
+CURRENT_MAP = ROOT / 'docs/catalog/problem-numbers-2026-10-24.csv'
+PREVIOUS_MAP = ROOT / 'docs/catalog/problem-numbers-2026-10-22.csv'
 
 
 def read_map(path):
@@ -22,9 +22,9 @@ def read_map(path):
 class CatalogNumberMap(unittest.TestCase):
     def test_current_map_is_bijective_and_in_difficulty_order(self):
         rows = read_map(CURRENT_MAP)
-        self.assertEqual(len(rows), 89)
-        self.assertEqual(len({row['slug'] for row in rows}), 89)
-        self.assertEqual([int(row['new_no']) for row in rows], list(range(1, 90)))
+        self.assertEqual(len(rows), 100)
+        self.assertEqual(len({row['slug'] for row in rows}), 100)
+        self.assertEqual([int(row['new_no']) for row in rows], list(range(1, 101)))
 
     def test_numbers_rise_with_the_calibrated_level(self):
         rows = read_map(CURRENT_MAP)
@@ -48,7 +48,12 @@ class CatalogNumberMap(unittest.TestCase):
     def test_map_records_the_numbers_it_replaced(self):
         rows = read_map(CURRENT_MAP)
         old = sorted(int(row['old_no']) for row in rows if row['old_no'])
-        self.assertEqual(old, list(range(1, 90)))
+        self.assertEqual(old, list(range(1, 101)))
+        previous = {row['slug']: row for row in read_map(PREVIOUS_MAP)}
+        self.assertEqual(len(set(row['slug'] for row in rows) - previous.keys()), 11)
+        for row in rows:
+            if row['slug'] in previous:
+                self.assertEqual(row['old_no'], previous[row['slug']]['new_no'])
 
     def test_previous_map_is_still_the_historical_record(self):
         rows = read_map(PREVIOUS_MAP)

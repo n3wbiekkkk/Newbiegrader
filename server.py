@@ -3118,6 +3118,49 @@ def problem_pdf(request: Request, pid: str):
                                  "Vary": "Cookie"})
 
 
+def _authorized_solution(request: Request, pid: str) -> tuple:
+    email = (request.session.get("user") or {}).get("email", "")
+    if not email:
+        raise HTTPException(status_code=401, detail="login required")
+    _ensure_problems_fresh()
+    p = _meta_or_404(pid)
+    if not _visible_to(p.pid, email):
+        raise HTTPException(status_code=404, detail="unknown problem")
+    # Official solutions disclose the algorithm: use the same fresh, fail-closed
+    # contest/publication policy as peer source, including for administrators.
+    reason = _peer_problem_policy(p.pid)
+    if reason:
+        code = {"contest": 403, "hidden": 404}.get(reason, 503)
+        raise HTTPException(status_code=code, detail={
+            "contest": "solution is withheld until the contest ends",
+            "hidden": "unknown problem",
+        }.get(reason, "solution policy unavailable"))
+    try:
+        data = problem_store.get_solution_pdf(p.pid, source=PROBLEM_SOURCE)
+    except problem_store.ProblemNotFound:
+        raise HTTPException(status_code=404, detail="no solution for this problem")
+    except problem_store.ProblemUnavailable:
+        raise HTTPException(status_code=503, detail="solution file unavailable")
+    return p, data
+
+
+@app.get("/api/problems/{pid}/solution")
+def problem_solution(request: Request, pid: str) -> dict:
+    p, _data = _authorized_solution(request, pid)
+    return {"problem": p.pid, "available": True}
+
+
+@app.get("/api/problems/{pid}/solution/pdf")
+def problem_solution_pdf(request: Request, pid: str):
+    p, data = _authorized_solution(request, pid)
+    # Always re-authorize and return fresh bytes; a conditional request cannot
+    # reopen a solution after a new contest or publication change.
+    return Response(content=data, media_type="application/pdf", headers={
+        "Content-Disposition": f'inline; filename="{p.pid}-solution.pdf"',
+        "Cache-Control": "private, no-store", "Vary": "Cookie, Authorization",
+    })
+
+
 async def _read_source(language: str, code: str,
                        file: Optional[UploadFile]) -> tuple[str, Optional[str]]:
     """Validate language + code/file input. Returns (source, filename)."""

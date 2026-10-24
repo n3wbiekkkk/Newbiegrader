@@ -179,6 +179,21 @@ def download(bucket, name):
     return data
 
 
+def download_public_pdf(bucket, name):
+    """Read an optional API-readable PDF without probing the private root."""
+    key = _logical(bucket, name)
+    if not name.endswith('.pdf'):
+        raise FilesUnavailable('public PDF required')
+    folder = root(True)
+    item = _index(folder)['objects'].get(key)
+    if item is None:
+        return None
+    data = _read(folder, item['sha256'] + '.blob', MAX_FILE)
+    if len(data) != item['size'] or hashlib.sha256(data).hexdigest() != item['sha256']:
+        raise FilesUnavailable('backend PDF checksum mismatch')
+    return data
+
+
 def publish(bucket, jobs, public_samples=()):
     """Trusted author tool. Atomically publish each index; never delete versions.
 

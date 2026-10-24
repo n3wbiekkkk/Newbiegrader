@@ -107,7 +107,8 @@ def health_ok(public_url: str, units: list[str]) -> bool:
         if result.returncode or result.stdout.split() != ["active"] * 6:
             return False
         local = get_json("http://127.0.0.1:8000/api/health")
-        if local.get("ok") is not True or local.get("count") != 89:
+        count = local.get("count")
+        if local.get("ok") is not True or type(count) is not int or count <= 0:
             return False
         public = get_json(public_url.rstrip("/") + "/api/auth/me")
         return "user" in public and public["user"] is None
