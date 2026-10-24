@@ -197,7 +197,7 @@ PROBLEM_SOURCE = (os.environ.get("GRADER_PROBLEM_SOURCE", "local").strip().lower
                   or "local")
 CAPACITY_DIR = Path(os.environ.get("GRADER_CAPACITY_DIR") or
                     str(Path(tempfile.gettempdir()) / "newbiegrader-capacity"))
-QUEUE_MAX = _env_int("GRADER_QUEUE_MAX", 25)
+QUEUE_MAX = _env_int("GRADER_QUEUE_MAX", 50)
 # Worst case per submission = compile + every test at its limit, serially.
 OVERALL_TIMEOUT = float(os.environ.get("GRADER_OVERALL_TIMEOUT", "") or 0) or (
     90.0 if CPU_QUOTA >= 2 else 240.0)
@@ -1060,6 +1060,10 @@ async def _create_job(row: dict, track_active: bool = True) -> dict:
                                     p_quota_window=quota[1] if track_active else 0)
         if response.get("error"):
             code = int(response.get("status_code", 503))
+            if code == 503 and str(response["error"]).startswith("judge queue is full"):
+                raise HTTPException(503, "คิวตรวจเต็ม กรุณารอสักครู่ก่อนส่งอีกครั้ง",
+                    headers={"Retry-After": str(response.get("retry_after", 30)),
+                             "X-Newbiegrader-Admission": "rejected-queue-full"})
             raise HTTPException(status_code=code, detail=response["error"],
                                 headers={"Retry-After": str(response.get("retry_after", 30))}
                                 if code in (409, 429, 503) else None)
@@ -1070,8 +1074,9 @@ async def _create_job(row: dict, track_active: bool = True) -> dict:
             raise HTTPException(status_code=409, detail="you already have a submission judging, please wait",
                                 headers={"Retry-After": "30"})
         if _queue_depth() >= QUEUE_MAX:
-            raise HTTPException(status_code=503, detail="judge queue is full — try again in a moment",
-                                headers={"Retry-After": "30"})
+            raise HTTPException(status_code=503, detail="คิวตรวจเต็ม กรุณารอสักครู่ก่อนส่งอีกครั้ง",
+                                headers={"Retry-After": "30",
+                                         "X-Newbiegrader-Admission": "rejected-queue-full"})
         job = _remember_job(row)
         if track_active and email:
             _active_jobs.setdefault(email, set()).add(jid)
@@ -2253,6 +2258,9 @@ async def auth_register(request: Request):
         raise HTTPException(status_code=403, detail="this email is reserved; use Google")
     config = _email_provider_config()
     await asyncio.to_thread(_email_budget, request, email, "request")
+    allowed = await asyncio.to_thread(_auth_rpc, "account_auth_allowed", {"p_email": email})
+    if allowed.get("allowed") is not True:
+        raise HTTPException(403, "บัญชีนี้อยู่ในช่วงลบ กรุณาติดต่อผู้ดูแล")
     # Replacing this browser's auth context must also invalidate copied cookies.
     await asyncio.to_thread(_revoke_browser_sessions, request)
     # Do not keep a preselected password or issue an authenticated session.
@@ -2417,6 +2425,121 @@ async def update_profile(request: Request) -> dict:
         raise _db_err(e)
     _PROFILE_NAME_CACHE.pop(user["email"], None)
     return {"ok": True, "profile": {"email": user["email"], **row}}
+
+
+@app.get("/api/profile/export")
+def export_profile(request: Request):
+    """Export only this account's data; never export stored judge diagnostics."""
+    user = request.session.get("user") or {}
+    email = user.get("email")
+    if not email:
+        raise HTTPException(status_code=401, detail="login required")
+    if _sb is None:
+        raise HTTPException(status_code=503, detail="account export unavailable")
+    fields = {
+        "users": ("email", ("email", "name", "created_at")),
+        "profiles": ("user_email", ("display_name", "default_language")),
+        "submissions": ("user_email", ("id", "created_at", "problem", "language",
+            "filename", "code", "verdict", "accepted", "passed", "total", "score",
+            "kind", "contest_id", "tests_hash", "grader_version")),
+        "judge_jobs": ("user_email", ("id", "created_at", "started_at", "finished_at",
+            "status", "kind", "problem", "language", "contest_id")),
+        "contest_registrations": ("user_email", ("contest_id", "registered_at")),
+        "reports": ("user_email", ("id", "created_at", "problem", "kind", "message", "status")),
+    }
+    data = {"exported_at": _iso_now(), "format_version": 1, "data": {}}
+    size = 0
+    try:
+        for table, (owner, allowed) in fields.items():
+            entries = []
+            for offset in range(0, 10000, 100):
+                query = _sb.table(table).select(",".join((owner, *allowed))).eq(owner, email)
+                order = "email" if table == "users" else (
+                    "user_email" if table == "profiles" else
+                    "contest_id" if table == "contest_registrations" else "id")
+                rows = query.order(order).range(offset, offset + 99).execute().data or []
+                for row in rows:
+                    if row.get(owner) != email:
+                        raise RuntimeError("export ownership mismatch")
+                    entry = {key: row[key] for key in allowed if key in row}
+                    size += len(json.dumps(entry, ensure_ascii=False).encode("utf-8"))
+                    if size > 20 * 1024 * 1024:
+                        raise HTTPException(413, "ข้อมูลมากเกินไป กรุณาติดต่อผู้ดูแลเพื่อส่งออก")
+                    entries.append(entry)
+                if len(rows) < 100:
+                    break
+            else:
+                raise HTTPException(413, "ข้อมูลมากเกินไป กรุณาติดต่อผู้ดูแลเพื่อส่งออก")
+            data["data"][table] = entries
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(503, "ส่งออกข้อมูลไม่สำเร็จ กรุณาลองใหม่ภายหลัง") from None
+    return JSONResponse(data, headers={"Cache-Control": "private, no-store",
+        "Content-Disposition": 'attachment; filename="newbiegrader-account.json"'})
+
+
+@app.delete("/api/profile")
+async def delete_profile(request: Request):
+    user = request.session.get("user") or {}
+    email = user.get("email")
+    if not email:
+        raise HTTPException(401, "login required")
+    if QUEUE_MODE != "database":
+        raise HTTPException(503, "การลบบัญชีต้องใช้ระบบคิวฐานข้อมูล กรุณาติดต่อผู้ดูแล")
+    body = await _json_object(request)
+    if body.get("confirmation") != email:
+        raise HTTPException(400, "กรุณาพิมพ์อีเมลบัญชีเพื่อยืนยันการลบ")
+    if _is_admin(email):
+        raise HTTPException(409, "กรุณาให้ผู้ดูแลอีกคนถอนสิทธิ์ผู้ดูแลก่อนลบบัญชี")
+    prepared = await asyncio.to_thread(_auth_rpc, "account_delete_begin", {"p_email": email})
+    if prepared.get("busy"):
+        raise HTTPException(409, "ยังมีงานตรวจอยู่ กรุณารอให้งานจบก่อนลบบัญชี")
+    if not prepared.get("pending"):
+        raise HTTPException(503, "เตรียมลบบัญชีไม่สำเร็จ")
+    # All browser families are already revoked. Never claim success before both
+    # the external provider and the atomic application-data deletion finish.
+    try:
+        subject = prepared.get("auth_subject")
+        if not subject:
+            subject = await asyncio.to_thread(email_auth.find_identity, _sb_url, _sb_key, email)
+        if subject:
+            await asyncio.to_thread(email_auth.delete_identity, _sb_url, _sb_key,
+                                    subject)
+        done = await asyncio.to_thread(_auth_rpc, "account_delete_finish", {"p_email": email})
+        if not done.get("ok"):
+            raise RuntimeError()
+    except Exception:
+        raise HTTPException(503, "บัญชีถูกระงับการเข้าสู่ระบบแล้ว แต่การลบยังไม่ครบ กรุณาติดต่อผู้ดูแล") from None
+    request.session.clear()
+    _PROFILE_NAME_CACHE.pop(email, None)
+    _bust_cache()
+    response = JSONResponse({"ok": True}, headers={"Cache-Control": "private, no-store"})
+    _set_remember_choice(response, "", False)
+    return response
+
+
+@app.get("/api/admin/account-audit")
+def account_audit(request: Request):
+    if not _is_admin((request.session.get("user") or {}).get("email", "")):
+        raise HTTPException(403, "admin only")
+    try:
+        rows = _sb.table("account_audit").select("id,created_at,event,counts").order(
+            "created_at", desc=True).limit(100).execute().data or []
+    except Exception:
+        raise HTTPException(503, "audit unavailable") from None
+    events = []
+    count_fields = ("submissions", "profiles", "judge_jobs", "judge_quota_events",
+                    "contest_registrations", "reports", "web_sessions")
+    for row in rows:
+        counts = row.get("counts")
+        if row.get("event") != "account_deleted" or not isinstance(counts, dict):
+            continue
+        event = {k: row[k] for k in ("id", "created_at", "event") if k in row}
+        event["counts"] = {k: counts[k] for k in count_fields
+                           if type(counts.get(k)) is int and counts[k] >= 0}
+        events.append(event)
+    return {"events": events}
 
 # Preload problems at startup (fail fast on broken tests, skip with warning).
 # Source is explicit via GRADER_PROBLEM_SOURCE (local|supabase); supabase mode
@@ -2895,7 +3018,10 @@ def health(request: Request, response: Response) -> dict:
     else:
         hidden = _hidden_pids()
         ids = sorted(pid for pid in PROBLEMS if pid not in hidden)
-    return {"ok": True, "problems": ids, "count": len(ids)}
+    body = {"ok": True, "count": len(ids)}
+    if email:
+        body["problems"] = ids
+    return body
 
 
 @app.get("/api/languages")

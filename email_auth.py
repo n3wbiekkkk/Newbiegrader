@@ -5,6 +5,7 @@ bodies must never enter application cookies, responses, or logs.
 """
 import json
 import re
+import time
 import uuid
 from urllib.error import HTTPError
 from urllib.parse import urlsplit
@@ -77,3 +78,55 @@ def verify_code(url, key, email, token):
     except (ValueError, KeyError, TypeError, AttributeError):
         raise InvalidCode() from None
     return subject
+
+
+def delete_identity(url, key, subject):
+    """Hard-delete a previously verified Auth subject; 404 is idempotent."""
+    try:
+        subject = str(uuid.UUID(subject))
+        parsed = urlsplit(url)
+        if not key or parsed.scheme != "https" or not parsed.hostname or parsed.username \
+                or parsed.password or parsed.path not in ("", "/") or parsed.query or parsed.fragment:
+            raise ValueError()
+        req = Request(url.rstrip("/") + "/auth/v1/admin/users/" + subject,
+            method="DELETE", headers={"apikey": key, "Authorization": "Bearer " + key})
+        with build_opener(_NoRedirect()).open(req, timeout=15) as response:
+            response.read(131073)
+    except HTTPError as exc:
+        exc.close()
+        if exc.code != 404:
+            raise Unavailable() from None
+    except Exception:
+        raise Unavailable() from None
+
+
+def find_identity(url, key, email):
+    """Resolve legacy accounts without trusting a client-supplied provider ID."""
+    parsed = urlsplit(url)
+    if not key or parsed.scheme != "https" or not parsed.hostname or parsed.username \
+            or parsed.password or parsed.query or parsed.fragment or parsed.path not in ("", "/"):
+        raise Unavailable()
+    email = normalize_email(email)
+    try:
+        deadline = time.monotonic() + 20
+        for page in range(1, 101):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise Unavailable()
+            req = Request(url.rstrip("/") + f"/auth/v1/admin/users?page={page}&per_page=100",
+                headers={"apikey": key, "Authorization": "Bearer " + key})
+            with build_opener(_NoRedirect()).open(req, timeout=min(5, remaining)) as response:
+                raw = response.read(2 * 1024 * 1024 + 1)
+            if len(raw) > 2 * 1024 * 1024:
+                raise Unavailable()
+            users = json.loads(raw).get("users")
+            if not isinstance(users, list):
+                raise Unavailable()
+            for user in users:
+                if isinstance(user, dict) and str(user.get("email", "")).lower() == email:
+                    return str(uuid.UUID(user["id"]))
+            if len(users) < 100:
+                return None
+    except Exception:
+        raise Unavailable() from None
+    raise Unavailable()

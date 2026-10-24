@@ -220,7 +220,8 @@ class ApiE2E(unittest.TestCase):
                 "problem": "thai_time", "language": "python", "code": THAI_REF},
                 headers=BROWSER)
             self.assertEqual(r.status_code, 503, r.text)
-            self.assertIn("queue", r.json()["detail"])
+            self.assertIn("คิวตรวจเต็ม", r.json()["detail"])
+            self.assertEqual(r.headers.get("X-Newbiegrader-Admission"), "rejected-queue-full")
             self.assertEqual(r.headers.get("Retry-After"), "30")
         finally:
             server.QUEUE_MAX = original
@@ -1235,13 +1236,14 @@ class ApiE2E(unittest.TestCase):
     def test_health_and_problem_listing(self):
         h = self.client.get("/api/health").json()
         self.assertTrue(h["ok"])
-        # Anonymous users see only publicly visible problems: hidden
-        # contest-only problems are filtered from health (access control,
-        # not a count bug).
+        # Guests receive only status/count; the catalog requires login.
         visible = [pid for pid in server.PROBLEMS
                    if pid not in server._hidden_pids()]
-        self.assertEqual(sorted(h["problems"]), sorted(visible))
+        self.assertNotIn("problems", h)
+        self.assertEqual(h["count"], len(visible))
         self.login(STUDENT_A)
+        member_health = self.client.get("/api/health").json()
+        self.assertEqual(sorted(member_health["problems"]), sorted(visible))
         detail = self.client.get("/api/problems/count_islands").json()
         self.assertEqual(detail["samples"], ["01", "02", "03"])
         # The public payload must not announce the hidden-test count.

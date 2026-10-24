@@ -81,3 +81,19 @@ and was removed after testing. No production database was modified. This proves
 the tested application-table recovery path; hosted Auth, Storage-service state,
 point-in-time recovery and transactional consistency across table exports remain
 outside that rehearsal.
+
+
+## Account-erasure and retention rollout
+
+The [account-data runbook](ACCOUNT_DATA.md) defines the candidate one-year history,
+90-day audit/deletion-block and 30-day encrypted-backup policy. Its migration and
+maintenance schedule are not yet production-qualified. The scheduled backup
+candidate now prunes its own recognized archives by age as well as count and
+fails visibly if pruning fails. Off-host destinations require their own reviewed
+cleanup; unknown filenames and backup identities are never removed automatically.
+
+An old backup can contain an account deleted after that snapshot. Preserve the
+latest deletion blocks, pending work and matching privacy salt, reconcile erased
+accounts before reopening, and restore no sessions. If deletion state is missing,
+stop restoration for operator resolution. The older recovery rehearsals above do
+not qualify this new erasure-reconciliation step.

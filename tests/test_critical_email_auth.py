@@ -338,6 +338,44 @@ class ProviderTransport(unittest.TestCase):
         opener.open.return_value = io.BytesIO(json.dumps(payload).encode())
         return patch.object(email_auth, "build_opener", return_value=opener), opener
 
+    def test_delete_identity_is_hard_delete_and_does_not_read_error_bodies(self):
+        context, opener = self.post_response({})
+        with context:
+            email_auth.delete_identity('https://synthetic.supabase.co', 'synthetic-secret', SUBJECT)
+        request = opener.open.call_args.args[0]
+        self.assertEqual(request.get_method(), 'DELETE')
+        self.assertTrue(request.full_url.endswith('/auth/v1/admin/users/' + SUBJECT))
+        self.assertEqual(request.get_header('Authorization'), 'Bearer synthetic-secret')
+        for status in (404, 403, 500, 302):
+            body = Mock()
+            opener = Mock()
+            opener.open.side_effect = HTTPError('https://synthetic.invalid', status, '', {}, body)
+            with patch.object(email_auth, 'build_opener', return_value=opener):
+                if status == 404:
+                    email_auth.delete_identity('https://synthetic.supabase.co', 'synthetic-secret', SUBJECT)
+                else:
+                    with self.assertRaises(email_auth.Unavailable):
+                        email_auth.delete_identity('https://synthetic.supabase.co', 'synthetic-secret', SUBJECT)
+            body.read.assert_not_called()
+            body.close.assert_called_once()
+
+    def test_legacy_identity_lookup_paginates_and_checks_exact_email(self):
+        opener = Mock()
+        opener.open.side_effect = [io.BytesIO(json.dumps({'users': [
+            {'email': 'other@example.invalid', 'id': SUBJECT}] * 100}).encode()),
+            io.BytesIO(json.dumps({'users': [{'email': EMAIL.upper(), 'id': SUBJECT}]}).encode())]
+        with patch.object(email_auth, 'build_opener', return_value=opener):
+            self.assertEqual(email_auth.find_identity('https://synthetic.supabase.co',
+                'synthetic-secret', EMAIL), SUBJECT)
+        self.assertIn('page=2', opener.open.call_args.args[0].full_url)
+        context, _ = self.post_response({'users': []})
+        with context:
+            self.assertIsNone(email_auth.find_identity('https://synthetic.supabase.co',
+                'synthetic-secret', EMAIL))
+        with patch.object(email_auth.time, 'monotonic', side_effect=[0, 21]), \
+                self.assertRaises(email_auth.Unavailable):
+            email_auth.find_identity('https://synthetic.supabase.co', 'synthetic-secret', EMAIL)
+
     def test_verification_uses_server_response_email_confirmation_and_subject_only(self):
         payload = {"user": {"id": SUBJECT, "email": EMAIL, "email_confirmed_at": "2026-10-18T00:00:00Z"},
                    "access_token": "synthetic-bearer", "refresh_token": "synthetic-refresh"}

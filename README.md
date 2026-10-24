@@ -178,7 +178,8 @@ hosting. See [backend file storage](docs/BACKEND_PROBLEM_FILES.md),
 
 ## Contributing
 
-Bug reports, problem proposals and pull requests are welcome. Describe the
+Bug reports, problem proposals and pull requests are welcome. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for the contribution and validation workflow. Describe the
 behavior you are changing and the checks you ran. Please report security issues
 through the [maintainer's profile](https://github.com/n3wbiekkkk), rather than a
 public issue.

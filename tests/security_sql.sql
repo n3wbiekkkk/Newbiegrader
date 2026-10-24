@@ -6,7 +6,8 @@ begin
   foreach object_name in array array[
     'submissions','profiles','reports','users','judge_jobs','contests',
     'contest_registrations','contest_announcements','judge_quota_events','problems',
-    'admins','auth_rate_buckets','web_sessions','leaderboard_scores','problem_stats'
+    'admins','auth_rate_buckets','web_sessions','leaderboard_scores','problem_stats',
+    'account_deletion_blocks','account_deletion_work','account_audit','account_privacy_salt'
   ] loop
     foreach role_name in array array['anon','authenticated'] loop
       if has_table_privilege(role_name,'public.'||object_name,'select,insert,update,delete')
@@ -42,7 +43,9 @@ begin
     'auth_google_identity(text,text,text)',
     'auth_session_start(text,text,bigint,boolean,boolean,text,text,text[])',
     'auth_session_identity(text,text,text[])',
-    'auth_session_revoke(text[])'
+    'auth_session_revoke(text[])',
+    'account_email_hash(text)','account_is_deleted(text)','account_auth_allowed(text)',
+    'account_delete_begin(text)','account_delete_finish(text)','account_retention_prune()'
   ] loop
     select prosecdef, proconfig into strict item from pg_proc
       where oid = ('public.' || object_name)::regprocedure;
@@ -62,6 +65,14 @@ begin
       raise exception 'service_role cannot execute %', object_name;
     end if;
   end loop;
+  foreach object_name in array array['account_deletion_blocks','account_deletion_work','account_audit','account_privacy_salt'] loop
+    if has_table_privilege('service_role','public.'||object_name,'truncate,references,trigger') then
+      raise exception 'unnecessary lifecycle table privileges';
+    end if;
+  end loop;
+  if has_table_privilege('service_role','public.account_privacy_salt','insert,update,delete') then
+    raise exception 'runtime can alter privacy salt';
+  end if;
   if has_table_privilege('service_role','public.web_sessions','truncate,references,trigger') then
     raise exception 'session table has unnecessary service-role privileges';
   end if;

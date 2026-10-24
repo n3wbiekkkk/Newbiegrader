@@ -718,6 +718,7 @@ async function apiFetch(path, opts) {
     }
     const err = new Error(data.detail || `HTTP ${r.status} (${path})`);
     err.status = r.status;
+    err.admission = r.headers.get("X-Newbiegrader-Admission");
     const retry = r.headers.get("Retry-After");
     if (retry) err.retryAfter = retry;
     throw err;
@@ -727,6 +728,25 @@ async function apiFetch(path, opts) {
 
 function apiGet(path) {
   return apiFetch(path, { credentials: "include" });
+}
+
+async function submitWithQueueRetry(fd, pid) {
+  const identity = state.user;
+  for (let attempt = 0; ; attempt++) {
+    if (!identity || state.user !== identity || state.current !== pid) {
+      throw new Error("ยกเลิกการส่งที่รออยู่ เนื่องจากเปลี่ยนบัญชีหรือเปลี่ยนโจทย์");
+    }
+    try {
+      return await apiPostForm("/api/submit", fd);
+    } catch (err) {
+      // Only retry a confirmed rejection. A network error may hide an admitted job.
+      if (err.status !== 503 || err.admission !== "rejected-queue-full" || attempt >= 5) throw err;
+      const retry = Math.max(1, Math.min(120, Number(err.retryAfter) || 30));
+      const seconds = Math.max(retry, Math.min(120, 5 * (2 ** attempt))) + Math.random() * 3;
+      setJudgeStatus(`คิวตรวจเต็ม กำลังรอประมาณ ${Math.ceil(seconds)} วินาทีแล้วลองใหม่ (${attempt + 1}/5)`, true);
+      await new Promise(resolve => setTimeout(resolve, seconds * 1000));
+    }
+  }
 }
 
 /* Several views ask for the same history slice while rendering (the task list,
@@ -2492,7 +2512,7 @@ async function doSubmit() {
   const t0 = performance.now();
   try {
     // 202 {job_id, status:"queued", ...} — judging happens in the background.
-    const job = await apiPostForm("/api/submit", fd);
+    const job = await submitWithQueueRetry(fd, pid);
     rememberJob(pid, job.job_id);   // survives reload and navigation
     setJudgeStatus(jobStateText(job) || "อยู่ในคิว", true);
     const done = await pollJob(job.job_id, (j) => {

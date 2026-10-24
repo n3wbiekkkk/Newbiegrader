@@ -1,0 +1,51 @@
+{
+  "recorded_at": "2026-10-24",
+  "grader_version": "2.0.8",
+  "python": "3.13.17",
+  "release": "42c880fa8d8ea7439ba527fbee8195fe97b275be",
+  "build_sha256": "4f8c2b0ce77c118b6010ead503de6ac77e0eb998c68fc33de249d4410caa218f",
+  "evidence": {
+    "public_version": "https://newbiegrader.pages.dev/api/version",
+    "ci_run": "https://github.com/n3wbiekkkk/Newbiegrader/actions/runs/40079088829",
+    "host_report": "runtime313-rollout-20261024/completion.json"
+  },
+  "activation": {
+    "drained_jobs_and_live_leases": true,
+    "native_four_worker_canaries": true,
+    "worker_preflights": 4,
+    "admission_reopened": true
+  },
+  "native_reference_pairs": 200,
+  "native_cases_passed": 3628,
+  "public_jobs": [
+    {
+      "language": "python",
+      "accepted": true,
+      "linked_history": true,
+      "elapsed_s": 4.12
+    },
+    {
+      "language": "c",
+      "accepted": true,
+      "linked_history": true,
+      "elapsed_s": 4.47
+    },
+    {
+      "language": "cpp",
+      "accepted": true,
+      "linked_history": true,
+      "elapsed_s": 4.28
+    }
+  ],
+  "scope_limits": [
+    "Existing temporary verified operator session; not a fresh signup or Google login.",
+    "Later changes require a new fingerprint and qualification.",
+    "Does not certify sustained concurrent-user capacity."
+  ],
+  "critical_gate": {
+    "passed": true,
+    "tests": 343,
+    "skips": 0,
+    "evidence": "https://github.com/n3wbiekkkk/Newbiegrader/actions/runs/40079088829"
+  }
+}

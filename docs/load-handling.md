@@ -31,8 +31,10 @@ is 128 MiB / 4,096 inodes; each job also receives a cgroup ceiling of 640 MiB,
 Declared problem memory is capped at 128 MiB with existing language allowances;
 overall judging timeout is 240 seconds.
 
-Exactly four jobs can execute at once; the durable admission cap allows 25 more
-queued jobs. Each ordinary account has at most one queued/running job. Queue
+Exactly four jobs can execute at once. The last verified live durable queue
+setting is 25 waiting jobs. The public-readiness candidate and env examples use
+50 waiting jobs; activation requires an actual env change/readback under the
+[account-data rollout gate](ACCOUNT_DATA.md#activation-gate). Each ordinary account has at most one queued/running job. Queue
 capacity is a backlog bound, not a measured simultaneous-user capacity.
 
 File locks coordinate processes sharing one resource allocation. The production

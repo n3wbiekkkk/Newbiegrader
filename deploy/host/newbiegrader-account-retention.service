@@ -1,0 +1,20 @@
+[Unit]
+Description=Newbiegrader account deletion recovery and retention
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/newbiegrader/current
+ExecStart=/usr/local/lib/newbiegrader/venv/bin/python deploy/host/account_retention.py --execute
+Environment=PYTHONDONTWRITEBYTECODE=1
+TimeoutStartSec=300
+MemoryMax=256M
+CPUQuota=25%
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

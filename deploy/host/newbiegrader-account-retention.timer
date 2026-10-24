@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Newbiegrader account retention
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=900
+Persistent=true
+Unit=newbiegrader-account-retention.service
+
+[Install]
+WantedBy=timers.target

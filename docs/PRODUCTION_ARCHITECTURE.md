@@ -1,8 +1,10 @@
 # Current production architecture
 
-Updated 2026-10-23 after server-side session revocation was deployed.
-Verified application release: `8b2a484962e154a6806088823af4c005edafcba4`.
+Updated 2026-10-24 after the Python 3.13 runtime rollout.
+Verified application release: `42c880fa8d8ea7439ba527fbee8195fe97b275be`.
 Documentation-only updates do not change that running application release.
+Current source fingerprint: `4f8c2b0ce77c118b6010ead503de6ac77e0eb998c68fc33de249d4410caa218f`. See the [2.0.8 runtime release record](releases/runtime-2.0.8-2026-10-24.json). Historical qualification dates below retain their original scope.
+
 
 - **Frontend:** Cloudflare Pages, `https://newbiegrader.pages.dev`, vanilla SPA.
 - **Transport:** same-origin Pages Function → private `newbiegrader-pc-production`
@@ -52,9 +54,8 @@ Documentation-only updates do not change that running application release.
   `/var/lib/newbiegrader/problem-files/g1-4e9ba14273bc/`. Public files are
   root:newbiegrader-api with 0750 directories / 0440 files; private files are
   root:root with 0700 directories / 0400 files. No runtime cloud-file fallback.
-- **Catalog:** 89 problems / 1,594 cases / 89 selected PDFs. Permanent slugs and
-  submission history remain intact. The calibrated catalog number map is
-  unchanged.
+- **Catalog:** 100 problems / 1,814 cases / 100 selected statement PDFs. Permanent slugs and
+  submission history remain intact. The current map is [2026-10-24](catalog/problem-numbers-2026-10-24.csv).
 - **Backup:** the active PC runs the daily encrypted configuration/UID/table-row
   export to the private Supabase backup bucket. Ephemeral `web_sessions` rows are
   excluded; restore starts with no sessions and a fresh signing key. Protected

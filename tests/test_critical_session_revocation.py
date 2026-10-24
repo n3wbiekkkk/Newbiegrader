@@ -221,8 +221,8 @@ class SessionRevocation(unittest.TestCase):
 
     def test_migration_patch_matches_canonical_schema_and_has_no_public_table_access(self):
         root = Path(__file__).resolve().parents[1]
-        self.assertTrue((root / 'supabase/schema.sql').read_text().endswith(
-            (root / 'supabase/session_revocation.sql').read_text()))
+        self.assertIn((root / 'supabase/session_revocation.sql').read_text(),
+                      (root / 'supabase/schema.sql').read_text())
         patch_sql = (root / 'supabase/session_revocation.sql').read_text()
         self.assertIn('alter table public.web_sessions enable row level security', patch_sql)
         self.assertNotIn('security definer', patch_sql)

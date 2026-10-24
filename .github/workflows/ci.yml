@@ -146,6 +146,11 @@ jobs:
       - name: Verify queue RPCs against PostgreSQL
         run: psql -X -v ON_ERROR_STOP=1 -f tests/queue_sql.sql
 
+      - name: Verify account deletion, revocation and audit
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -f tests/account_lifecycle_sql.sql
+          python3 tests/account_lifecycle_concurrency.py
+
       - name: Verify server-only database privileges and RLS
         run: psql -X -v ON_ERROR_STOP=1 -f tests/security_sql.sql
 

@@ -201,7 +201,7 @@ class FakeSupabase:
             raise Exception(f'column "{unknown[0]}" of relation "{table}" does not exist')
 
     def rpc(self, name, params=None):
-        if name.startswith("auth_"):
+        if name.startswith(("auth_", "account_")):
             return _AuthRPC(self, name, params or {})
         return _QueueRPC(self, name, params or {})
 
@@ -268,6 +268,47 @@ class _AuthRPC:
 
     def _execute(self):
         p = self.params
+        if self.name == "account_auth_allowed":
+            return {"allowed": not any(r.get("email") == p["p_email"]
+                                      for r in self.db.rows("account_deletion_blocks"))}
+        if self.name.startswith("account_delete_"):
+            email = p["p_email"]
+            account = next((r for r in self.db.rows("users") if r["email"] == email), None)
+            if self.name == "account_delete_begin":
+                if any(r.get("user_email") == email and r.get("status") in ("queued", "running")
+                       for r in self.db.rows("judge_jobs")):
+                    return {"busy": True}
+                if not account:
+                    return {"error": "account missing"}
+                subject = account.get("email_auth_subject")
+                account.update(password_hash="", email_verified_at=None, google_subject=None,
+                               auth_version=account.get("auth_version", 1) + 1)
+                if not any(r['email'] == email for r in self.db.rows('account_deletion_work')):
+                    self.db.rows('account_deletion_work').append({'email': email, 'auth_subject': subject})
+                for row in self.db.rows("web_sessions"):
+                    if row.get("user_email") == email:
+                        row["revoked_at"] = dt.datetime.now(dt.timezone.utc).timestamp()
+                self.db.rows("account_deletion_blocks").append({"email": email})
+                return {"pending": True, "auth_subject": subject}
+            if not any(r['email'] == email for r in self.db.rows('account_deletion_work')):
+                if not account and any(r.get('email') == email for r in self.db.rows('account_deletion_blocks')):
+                    return {'ok': True}
+                raise RuntimeError('deletion not prepared')
+            counts = {}
+            for table in ("submissions", "profiles", "judge_jobs", "judge_quota_events",
+                          "contest_registrations", "reports", "web_sessions"):
+                rows = self.db.rows(table)
+                counts[table] = sum(r.get("user_email") == email for r in rows)
+                rows[:] = [r for r in rows if r.get("user_email") != email]
+            self.db.rows("users")[:] = [r for r in self.db.rows("users") if r["email"] != email]
+            self.db.rows("account_deletion_work")[:] = [r for r in self.db.rows("account_deletion_work") if r["email"] != email]
+            for table in ('contests', 'contest_announcements', 'admins'):
+                for row in self.db.rows(table):
+                    if row.get('created_by') == email:
+                        row['created_by'] = ''
+            self.db.rows('admins')[:] = [r for r in self.db.rows('admins') if r.get('email') != email]
+            self.db.rows("account_audit").append({"event": "account_deleted", "counts": counts})
+            return {"ok": True}
         if self.name.startswith("auth_session_"):
             return self._session()
         if self.name == "auth_email_budget":
@@ -293,6 +334,8 @@ class _AuthRPC:
             return {"allowed": True}
         self.db.table("users")
         email = p["p_email"]
+        if any(r.get("email") == email for r in self.db.rows("account_deletion_blocks")):
+            raise RuntimeError("account deleted")
         row = next((r for r in self.db.rows("users") if r["email"] == email), None)
         if self.name == "auth_google_identity" and row and row.get("email_verified_at"):
             if row.get("google_subject") != p["p_subject"]:

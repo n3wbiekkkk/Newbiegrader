@@ -1,13 +1,15 @@
 # Public website security qualification
 
-Verified 2026-10-23. Application release:
-`8b2a484962e154a6806088823af4c005edafcba4`.
+Current release read back 2026-10-24: grader 2.0.8 / Python 3.13.17. Application release:
+`42c880fa8d8ea7439ba527fbee8195fe97b275be`.
 The deployed controls passed the scoped public-website checks below. This is
 release evidence for the existing PC deployment, with the operator's retained
 limitations; it is not a guarantee against every vulnerability or kernel escape.
 See the [current session qualification](releases/session-revocation-2026-10-23.json),
 [earlier public readiness](releases/public-readiness-2026-10-23.json) and
 [previous security qualification](releases/public-security-2026-10-22.json).
+Current source fingerprint: `4f8c2b0ce77c118b6010ead503de6ac77e0eb998c68fc33de249d4410caa218f`. See the [2.0.8 runtime release record](releases/runtime-2.0.8-2026-10-24.json). Historical qualification dates below retain their original scope.
+
 
 ## Browser and API boundary
 

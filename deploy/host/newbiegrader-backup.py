@@ -180,29 +180,49 @@ def upload(base: str, key: str, bucket: str, local: Path, name: str) -> None:
         response.read()
 
 
-def prune(base: str, key: str, bucket: str, keep: int) -> list[str]:
-    url = f"{base.rstrip('/')}/storage/v1/object/list/{bucket}"
-    request = urllib.request.Request(
-        url, data=json.dumps({"prefix": "", "limit": 1000}).encode(), method="POST",
-        headers={"apikey": key, "Authorization": "Bearer " + key,
-                 "Content-Type": "application/json"})
+def backup_timestamp(name: str):
+    """Only our encrypted backup filenames are eligible for automatic removal."""
+    if not re.fullmatch(r"[0-9]{8}T[0-9]{6}Z-backup\.tar\.age", name):
+        return None
     try:
+        return dt.datetime.strptime(name[:16], "%Y%m%dT%H%M%SZ").replace(tzinfo=dt.timezone.utc)
+    except ValueError:
+        return None
+
+
+def prune(base: str, key: str, bucket: str, keep: int, days: int = 30) -> list[str]:
+    headers = {"apikey": key, "Authorization": "Bearer " + key,
+               "Content-Type": "application/json"}
+    objects = []
+    for offset in range(0, 100000, 1000):
+        request = urllib.request.Request(
+            f"{base.rstrip('/')}/storage/v1/object/list/{bucket}",
+            data=json.dumps({"prefix": "", "limit": 1000, "offset": offset,
+                             "sortBy": {"column": "name", "order": "asc"}}).encode(),
+            method="POST", headers=headers)
         with urllib.request.urlopen(request, timeout=60) as response:
-            objects = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError:
-        return []
-    names = sorted(o.get("name") for o in objects if o.get("name"))
-    stale = names[:-keep] if keep > 0 else []
-    for name in stale:
+            batch = json.loads(response.read().decode("utf-8"))
+        if not isinstance(batch, list):
+            raise RuntimeError("invalid backup listing")
+        objects.extend(batch)
+        if len(batch) < 1000:
+            break
+    else:
+        raise RuntimeError("backup listing exceeds safety limit")
+    now = dt.datetime.now(dt.timezone.utc)
+    names = sorted({row['name'] for row in objects if isinstance(row, dict)
+                    and backup_timestamp(row.get('name', '')) is not None})
+    stale = {name for name in names if backup_timestamp(name) < now - dt.timedelta(days=days)}
+    if keep > 0:
+        stale.update(names[:-keep])
+    # List every object before mutating the bucket: offset pagination stays stable.
+    for name in sorted(stale):
         remove = urllib.request.Request(
             f"{base.rstrip('/')}/storage/v1/object/{bucket}/{urllib.parse.quote(name)}",
-            method="DELETE", headers={"apikey": key, "Authorization": "Bearer " + key})
-        try:
-            with urllib.request.urlopen(remove, timeout=60) as response:
-                response.read()
-        except urllib.error.HTTPError:
-            pass
-    return stale
+            method="DELETE", headers=headers)
+        with urllib.request.urlopen(remove, timeout=60) as response:
+            response.read()
+    return sorted(stale)
 
 
 def main(argv=None) -> int:
@@ -210,6 +230,8 @@ def main(argv=None) -> int:
     parser.add_argument("--bucket", default="judge-backups")
     parser.add_argument("--keep", type=int, default=14,
                         help="how many encrypted backups to retain in the bucket")
+    parser.add_argument("--retention-days", type=int, default=30,
+                        help="maximum backup age; enforced independently of --keep")
     parser.add_argument("--dry-run", action="store_true",
                         help="collect and encrypt locally, but upload nothing")
     parser.add_argument("--schema", type=Path, default=SCHEMA_FILE)
@@ -218,6 +240,8 @@ def main(argv=None) -> int:
     parser.add_argument("--marker-file", type=Path, default=MARKER_FILE)
     parser.add_argument("--staging", type=Path, default=STAGING)
     args = parser.parse_args(argv)
+    if args.retention_days < 1 or args.retention_days > 30 or args.keep < 0:
+        parser.error("retention-days must be 1-30; keep must be nonnegative")
 
     os.umask(0o077)
     env = read_env(args.env_file)
@@ -275,7 +299,7 @@ def main(argv=None) -> int:
         else:
             upload(base, key, args.bucket, encrypted, name)
             print(f"uploaded: {args.bucket}/{name}")
-            removed = prune(base, key, args.bucket, args.keep)
+            removed = prune(base, key, args.bucket, args.keep, args.retention_days)
             if removed:
                 print(f"pruned {len(removed)} old backup(s)")
             args.marker_file.write_text(

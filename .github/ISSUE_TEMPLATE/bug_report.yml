@@ -1,0 +1,27 @@
+name: รายงานปัญหา
+description: แจ้งพฤติกรรมที่ผิดพร้อมขั้นตอนทำซ้ำ
+body:
+  - type: markdown
+    attributes:
+      value: "หากเป็นช่องโหว่ โปรดติดต่อ newbiegrader.team@gmail.com เป็นการส่วนตัว อย่าแนบรหัสผ่าน OTP อีเมลผู้อื่น หรือข้อมูลทดสอบส่วนตัว"
+  - type: textarea
+    id: behavior
+    attributes:
+      label: เกิดอะไรขึ้น และคาดหวังอะไร
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: ขั้นตอนทำให้เกิดซ้ำ
+      description: ใช้ตัวอย่างเล็กที่สุดที่ไม่เปิดเผยข้อมูลส่วนบุคคล
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: เบราว์เซอร์ อุปกรณ์ และรุ่นเว็บ
+  - type: textarea
+    id: evidence
+    attributes:
+      label: ภาพหรือข้อความผิดพลาดที่ลบข้อมูลส่วนตัวแล้ว

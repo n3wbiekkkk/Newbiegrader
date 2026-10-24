@@ -108,6 +108,7 @@ function harness(initialRoute = '#/history') {
   load('function ioBlockHtml(', 'function renderSample(');
   load('/* ---------------- editor keys', '/* ---------------- task tabs');
   load('function clearGetCache(', 'function apiPostJson(');
+  load('async function submitWithQueueRetry(', '/* Several views');
   load('function show(view)', '/* ---------------- home');
   load('async function selectProblem(', 'async function refreshYourScore(');
   load('function jobStateText(', 'const VERDICT_TH =');

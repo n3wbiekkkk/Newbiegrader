@@ -1,0 +1,114 @@
+{
+  "recorded_at": "2026-10-24T14:30:17Z",
+  "status": "candidate_not_deployed",
+  "grader_version": "2.0.8",
+  "python": "3.13.17",
+  "base_commit": "2785291",
+  "candidate_build_sha256": "8c548584ece552a55ab155514f8dd78486f67496a95fb76116e69bb774e7777f",
+  "live_release_record": "runtime-2.0.8-2026-10-24.json",
+  "migration_sha256": "82719d00dc4ecfb7a2714b2b96c54b85db547c57b651942400852f57e770ec8d",
+  "implemented": [
+    "Thai Privacy/Terms/FAQ and links",
+    "Own-account allowlisted export",
+    "Revocable recoverable Auth/application deletion with minimal audit",
+    "One-year history and 90-day audit maintenance candidate",
+    "30-day encrypted-backup pruning candidate",
+    "Anonymous health status/count",
+    "Queue default 50 and confirmed-rejection retry"
+  ],
+  "verification": {
+    "linux_full": {
+      "python": "3.13.17",
+      "tests": 613,
+      "skips": 0,
+      "passed": true,
+      "private_fixtures_available": true
+    },
+    "macos_full_before_final_message_change": {
+      "python": "3.11",
+      "tests": 588,
+      "skips": 20,
+      "passed": true
+    },
+    "node": {
+      "tests": 170,
+      "failed": 0,
+      "skips": 0
+    },
+    "problem_validation": {
+      "packages": 100,
+      "passed": 100,
+      "environment": "macOS Python 3.11"
+    },
+    "plagiarism_self_test": {
+      "passed": 4,
+      "total": 4
+    },
+    "dependency_audits": {
+      "requirements": "no known vulnerabilities",
+      "host_lock": "no known vulnerabilities",
+      "packaged_image": "no known vulnerabilities"
+    },
+    "postgresql17": {
+      "schema_reapplied": true,
+      "legacy_upgrade": true,
+      "broad_default_grants_reconciled": true,
+      "lifecycle_and_retention": true,
+      "queue_auth_session_suites": true,
+      "deletion_admission_races": 20
+    },
+    "queue_http_burst": {
+      "authenticated_clients": 50,
+      "admitted_unique_jobs": 50,
+      "next_client_status": 503,
+      "database": "fake Supabase",
+      "full_judging": false
+    },
+    "queue_sql_burst": {
+      "distinct_accounts": 50,
+      "admitted_unique_jobs": 50,
+      "parallel_callers": 8,
+      "next_client_status": 503,
+      "database": "disposable PostgreSQL17",
+      "full_judging": false
+    },
+    "browser": {
+      "privacy_widths_px": [
+        375,
+        1200
+      ],
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "privacy_terms_faq": "local preview",
+      "production_email_recovery": "existing nonadmin account received OTP; user completed password setup; tasks visible",
+      "production_logout": "returned to guest landing",
+      "production_google": "redirected to email_proof=required; selected account awaiting confirmation",
+      "registration_policy_links": "visible in local registration form"
+    },
+    "critical_gate": {
+      "tests": 380,
+      "skips": 0,
+      "passed": true,
+      "elapsed_s": 54.906,
+      "environment": "disposable Linux/root Docker with Python 3.13.17"
+    }
+  },
+  "activation_pending": [
+    "Maintainer applies reviewed lifecycle SQL in SQL Editor",
+    "Compatible backend rollout, live queue=50 readback, Pages rollout",
+    "Enable and verify retention schedule and all backup destinations",
+    "Exact candidate version readback and native Python/C/C++ production submissions",
+    "Fresh unused-email signup, successful Google login and independent-device logout",
+    "50-message deliverability/provider quota qualification",
+    "Review guardian authorization and erasure reconciliation procedures"
+  ],
+  "scope_limits": [
+    "Synthetic Docker flags were used only in disposable tests, never in production.",
+    "No production schema, service, queue setting or user deletion changed in this task.",
+    "The current Gmail sender was retained by operator choice. One received OTP does not establish mass-email delivery.",
+    "No sustained concurrent-learner capacity is certified.",
+    "This record is local/SQL qualification, not a production release qualification."
+  ]
+}
