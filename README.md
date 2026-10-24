@@ -1,13 +1,14 @@
 <div align="center">
 
+<img src="static/logo-icon.png" alt="Newbiegrader logo" width="76">
+
 # Newbiegrader
 
-**A public programming practice platform with Thai problem statements.**
+**An online judge for practicing competitive programming in Thai.**
 
 Python 3 · C11 · C++17 · Automatic judging · Contests · Official solutions
 
-<br>
-
+[![CI](https://github.com/n3wbiekkkk/Newbiegrader/actions/workflows/ci.yml/badge.svg)](https://github.com/n3wbiekkkk/Newbiegrader/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue)](LICENSE)
 ![Python](https://img.shields.io/badge/python-3.13-3776AB?logo=python&logoColor=white)
 ![Problems](https://img.shields.io/badge/problems-100-brightgreen)
@@ -15,7 +16,7 @@ Python 3 · C11 · C++17 · Automatic judging · Contests · Official solutions
 ![Grader](https://img.shields.io/badge/grader-v2.0.8-informational)
 ![Frontend](https://img.shields.io/badge/frontend-no%20build%20step-orange)
 
-[Start Practicing](https://newbiegrader.pages.dev) · [Documentation](docs/README.md) · [Report a Bug](https://github.com/n3wbiekkkk/Newbiegrader/issues) · [Discord](https://discord.gg/7NQDHFBpf6) · [Contributors](https://github.com/n3wbiekkkk/Newbiegrader/graphs/contributors)
+[Start Practicing](https://newbiegrader.pages.dev) · [Documentation](docs/README.md) · [Contributing](CONTRIBUTING.md) · [Report a Bug](https://github.com/n3wbiekkkk/Newbiegrader/issues) · [Discord](https://discord.gg/7NQDHFBpf6)
 
 </div>
 
@@ -24,11 +25,15 @@ Python 3 · C11 · C++17 · Automatic judging · Contests · Official solutions
 ## Contents
 
 - [About](#about)
+- [Screenshots](#screenshots)
 - [Features](#features)
+- [How judging works](#how-judging-works)
 - [Feedback and access](#feedback-and-access)
 - [Verdicts](#verdicts)
-- [Local development](#local-development)
+- [Quick start](#quick-start)
+- [Tests](#tests)
 - [Architecture](#architecture)
+- [Documentation](#documentation)
 - [Contributing](#contributing)
 - [Contributors](#contributors)
 - [License](#license)
@@ -47,8 +52,20 @@ Stable problem IDs preserve links and submission history; the
 approved numbering.
 
 Visit [Newbiegrader](https://newbiegrader.pages.dev) and create an account to
-open the problem catalog, submit code, join contests and read solutions.
+open the problem catalog, submit code, join contests and read official solutions.
 The landing page and account registration/recovery are available to guests.
+Statements, feedback and the interface are in Thai; repository documentation and
+identifiers are in English.
+
+## Screenshots
+
+| Desktop | Mobile, dark theme |
+| --- | --- |
+| <img src="docs/screenshots/peer-inspection-desktop.png" alt="Submission detail page for a peer submission, desktop layout" width="460"> | <img src="docs/screenshots/peer-inspection-mobile-dark.png" alt="Submission detail page for a peer submission on a phone in dark theme" width="190"> |
+
+A signed-in member inspecting an eligible completed submission: verdict,
+per-test measurements and source. Private test input and diagnostics are never
+included in this view.
 
 ## Features
 
@@ -64,6 +81,25 @@ The landing page and account registration/recovery are available to guests.
 | Contests | Join timed rounds with registration, organizer announcements and frozen scoreboards. |
 | Administration | Manage contests, inspect queue health, review problem reports, rejudge submissions and screen for code similarity. |
 | Light and dark themes | Use the same interface on desktop and mobile, with keyboard navigation and a Ctrl/Command + K problem search. |
+
+## How judging works
+
+1. **Submit.** The API checks admission, quotas and queue bounds, then returns
+   `202` with a job ID. Judging never runs inside the API request.
+2. **Judge.** A worker claims the job under a lease, compiles when needed, and
+   executes each test in a supervised process with its own identity, cgroup,
+   resource limits and bounded workspace.
+3. **Redact.** Results pass through the active practice/contest disclosure policy
+   and are redacted before they are returned to the client and before they are
+   stored.
+4. **Poll.** The client follows the job until the verdict and per-test
+   measurements are available.
+
+Every verdict comes from the same standard-library engine in `grader.py`;
+request handlers never reimplement judging. Database queue mode coordinates
+worker leases and commits completion and history together. Local queue mode is
+single-process and best-effort, so it guarantees no recovery after a restart or a
+database outage.
 
 ## Feedback and access
 
@@ -99,7 +135,11 @@ reused as a secret contest suite.
 | `RE` | Runtime error. |
 | `CE` | Compilation error. |
 
-## Local development
+Time and memory are enforced and reported per test. Memory accounting keeps the
+difference between measured usage and the address-space safety limit, so a
+declared memory limit is not a raw address-space cap.
+
+## Quick start
 
 Use **Python 3.13**, **Node.js**, and **GCC/G++**. The frontend is plain HTML,
 CSS and JavaScript; it has no bundler or build step.
@@ -131,19 +171,26 @@ Maintainers transfer authoring packages separately through the
 [private synchronization workflow](docs/making-solutions.md#sync-private-authoring-packages-between-development-machines).
 A server starting successfully does not establish that judging is configured.
 
-For frontend changes, run:
+## Tests
 
 ```sh
+# Frontend
 node --check static/app.js
 node tools/check_frontend.js
 node tools/check_styles.js
 node --test tests/test_*.js
+
+# Python, API and problem tooling
+python -m unittest discover -s tests -v
+python tools/validate_problem.py
+python tools/plagiarism.py
 ```
 
-For Python/API changes, also run `python -m unittest discover -s tests -v`.
 The [CI workflow](.github/workflows/ci.yml) defines the complete checks, including
-Linux isolation and disposable PostgreSQL qualification. A frontend check or
-an empty problem directory does not qualify a judge deployment.
+Linux isolation and disposable PostgreSQL qualification. A frontend check, a
+passing macOS run or an empty problem directory does not qualify a judge
+deployment; sandbox changes require the Linux critical suite to pass with no
+skips.
 
 ## Architecture
 
@@ -155,34 +202,43 @@ an empty problem directory does not qualify a judge deployment.
 | `grader.py` | Shared standard-library judging engine, checkers and language limits. |
 | `judge_execution.py`, `judge_runner.py`, `worker.py` | Supervised jobs and dedicated judge workers. |
 | `job_sandbox.py`, `job_resources.py` | Linux isolation, resource enforcement and descendant cleanup. |
-| `problem_store.py`, `problems/` | Protected runtime files and private local authoring packages. |
+| `problem_store.py`, `backend_problem_files.py` | Protected problem metadata and backend file storage. |
 | `supabase/` | Metadata, identities, history and durable queue schema. |
 | `tools/`, `tests/` | Authoring, publication, validation and regression checks. |
 
-Every submission uses the same judging engine. Submission requests return a job
-ID for polling; full judging does not run inside the API request. Database queue
-mode coordinates worker leases and commits completion/history together. Local
-queue mode is single-process and best-effort, with no durable restart guarantee.
-
 Production uses separate API and worker roles. The executor remains
 credential-free, with per-job identities, cgroups, Landlock, seccomp and bounded
-workspaces. Memory accounting preserves the difference between measured usage
-and address-space safety limits.
+workspaces, and private problem files are served only through authenticated
+backend endpoints. Private fixtures, references and author archives are excluded
+from static hosting.
 
-Problem and solution PDFs are served through authenticated backend endpoints.
-Private fixtures, references and author archives are excluded from static
-hosting. See [backend file storage](docs/BACKEND_PROBLEM_FILES.md),
-[security readiness](docs/SECURITY_READINESS.md),
-[queue and capacity](docs/load-handling.md), and the
-[documentation index](docs/README.md) for detailed guides.
+Isolation is implemented for Linux; other platforms start in a reduced
+rlimits-only development mode. Release and qualification evidence, including its
+scope and date, is recorded under [`docs/releases/`](docs/releases/).
+
+## Documentation
+
+The [documentation index](docs/README.md) is the entry point for operators and
+authors. Frequently used guides:
+
+| Topic | Guide |
+| --- | --- |
+| Authoring, sample synchronization and PDFs | [Making problems](docs/making-problems.md) |
+| Solution authoring and member access | [Making solutions](docs/making-solutions.md) |
+| Practice, contest and peer feedback boundaries | [Submission feedback](docs/submission-feedback-policy.md) |
+| Protected problem roots, hashes and publication | [Backend problem files](docs/BACKEND_PROBLEM_FILES.md) |
+| Topology, services and allocations | [Production architecture](docs/PRODUCTION_ARCHITECTURE.md) |
+| Queue bounds, scheduling and load testing | [Load handling](docs/load-handling.md) |
+| Sandbox scope and accepted limitations | [Security readiness](docs/SECURITY_READINESS.md), [public security](docs/PUBLIC_SECURITY.md) |
+| Website sessions and recovery | [Session revocation](docs/SESSION_REVOCATION.md) |
 
 ## Contributing
 
 Bug reports, problem proposals and pull requests are welcome. See
-[CONTRIBUTING.md](CONTRIBUTING.md) for the contribution and validation workflow. Describe the
-behavior you are changing and the checks you ran. Please report security issues
-through the [maintainer's profile](https://github.com/n3wbiekkkk), rather than a
-public issue.
+[CONTRIBUTING.md](CONTRIBUTING.md) for the setup, validation and review workflow.
+Describe the behavior you are changing and the checks you ran. Please report
+security issues through the [maintainer's profile](https://github.com/n3wbiekkkk),
+not a public issue.
 
 - **Problems:** use the [problem authoring workflow](docs/making-problems.md)
   and versioned templates in `tools/templates/problem/`.
