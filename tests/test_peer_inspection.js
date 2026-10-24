@@ -40,6 +40,7 @@ function harness(initialRoute = '#/history') {
         setAttribute: (key, value) => attrs.set(key, String(value)),
         getAttribute: (key) => attrs.get(key), hasAttribute: (key) => attrs.has(key),
         removeAttribute: (key) => attrs.delete(key),
+        replaceWith(next) { elements.set(this.id, next); },
         querySelectorAll: () => [], querySelector: () => null,
         focus() {}, scrollIntoView() { this.scrolled = true; },
       });
@@ -60,7 +61,7 @@ function harness(initialRoute = '#/history') {
     replace: (value) => changeRoute(value, 'replace'),
   };
   const document = {
-    getElementById: element, addEventListener() {},
+    getElementById: element, createElement: () => element(Symbol()), addEventListener() {},
     querySelectorAll: (selector) => selector === '.view' ? views : [],
     querySelector(selector) {
       const active = selector.match(/^#(view-[\w-]+)\.active$/);

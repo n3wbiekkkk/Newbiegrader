@@ -383,13 +383,22 @@ function setTaskTab(tab) {
   if (tab === "solution") loadSolution();
 }
 
+function replaceSolutionFrame(url) {
+  // Replace the browsing context on load/clear to avoid extra Back entries.
+  const frame = document.createElement("iframe");
+  frame.id = "solution-frame";
+  frame.title = "เอกสารเฉลย PDF";
+  if (url) frame.src = url;
+  else frame.classList.add("hidden");
+  const current = $("solution-frame");
+  if (current) current.replaceWith(frame);
+  else $("pane-solution").appendChild(frame);
+}
+
 function resetSolution() {
   state.solutionSeq = (state.solutionSeq || 0) + 1;
-  const frame = $("solution-frame"), link = $("solution-open");
-  if (frame) {
-    frame.removeAttribute("src");
-    frame.classList.add("hidden");
-  }
+  replaceSolutionFrame();
+  const link = $("solution-open");
   if (link) {
     link.removeAttribute("href");
     link.classList.add("hidden");
@@ -409,9 +418,8 @@ async function loadSolution() {
     await apiGet(`/api/problems/${encodeURIComponent(pid)}/solution`);
     if (!current()) return;
     const url = `${API}/api/problems/${encodeURIComponent(pid)}/solution/pdf`;
-    const frame = $("solution-frame"), link = $("solution-open");
-    frame.src = url;
-    frame.classList.remove("hidden");
+    replaceSolutionFrame(url);
+    const link = $("solution-open");
     link.href = url;
     link.classList.remove("hidden");
     status.textContent = "เฉลยประกอบด้วยแนวคิด วิธีทำ และโค้ดตัวอย่าง";
