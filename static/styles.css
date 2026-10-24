@@ -398,7 +398,7 @@ table.tests tbody tr:last-child td { border-bottom: none; }
   margin-top: 10px; padding: 10px 14px; border-radius: var(--r-sm); font-size: var(--fs-sm);
   background: var(--notice-bg); border: 1px solid var(--notice-line); color: var(--notice-fg);
 }
-#pdf-frame { width: 100%; height: 88vh; min-height: 540px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--field); }
+#pdf-frame, #solution-frame { width: 100%; height: 88vh; min-height: 540px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--field); }
 /* Thai has no case: uppercase + letter-spacing only made headings harder to read */
 .pane-h { margin: var(--sp-5) 0 var(--sp-2); font-size: var(--fs-sm); color: var(--dim); font-weight: 600; }
 .pane-h:first-of-type { margin-top: 4px; }
@@ -1144,7 +1144,7 @@ a.page-context:hover { color: var(--text); }
 #pane-statement { border: 0; padding-top: 0; }
 #pane-statement > .card-head { margin: 20px 0 14px; }
 #pane-statement > .card-head h2 { font-size: var(--fs-xs); color: var(--dim); font-weight: 400; }
-#pdf-frame { border-radius: 2px; height: 80vh; }
+#pdf-frame, #solution-frame { border-radius: 2px; height: 80vh; }
 #task-body { max-width: 800px; margin: 0 auto; padding: 24px; background: var(--card); border: 1px solid var(--border); }
 #editor { font-size: var(--fs-sm); line-height: 1.85; min-height: 380px; }
 .dropzone { padding: 16px; }
@@ -1232,7 +1232,7 @@ a.page-context:hover { color: var(--text); }
   .tab-btn { font-size: var(--fs-sm); padding: 10px 4px; }
   .io-grid { grid-template-columns: minmax(0, 1fr); }
   #task-body { padding: 18px; }
-  #pdf-frame { height: 65vh; min-height: 400px; }
+  #pdf-frame, #solution-frame { height: 65vh; min-height: 400px; }
   .foot { padding: 24px 20px; gap: 12px; }
   .foot > p { flex-basis: 100%; }
   .foot > p:last-child { margin-left: 0; }
@@ -1556,7 +1556,7 @@ table.tests th, table.tests td { padding: 15px 16px; }
 .tab-pane.card { border-top: 0; padding-top: 26px; }
 #pane-statement { max-width: 1060px; margin: 0 auto; }
 #task-body { border-radius: 16px; max-width: 880px; padding: 38px 44px; font-size: var(--fs-base); }
-#pdf-frame { border-radius: 8px; }
+#pdf-frame, #solution-frame { border-radius: 8px; }
 #sample-box { margin-top: 30px; padding-top: 24px; }
 #sample-box .pane-h { font-size: var(--fs-xl); color: var(--text); font-weight: 500; margin-bottom: 18px; }
 .chip-btn { min-height: 40px; padding: 8px 16px; }

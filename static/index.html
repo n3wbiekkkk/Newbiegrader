@@ -18,7 +18,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anuphan:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600;700&display=swap">
-<link rel="stylesheet" href="/styles.css?v=47">
+<link rel="stylesheet" href="/styles.css?v=48">
 </head>
 <body>
 <a class="skip-link" href="#main">ข้ามไปเนื้อหา</a>
@@ -241,6 +241,7 @@
       <button class="tab-btn" id="tab-run" data-tab="run" type="button" role="tab" aria-selected="false" aria-controls="pane-run">ทดลองรัน</button>
       <button class="tab-btn" id="tab-subs" data-tab="subs" type="button" role="tab" aria-selected="false" aria-controls="pane-subs">การส่งทั้งหมด</button>
       <button class="tab-btn" id="tab-mine" data-tab="mine" type="button" role="tab" aria-selected="false" aria-controls="pane-mine">ของฉัน</button>
+      <button class="tab-btn" id="tab-solution" data-tab="solution" type="button" role="tab" aria-selected="false" aria-controls="pane-solution">เฉลย</button>
       <button class="tab-btn" id="tab-report" data-tab="report" type="button" role="tab" aria-selected="false" aria-controls="pane-report">แจ้งปัญหา</button>
     </div>
     <div class="card tab-pane active" id="pane-statement" role="tabpanel" aria-labelledby="tab-statement">
@@ -255,6 +256,15 @@
         <div id="sample-btns" class="chip-row"></div>
         <div id="sample-view" class="dim">เลือกตัวอย่างด้านบนเพื่อดู input / output</div>
       </div>
+    </div>
+    <div class="card tab-pane" id="pane-solution" role="tabpanel" aria-labelledby="tab-solution">
+      <div class="card-head">
+        <h2>เฉลยและแนวคิด</h2>
+        <a id="solution-open" class="statement-open hidden" target="_blank" rel="noopener">เปิด PDF ในหน้าต่างใหม่ <span aria-hidden="true">↗</span></a>
+      </div>
+      <div id="solution-status" class="dim" role="status" aria-live="polite">เลือกแถบเฉลยเพื่ออ่านแนวคิดและวิธีทำ</div>
+      <button id="solution-retry" class="ghost-btn hidden" type="button">ลองอีกครั้ง</button>
+      <iframe id="solution-frame" class="hidden" title="เอกสารเฉลย PDF"></iframe>
     </div>
     <div class="card tab-pane" id="pane-submit" role="tabpanel" aria-labelledby="tab-submit">
       <div class="card-head">
@@ -771,6 +781,6 @@
 
 <script src="/config.js?v=6"></script>
 <script src="/turnstile.js?v=1"></script>
-<script src="/app.js?v=77"></script>
+<script src="/app.js?v=78"></script>
 </body>
 </html>

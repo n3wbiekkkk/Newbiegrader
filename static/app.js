@@ -367,6 +367,7 @@ function shareEditor(where) {
 }
 
 function setTaskTab(tab) {
+  if (tab !== "solution") resetSolution();
   state.taskTab = tab;
   document.querySelectorAll(".tab-btn").forEach((b) => {
     const on = b.dataset.tab === tab;
@@ -379,6 +380,50 @@ function setTaskTab(tab) {
   if (tab === "subs") loadTaskSubs();
   if (tab === "mine") loadTaskMine();
   if (tab === "report") loadMyReports();
+  if (tab === "solution") loadSolution();
+}
+
+function resetSolution() {
+  state.solutionSeq = (state.solutionSeq || 0) + 1;
+  const frame = $("solution-frame"), link = $("solution-open");
+  if (frame) {
+    frame.removeAttribute("src");
+    frame.classList.add("hidden");
+  }
+  if (link) {
+    link.removeAttribute("href");
+    link.classList.add("hidden");
+  }
+  const retry = $("solution-retry");
+  if (retry) retry.classList.add("hidden");
+}
+
+async function loadSolution() {
+  resetSolution();
+  const seq = state.solutionSeq, pid = state.current, identity = state.user;
+  const current = () => seq === state.solutionSeq && pid === state.current &&
+    state.taskTab === "solution" && identity === state.user;
+  const status = $("solution-status");
+  status.textContent = "กำลังโหลดเฉลย…";
+  try {
+    await apiGet(`/api/problems/${encodeURIComponent(pid)}/solution`);
+    if (!current()) return;
+    const url = `${API}/api/problems/${encodeURIComponent(pid)}/solution/pdf`;
+    const frame = $("solution-frame"), link = $("solution-open");
+    frame.src = url;
+    frame.classList.remove("hidden");
+    link.href = url;
+    link.classList.remove("hidden");
+    status.textContent = "เฉลยประกอบด้วยแนวคิด วิธีทำ และโค้ดตัวอย่าง";
+  } catch (e) {
+    if (!current()) return;
+    status.textContent = e.status === 403 ? "เฉลยจะเปิดให้อ่านเมื่อการแข่งขันสิ้นสุดแล้ว" :
+      e.status === 404 ? "ยังไม่มีเฉลยสำหรับโจทย์นี้ หรือโจทย์ไม่พร้อมให้เข้าถึง" :
+      e.status === 401 ? "กรุณาเข้าสู่ระบบเพื่ออ่านเฉลย" : "โหลดเฉลยไม่ได้ กรุณาลองอีกครั้ง";
+    const retry = $("solution-retry");
+    retry.classList.toggle("hidden", e.status === 401 || e.status === 403 || e.status === 404);
+    retry.onclick = loadSolution;
+  }
 }
 document.querySelectorAll(".tab-btn").forEach((b) => {
   b.onclick = () => setTaskTab(b.dataset.tab);
@@ -707,6 +752,7 @@ function apiGetCached(path, ttlMs, force = false) {
 }
 
 function clearGetCache() {
+  if (typeof resetSolution === "function") resetSolution();
   // Identity invalidation must also remove source already displayed on a
   // shared computer. Ordinary submission completion only expires GET caches.
   state.inspectionIdentityGen = (state.inspectionIdentityGen || 0) + 1;
@@ -757,6 +803,7 @@ async function fetchStats() {
 
 /* ---------------- router ---------------- */
 function show(view) {
+  if (view !== "task" && state.solutionSeq) resetSolution();
   if (view !== "contest") state.contestSeq = (state.contestSeq || 0) + 1;
   if (view !== "submission" && (state.inspectionSeq || state.inspectedSubmission)) clearSubmissionInspection();
   // Leaving the task list remembers where you were: coming back from a

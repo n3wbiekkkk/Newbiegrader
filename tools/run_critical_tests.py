@@ -20,7 +20,7 @@ def main():
     suite = unittest.TestSuite()
     for pattern in ("test_critical_*.py", "test_judge_runner.py", "test_queue_admission.py",
                     "test_audit_integrity.py", "test_contest_policy_audit.py",
-                    "test_request_boundaries.py", "test_auth_retention_audit.py",
+                    "test_request_boundaries.py", "test_auth_retention_audit.py", "test_solutions.py",
                     "test_optimization_review.py"):
         suite.addTests(unittest.defaultTestLoader.discover(str(ROOT / "tests"),
                                                         pattern=pattern))

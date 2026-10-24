@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import sys
 import time
 from collections import OrderedDict
@@ -634,6 +635,29 @@ def get_statement_pdf(slug: str, source: Optional[str] = None, client=None) -> b
     if not data.startswith(b"%PDF"):
         raise ProblemUnavailable(f"problem {slug!r} PDF looks corrupt (missing %PDF header)")
     _pdf_put(slug, data, row)
+    return data
+
+
+def get_solution_pdf(slug: str, source: Optional[str] = None) -> bytes:
+    """Solution bytes stay on disk; never fall back to cloud file storage."""
+    src = _require_source(source if source is not None else problem_source())
+    if not re.fullmatch(r"[a-z0-9_]+", slug):
+        raise ProblemNotFound("unknown solution")
+    try:
+        if src == "local":
+            path = grader.PROBLEMS_DIR / slug / "solution.pdf"
+            data = path.read_bytes() if path.is_file() else None
+        elif backend_problem_files.backend() == "local":
+            data = backend_problem_files.download_public_pdf(
+                problem_bucket(), f"{slug}/solution.pdf")
+        else:
+            raise ProblemUnavailable("solutions require protected backend files")
+    except (backend_problem_files.FilesUnavailable, OSError, ValueError, KeyError, TypeError) as exc:
+        raise ProblemUnavailable("solution file unavailable") from exc
+    if data is None:
+        raise ProblemNotFound("no solution for this problem")
+    if not data.startswith(b"%PDF"):
+        raise ProblemUnavailable("solution PDF is corrupt")
     return data
 
 

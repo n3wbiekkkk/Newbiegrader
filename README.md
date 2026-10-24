@@ -145,7 +145,7 @@ ambiguous queue claims are never automatically replayed.
 
 ## Contributing
 
-For problem authors, start with the [shared authoring workflow](docs/making-problems.md) and versioned templates in `tools/templates/problem/`.
+For problem authors, start with the [shared authoring workflow](docs/making-problems.md) and versioned templates in `tools/templates/problem/`. Official solution PDFs use the [solution authoring workflow](docs/making-solutions.md), which also documents private package transfer between development machines.
 
 Contributions are welcome. You can suggest features or report bugs by opening an issue, chat with the community on [Discord](https://discord.gg/7NQDHFBpf6), or submit a pull request with a clear description of the change. Please report security issues through the maintainer's profile rather than a public issue.
 
