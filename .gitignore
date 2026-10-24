@@ -7,7 +7,6 @@ venv/
 .env
 .wrangler/
 .tmp_fmt*
-graphify-out/
 agent.md
 problems/
 examples/
@@ -38,3 +37,7 @@ AGENTS.md
 /docs/linux-validation-todo.md
 /docs/statement-errata.md
 /docs/statement-stories.md
+
+# Local code analysis and tool settings
+graphify-out/
+.claude/settings.json

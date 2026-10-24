@@ -9,10 +9,10 @@ Strict limits · Undisclosed tests · Asynchronous judging · Contests · Teache
 <br>
 
 [![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue)](LICENSE)
-![Python](https://img.shields.io/badge/python-3.11-3776AB?logo=python&logoColor=white)
+![Python](https://img.shields.io/badge/python-3.13-3776AB?logo=python&logoColor=white)
 ![Problems](https://img.shields.io/badge/problems-100-brightgreen)
 ![Test cases](https://img.shields.io/badge/test%20cases-1814-brightgreen)
-![Grader](https://img.shields.io/badge/grader-v2.0.7-informational)
+![Grader](https://img.shields.io/badge/grader-v2.0.8-informational)
 ![Frontend](https://img.shields.io/badge/frontend-no%20build%20step-orange)
 
 [Live Demo](https://newbiegrader.pages.dev) · [Report a Bug](../../issues) · [Discord](https://discord.gg/7NQDHFBpf6) · [Documentation](docs)
@@ -45,7 +45,7 @@ Practice submissions show input, expected output and actual output for failed ca
 
 <div align="center">
 
-| 100 | 1,814 | v2.0.7 | 3 |
+| 100 | 1,814 | v2.0.8 | 3 |
 | :---: | :---: | :---: | :---: |
 | problems | test cases | grader engine | languages |
 
@@ -140,7 +140,7 @@ ambiguous queue claims are never automatically replayed.
 | API | FastAPI |
 | Database | PostgreSQL via Supabase |
 | Frontend | HTML, CSS and JavaScript on Cloudflare Pages |
-| Production backend | Ubuntu PC, Python 3.11, separate systemd API and four worker services |
+| Production backend | Ubuntu PC, Python 3.13, separate systemd API and four worker services |
 | Local packaging | Docker |
 
 ## Contributing
