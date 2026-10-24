@@ -3,9 +3,9 @@
 Current production is Cloudflare Pages with a private tunnel to the Ubuntu PC.
 The PC runs four isolated workers and a separate API; Supabase retains metadata,
 identities, history and the durable queue. The current verified application code
-is `42c880fa8d8ea7439ba527fbee8195fe97b275be` (2026-10-24), grader 2.0.8 / Python 3.13.17. Documentation-only
+is `c3ba9ad0fd34946cad589d8eeb0c0b4a1acb06ae` (2026-10-24), grader 2.0.8 / Python 3.13.17. Documentation-only
 updates can follow that release without changing the running application.
-Current source fingerprint: `4f8c2b0ce77c118b6010ead503de6ac77e0eb998c68fc33de249d4410caa218f`. See the [2.0.8 runtime release record](releases/runtime-2.0.8-2026-10-24.json). Historical qualification dates below retain their original scope.
+Current source fingerprint: `8c548584ece552a55ab155514f8dd78486f67496a95fb76116e69bb774e7777f`. See the [2.0.8 account-lifecycle activation](releases/account-lifecycle-2026-10-24.json). Historical qualification dates below retain their original scope.
 
 
 ## Operating the current deployment
@@ -36,6 +36,10 @@ Current source fingerprint: `4f8c2b0ce77c118b6010ead503de6ac77e0eb998c68fc33de24
 | Production dependencies and licenses | [Dependency licenses](DEPENDENCY_LICENSES.md) |
 
 ## Checkpoint records
+
+- [Account lifecycle and queue activation](releases/account-lifecycle-2026-10-24.json)
+  records the live backend, three-language HTTPS jobs, export/deletion/session
+  checks, daily maintenance, and the public-readiness gates still incomplete.
 
 - [Public-readiness candidate](releases/public-readiness-candidate-2026-10-24.json)
   records local/Linux/SQL qualification and the explicit gates still pending.

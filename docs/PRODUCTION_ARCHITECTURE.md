@@ -1,9 +1,9 @@
 # Current production architecture
 
-Updated 2026-10-24 after the Python 3.13 runtime rollout.
-Verified application release: `42c880fa8d8ea7439ba527fbee8195fe97b275be`.
+Updated 2026-10-24 after account-lifecycle and queue activation.
+Verified application release: `c3ba9ad0fd34946cad589d8eeb0c0b4a1acb06ae`.
 Documentation-only updates do not change that running application release.
-Current source fingerprint: `4f8c2b0ce77c118b6010ead503de6ac77e0eb998c68fc33de249d4410caa218f`. See the [2.0.8 runtime release record](releases/runtime-2.0.8-2026-10-24.json). Historical qualification dates below retain their original scope.
+Current source fingerprint: `8c548584ece552a55ab155514f8dd78486f67496a95fb76116e69bb774e7777f`. See the [2.0.8 account-lifecycle activation](releases/account-lifecycle-2026-10-24.json). Historical qualification dates below retain their original scope.
 
 
 - **Frontend:** Cloudflare Pages, `https://newbiegrader.pages.dev`, vanilla SPA.
@@ -21,7 +21,7 @@ Current source fingerprint: `4f8c2b0ce77c118b6010ead503de6ac77e0eb998c68fc33de24
   unique reserved UIDs, Landlock and seccomp remain mandatory. Per-problem limits
   and language memory allowances are unchanged; declared memory is capped at
   128 MiB and the overall submission deadline remains 240 seconds.
-- **Admission:** four executing jobs plus up to 25 queued jobs; one active job
+- **Admission:** four executing jobs plus up to 50 queued jobs; one active job
   per ordinary account. Queue size and measured job throughput do not establish
   a tested number of simultaneous users.
 - **Startup/feedback latency:** precompiled trusted runtime, a credential-free

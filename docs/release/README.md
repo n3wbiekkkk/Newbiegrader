@@ -1,7 +1,7 @@
 # Release and recovery checks
 
 The [documentation index](../README.md) identifies current guides and dated
-qualification records. The verified application is release `2ae8aed`; subsequent
+qualification records. The verified application is release `c3ba9ad` (grader 2.0.8 / Python 3.13.17); subsequent
 documentation-only commits do not imply another application rollout.
 
 Use the [host runbook](../HOST_DEPLOYMENT.md),

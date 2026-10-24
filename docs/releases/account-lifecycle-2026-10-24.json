@@ -1,0 +1,151 @@
+{
+  "recorded_at": "2026-10-24T15:24:30.193004+00:00",
+  "status": "backend_activated_public_readiness_incomplete",
+  "application_commit": "c3ba9ad0fd34946cad589d8eeb0c0b4a1acb06ae",
+  "previous_application_commit": "42c880fa8d8ea7439ba527fbee8195fe97b275be",
+  "grader_version": "2.0.8",
+  "python": "3.13.17",
+  "build_sha256": "8c548584ece552a55ab155514f8dd78486f67496a95fb76116e69bb774e7777f",
+  "catalog": {
+    "problems": 100,
+    "cases": 1814
+  },
+  "activation": {
+    "release": "c3ba9ad0fd34946cad589d8eeb0c0b4a1acb06ae",
+    "previous_release": "42c880fa8d8ea7439ba527fbee8195fe97b275be",
+    "started_at": "2026-10-24T15:14:59.692019+00:00",
+    "drained_jobs_and_live_leases": true,
+    "four_allocation_native_canaries": true,
+    "canary_crash_recovery": true,
+    "actual_worker_preflights": 4,
+    "daily_retention_installed_and_executed": true,
+    "queue_max": 50,
+    "admission_reopened": true,
+    "signing_key_preserved": true,
+    "completed_at": "2026-10-24T15:15:35.235630+00:00"
+  },
+  "qualification": {
+    "linux_full": {
+      "source_commit": "9be4feb543ee9c18531fad4819045f544d3a3fb2",
+      "tests": 613,
+      "skips": 0,
+      "passed": true,
+      "private_fixtures_available": true
+    },
+    "linux_critical": {
+      "source_commit": "9be4feb543ee9c18531fad4819045f544d3a3fb2",
+      "tests": 380,
+      "skips": 0,
+      "passed": true
+    },
+    "final_application_macos": {
+      "source_commit": "c3ba9ad0fd34946cad589d8eeb0c0b4a1acb06ae",
+      "tests": 588,
+      "skips": 20,
+      "passed": true
+    },
+    "final_application_maintenance_python313": {
+      "tests": 7,
+      "skips": 0,
+      "passed": true
+    },
+    "node": {
+      "tests": 170,
+      "failed": 0,
+      "skips": 0
+    },
+    "problems": {
+      "packages": 100,
+      "passed": 100,
+      "private_references_available": true
+    },
+    "postgresql17": "See candidate record: schema twice, upgrades/grants, queue/auth/session and lifecycle concurrency passed",
+    "source_scope": "The final application differs from 9be4feb only in backup Storage DELETE request shape and its regression assertion; backend fingerprint is identical.",
+    "watchdog_correction_tests": {
+      "tests": 21,
+      "passed": true
+    }
+  },
+  "production_https": {
+    "checked_at": "2026-10-24T15:19:08.128565+00:00",
+    "anonymous_health": "status/count only",
+    "anonymous_problems_status": 401,
+    "public_jobs": [
+      {
+        "language": "python",
+        "accepted": true,
+        "passed": 17,
+        "linked_history": true,
+        "seconds": 5.66
+      },
+      {
+        "language": "c",
+        "accepted": true,
+        "passed": 17,
+        "linked_history": true,
+        "seconds": 5.87
+      },
+      {
+        "language": "cpp",
+        "accepted": true,
+        "passed": 17,
+        "linked_history": true,
+        "seconds": 5.71
+      }
+    ],
+    "export": true,
+    "logout_one_device_preserves_other": true,
+    "deletion": {
+      "both_devices_revoked": true,
+      "password_login_rejected": true,
+      "app_rows_erased": true,
+      "provider_identity_404": true,
+      "identity_recreation_blocked": true,
+      "counts_only_audit_retained": true
+    },
+    "admin_audit_api_verified": true,
+    "anonymous_audit_status": 401,
+    "identity_setup": "operator provisioned disposable .invalid identity; no email sent",
+    "transport_checks_passed": 21,
+    "samesite": "none"
+  },
+  "human_auth_checks": {
+    "email_account": "Existing non-admin team account received OTP; user completed verification/password setup and tasks became visible. This is not unused-email signup.",
+    "google": "User completed Google login with existing bootstrap admin; browser visibly reached the admin dashboard.",
+    "unused_email_signup": "Deferred by operator on 2026-10-24",
+    "turnstile": "Existing real-browser gate and replay checks are recorded in public-readiness-2026-10-23.json; this activation does not claim a fresh signup."
+  },
+  "operations": {
+    "encrypted_backup_before_and_after": true,
+    "bucket_pruning_verified": true,
+    "backup_fix": "Storage bulk-delete endpoint receives JSON prefixes. Upload succeeded before the original pruning failure; corrected backup/pruning then completed successfully.",
+    "watchdog": {
+      "passed": 9,
+      "total": 9,
+      "external_messages_sent_by_validation": false,
+      "catalog_compatibility_fix": "Expected count updated from 89 to 100. Active watchdog uses reviewed root-owned host-ops copy through a unit drop-in; application source remains immutable."
+    },
+    "daily_account_retention_enabled": true,
+    "off_host_backup_retention": "Not yet enforced on every operator archive destination"
+  },
+  "probe_corrections": [
+    "Default urllib User-Agent received Cloudflare 1010 before fixture creation; the named readiness client reached the API.",
+    "Missing local source fixture stopped the first disposable-account probe; its temporary identity/application rows were cleaned.",
+    "The final guest audit probe originally expected route-level 403; middleware correctly returned 401. Corrected read-only check passed; three-language, export, deletion and admin audit checks had already passed; temporary admin family was revoked."
+  ],
+  "remaining_gates": [
+    "Fresh unused-email signup, deferred by operator",
+    "Bulk delivery, repeat/invalid-address handling and provider quota qualification; current Gmail sender retained",
+    "Daily 30-day cleanup on every off-host destination, including historical archive formats",
+    "Erasure reconciliation rehearsal after restoring older data",
+    "Guardian authorization procedure review for registrations where legally required"
+  ],
+  "limits": [
+    "No real team/admin account was deleted. Disposable .invalid identities sent no email.",
+    "Synthetic disposable-account setup does not qualify public email signup.",
+    "50-account admission tests do not certify full judging throughput or sustained concurrent-learner capacity.",
+    "No SMTP provider/domain was replaced.",
+    "Public preparation notices remain until the uncompleted gates are resolved.",
+    "SECURITY.md was separately approved and written locally; it is not part of the application release."
+  ]
+}

@@ -1,15 +1,26 @@
 # Public website security qualification
 
 Current release read back 2026-10-24: grader 2.0.8 / Python 3.13.17. Application release:
-`42c880fa8d8ea7439ba527fbee8195fe97b275be`.
+`c3ba9ad0fd34946cad589d8eeb0c0b4a1acb06ae`.
 The deployed controls passed the scoped public-website checks below. This is
 release evidence for the existing PC deployment, with the operator's retained
 limitations; it is not a guarantee against every vulnerability or kernel escape.
 See the [current session qualification](releases/session-revocation-2026-10-23.json),
 [earlier public readiness](releases/public-readiness-2026-10-23.json) and
 [previous security qualification](releases/public-security-2026-10-22.json).
-Current source fingerprint: `4f8c2b0ce77c118b6010ead503de6ac77e0eb998c68fc33de249d4410caa218f`. See the [2.0.8 runtime release record](releases/runtime-2.0.8-2026-10-24.json). Historical qualification dates below retain their original scope.
+Current source fingerprint: `8c548584ece552a55ab155514f8dd78486f67496a95fb76116e69bb774e7777f`. See the [2.0.8 account-lifecycle activation](releases/account-lifecycle-2026-10-24.json). Historical qualification dates below retain their original scope.
 
+
+## Account lifecycle activation
+
+The current release adds own-account export, recoverable provider/application
+erasure and daily retention. Real HTTPS tests used disposable identities: both
+browser families were revoked after deletion, password login failed, Auth returned
+404 and only counts-only audit remained available to admins. Anonymous health
+returns status/count and member catalog reads return 401. Queue capacity is 50
+waiting jobs plus four executing workers. See the activation record for scope;
+fresh signup and bulk email delivery remain unqualified, so this is not a
+completed public launch gate.
 
 ## Browser and API boundary
 

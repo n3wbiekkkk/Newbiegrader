@@ -1,8 +1,11 @@
 # Account data and public-readiness rollout
 
-Status on 2026-10-24: the account-lifecycle migration and APIs are a candidate,
-not an activated production policy. Production still runs the application in
-[the 2.0.8 runtime record](releases/runtime-2.0.8-2026-10-24.json).
+Status on 2026-10-24: the maintainer applied the lifecycle SQL and the compatible
+backend `c3ba9ad` is active, with queue 50 and daily account retention. See
+[the activation record](releases/account-lifecycle-2026-10-24.json). Public rollout
+qualification remains incomplete: unused-email signup was deferred by the
+operator, bulk delivery is unqualified, and off-host backup retention and erasure
+reconciliation still require completion.
 The Thai [privacy page](../static/privacy.html), [terms](../static/terms.html)
 and [FAQ](../static/faq.html) explicitly identify the features awaiting activation.
 
@@ -72,11 +75,10 @@ the visibility-filtered slug list. `/api/problems` continues to require login.
 
 ## Queue behavior
 
-The candidate default and host env examples set `GRADER_QUEUE_MAX=50`, meaning
+The active host and env examples set `GRADER_QUEUE_MAX=50`, meaning
 50 waiting jobs in addition to the four executing workers. This changes backlog
 capacity, not CPU/RAM budgets or a measured number of concurrent learners. The
-last verified production setting was 25; change/read back the actual API/worker
-env during activation.
+live API and all four worker configurations were read back at 50 during activation; CPU/RAM budgets and the signing key were preserved.
 
 Only a 503 carrying `X-Newbiegrader-Admission: rejected-queue-full` permits the
 frontend to resend. It honors `Retry-After`, increases the delay, adds jitter and

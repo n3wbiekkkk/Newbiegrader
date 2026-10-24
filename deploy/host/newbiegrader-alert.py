@@ -33,7 +33,7 @@ DEFAULT_WEBHOOK_FILE = Path("/etc/newbiegrader/alert-webhook")
 DEFAULT_STATE_FILE = Path("/var/lib/newbiegrader/alert-state.json")
 DEFAULT_BACKUP_MARKER = Path("/var/lib/newbiegrader/last-backup")
 API_BASE = "http://127.0.0.1:8000"
-EXPECTED_PROBLEMS = 89
+EXPECTED_PROBLEMS = 100
 BACKUP_MAX_AGE_H = 30
 JOURNAL_ERROR_PATTERNS = (
     "worker unavailable",
