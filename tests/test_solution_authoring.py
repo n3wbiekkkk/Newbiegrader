@@ -24,6 +24,7 @@ class SolutionAuthoring(unittest.TestCase):
         self.md = '\n'.join('## '+s+'\nคำอธิบาย\n' for s in renderer.REQUIRED_SECTIONS)
         (self.folder/'solution.md').write_text(self.md)
         (self.folder/'solution.py').write_text('print(1)\n')
+        (self.folder/'solution.cpp').write_text('int main() { return 0; }\n')
 
     def test_required_sections_and_unfinished_prose(self):
         self.assertEqual(renderer.validate_source(self.folder), self.md)
@@ -34,7 +35,7 @@ class SolutionAuthoring(unittest.TestCase):
 
     def test_source_hash_tracks_code_statement_and_public_samples(self):
         original = renderer.source_hash(self.folder)
-        for name in ['solution.py', 'statement.md', 'tests/01.out']:
+        for name in ['solution.py', 'solution.cpp', 'statement.md', 'tests/01.out']:
             p = self.folder/name
             before = p.read_bytes()
             p.write_bytes(before+b'\n')
@@ -68,7 +69,10 @@ class SolutionAuthoring(unittest.TestCase):
         record = {'accepted': True, 'passed': 1, 'total': 1, 'tests_sha256': 'suite',
                   'code_sha256': hashlib.sha256((self.folder/'solution.py').read_bytes()).hexdigest(),
                   'config_sha256': hashlib.sha256((self.folder/'config.json').read_bytes()).hexdigest()}
-        (self.folder/'solution.verify.json').write_text(json.dumps(record))
+        for lang, (filename, report_name) in author.LANGUAGES.items():
+            record.update(language=lang, code_sha256=hashlib.sha256(
+                (self.folder/filename).read_bytes()).hexdigest())
+            (self.folder/report_name).write_text(json.dumps(record))
         (self.folder/'solution.pdf').write_bytes(b'%PDF-synthetic')
         with ExitStack() as stack:
             stack.enter_context(patch.object(publisher.files, 'backend', return_value='local'))
@@ -79,7 +83,59 @@ class SolutionAuthoring(unittest.TestCase):
             write = stack.enter_context(patch.object(publisher.files, 'publish'))
             stack.enter_context(patch('sys.argv', ['publish_solutions.py', '--all', '--dry-run']))
             publisher.main()
-            (self.folder/'solution.py').write_text('print(2)\n')
-            with self.assertRaises(ValueError):
+            for filename in ('solution.cpp', 'solution.py'):
+                path = self.folder/filename
+                original = path.read_text()
+                path.write_text(original+'\n')
+                with self.assertRaises(ValueError):
+                    publisher.main()
+                path.write_text(original)
+            (self.folder/'solution.cpp.verify.json').unlink()
+            with self.assertRaises(OSError):
                 publisher.main()
             write.assert_not_called()
+
+    def test_missing_or_unfinished_cpp_is_rejected(self):
+        path = self.folder/'solution.cpp'
+        path.unlink()
+        with self.assertRaises(OSError):
+            author.check(self.folder, require_pdf=False)
+        path.write_text('// TODO\n')
+        with self.assertRaises(ValueError):
+            author.check(self.folder, require_pdf=False)
+
+    def test_cpp_pages_have_explicit_language_heading(self):
+        tex = renderer.code_pages('int main() {}\n'*54, 'C++17')
+        self.assertEqual(tex.count(r'\newpage'), 2)
+        self.assertIn('++17', tex)
+        self.assertNotIn('Python 3', tex)
+
+    def test_verify_runs_both_languages_and_propagates_failure(self):
+        from types import SimpleNamespace
+        import hashlib
+        import grader
+        calls = []
+        def run(args, **kwargs):
+            filename = Path(args[4]).name
+            calls.append(filename)
+            report = Path(args[-1])
+            report.write_text(json.dumps({'accepted': filename == 'solution.py'}))
+            return SimpleNamespace(returncode=0 if filename == 'solution.py' else 1)
+        root = self.folder.parent/'repo'
+        (root/'problems').mkdir(parents=True)
+        import shutil
+        shutil.copytree(self.folder, root/'problems/synthetic')
+        with patch.object(author, 'ROOT', root), \
+                patch.object(author, 'check', return_value=True), \
+                patch.object(author.subprocess, 'run', side_effect=run), \
+                patch.object(grader, 'load_problem', return_value=object()), \
+                patch.object(grader, 'tests_hash', return_value='suite'), \
+                patch('sys.argv', ['solution_authoring.py', 'verify', 'synthetic']):
+            with self.assertRaises(SystemExit) as stopped:
+                author.main()
+        self.assertEqual(stopped.exception.code, 1)
+        self.assertEqual(calls, ['solution.py', 'solution.cpp'])
+        record = json.loads((root/'problems/synthetic/solution.verify.json').read_text())
+        self.assertEqual(record['language'], 'py')
+        self.assertEqual(record['code_sha256'], hashlib.sha256(
+            (self.folder/'solution.py').read_bytes()).hexdigest())

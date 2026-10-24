@@ -25,7 +25,7 @@ def escape_code(text):
 
 
 def source_hash(folder):
-    names = ['config.json', 'statement.md', 'solution.md', 'solution.py']
+    names = ['config.json', 'statement.md', 'solution.md', 'solution.py', 'solution.cpp']
     config = json.loads((folder/'config.json').read_text())
     for sample in config.get('samples', []):
         for suffix in ('in', 'out'):
@@ -47,12 +47,15 @@ def validate_source(folder):
     if any(marker in md for marker in ('TODO', 'TBD', 'REPLACE_ME')):
         raise ValueError('unfinished solution template')
     if '```' in md:
-        raise ValueError('code belongs in solution.py, not Markdown fences')
+        raise ValueError('code belongs in solution.py and solution.cpp, not Markdown fences')
     compile((folder/'solution.py').read_text(), str(folder/'solution.py'), 'exec')
+    cpp = (folder/'solution.cpp').read_text()
+    if any(marker in cpp for marker in ('TODO', 'TBD', 'REPLACE_ME')) or not cpp.strip():
+        raise ValueError('unfinished C++ solution code')
     return md
 
 
-def code_pages(source):
+def code_pages(source, language="Python 3"):
     """Bound displayed widths and page heights without modifying executable source."""
     rows = []
     for number, line in enumerate(source.expandtabs(4).splitlines(), 1):
@@ -68,7 +71,7 @@ def code_pages(source):
                         + escape_code(chunk.lstrip(' ')) + r'}\par')
     pages = []
     for start in range(0, len(rows), 53):
-        title = 'โค้ดตัวอย่าง Python 3' if start == 0 else 'โค้ดตัวอย่าง Python 3 (ต่อ)'
+        title = 'โค้ดตัวอย่าง ' + language + (' (ต่อ)' if start else '')
         pages.append(r'\newpage' + '\n' + house.brand_header()
                      + r'{\fontsize{22}{26}\selectfont\bfseries ' + house.tex_inline(title)
                      + r'}\par\vspace{8pt}' + '\n'
@@ -99,6 +102,7 @@ def build(folder, output_dir=None, engine='tectonic'):
     tex = tex.replace(house._limits_line(cfg['time_limit'], cfg['memory_limit']),
                       r'{\eng{}Solution}\par' + '\n', 1)
     tex = tex.rsplit(r'\end{document}', 1)[0]
+    tex += code_pages((folder/'solution.cpp').read_text(), 'C++17')
     tex += code_pages((folder/'solution.py').read_text()) + r'\end{document}' + '\n'
     with tempfile.TemporaryDirectory() as tmp:
         src = Path(tmp)/'solution.tex'

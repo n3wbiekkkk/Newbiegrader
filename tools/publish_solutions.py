@@ -33,14 +33,17 @@ def main():
     jobs = []
     for folder in packages:
         solution_authoring.check(folder)
-        verified = json.loads((folder/'solution.verify.json').read_text())
         prob = grader.load_problem(folder.name)
-        if (verified.get('accepted') is not True or verified.get('total') != len(prob.tests)
-                or verified.get('passed') != len(prob.tests) or not prob.tests
-                or verified.get('code_sha256') != hashlib.sha256((folder/'solution.py').read_bytes()).hexdigest()
-                or verified.get('config_sha256') != hashlib.sha256((folder/'config.json').read_bytes()).hexdigest()
-                or verified.get('tests_sha256') != grader.tests_hash(prob)):
-            raise ValueError('missing, failed or stale canonical solution verification: '+folder.name)
+        for lang, (filename, report_name) in solution_authoring.LANGUAGES.items():
+            verified = json.loads((folder/report_name).read_text())
+            if (verified.get('accepted') is not True or verified.get('total') != len(prob.tests)
+                    or verified.get('passed') != len(prob.tests) or not prob.tests
+                    or verified.get('language') != lang
+                    or verified.get('code_sha256') != hashlib.sha256((folder/filename).read_bytes()).hexdigest()
+                    or verified.get('config_sha256') != hashlib.sha256((folder/'config.json').read_bytes()).hexdigest()
+                    or verified.get('tests_sha256') != grader.tests_hash(prob)):
+                raise ValueError('missing, failed or stale canonical solution verification: '
+                                 +folder.name+' ('+lang+')')
         jobs.append((f'{folder.name}/solution.pdf', (folder/'solution.pdf').read_bytes(), 'application/pdf'))
     if args.dry_run:
         print(json.dumps({'qualified_solutions': len(jobs), 'published': False}))

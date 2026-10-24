@@ -17,6 +17,7 @@ MAX_TOTAL = 1024 * 1024 * 1024
 MANIFEST = 'problem-sync.json'
 PACKAGE_FILES = {'config.json', 'statement.md', 'statement.pdf', 'statement.build.json',
                  'input_validator.py', 'solution.md', 'solution.py', 'solution.pdf',
+                 'solution.cpp', 'solution.cpp.verify.json',
                  'solution.tex', 'solution.build.json', 'solution.verify.json'}
 
 

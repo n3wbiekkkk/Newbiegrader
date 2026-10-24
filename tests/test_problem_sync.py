@@ -18,6 +18,8 @@ class ProblemSync(unittest.TestCase):
         (self.root/'examples').mkdir()
         for name, text in {'problems/synthetic/config.json': '{}',
                            'problems/synthetic/solution.md': '# synthetic',
+                           'problems/synthetic/solution.cpp': 'int main() {}',
+                           'problems/synthetic/solution.cpp.verify.json': '{}',
                            'problems/synthetic/tests/01.in': '1\n',
                            'problems/synthetic/tests/01.out': '1\n',
                            'examples/synthetic_ref.py': 'print(1)\n',
@@ -27,9 +29,9 @@ class ProblemSync(unittest.TestCase):
         self.archive = self.base/'private.tar.gz'
 
     def test_roundtrip_and_secret_exclusion(self):
-        self.assertEqual(sync.pack(self.archive, self.root), 5)
+        self.assertEqual(sync.pack(self.archive, self.root), 7)
         stage = self.base/'stage'
-        self.assertEqual(sync.unpack(self.archive, stage), 5)
+        self.assertEqual(sync.unpack(self.archive, stage), 7)
         self.assertEqual((stage/'problems/synthetic/tests/01.in').read_text(), '1\n')
         self.assertFalse((stage/'.env').exists())
         self.assertEqual(self.archive.stat().st_mode & 0o777, 0o600)

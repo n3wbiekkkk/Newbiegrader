@@ -8,6 +8,9 @@ from pathlib import Path
 import subprocess
 import sys
 
+LANGUAGES = {'py': ('solution.py', 'solution.verify.json'),
+             'cpp': ('solution.cpp', 'solution.cpp.verify.json')}
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 from tools import make_solution_tex as renderer
@@ -34,6 +37,8 @@ def main():
     for action in ('new', 'check', 'build', 'verify'):
         cmd = sub.add_parser(action)
         cmd.add_argument('problem')
+        if action == 'verify':
+            cmd.add_argument('--lang', choices=('all', *LANGUAGES), default='all')
         if action == 'build':
             cmd.add_argument('--engine', default='tectonic')
     args = parser.parse_args()
@@ -43,12 +48,13 @@ def main():
     if not (folder/'config.json').is_file():
         parser.error('problem package is missing')
     if args.action == 'new':
-        sources = [('solution.md', 'solution.md'), ('solution.py.txt', 'solution.py')]
+        sources = [('solution.md', 'solution.md'), ('solution.py.txt', 'solution.py'),
+                   ('solution.cpp.txt', 'solution.cpp')]
         if any((folder/dest).exists() for _, dest in sources):
             parser.error('solution sources already exist; refusing to overwrite')
         for src, dest in sources:
             (folder/dest).write_bytes((ROOT/'tools/templates/solution'/src).read_bytes())
-        print('Created private solution sources; complete both files before building.')
+        print('Created private solution sources; complete all three files before building.')
     elif args.action == 'build':
         check(folder, require_pdf=False)
         print(renderer.build(folder, engine=args.engine))
@@ -57,22 +63,26 @@ def main():
         print('Solution sources and PDF hashes match; runtime and visual review are separate gates.')
     else:
         check(folder)
-        report = folder/'solution.verify.json'
-        report.unlink(missing_ok=True)
-        result = subprocess.run([sys.executable, str(ROOT/'grader.py'), 'run', args.problem,
-                                 str(folder/'solution.py'), '--no-color', '--stop-on-fail',
-                                 '--json', str(report)], cwd=ROOT)
-        if result.returncode == 0:
-            import grader
-            data = json.loads(report.read_text())
-            data.update(source_sha256=renderer.source_hash(folder),
-                        code_sha256=hashlib.sha256((folder/'solution.py').read_bytes()).hexdigest(),
-                        config_sha256=hashlib.sha256((folder/'config.json').read_bytes()).hexdigest(),
-                        tests_sha256=grader.tests_hash(grader.load_problem(args.problem)),
-                        python_version=sys.version.split()[0], platform=sys.platform,
-                        root_execution=os.geteuid() == 0 if hasattr(os, 'geteuid') else False)
-            report.write_text(json.dumps(data, indent=2)+'\n')
-        raise SystemExit(result.returncode)
+        failed = False
+        selected = LANGUAGES if args.lang == 'all' else {args.lang: LANGUAGES[args.lang]}
+        for lang, (filename, report_name) in selected.items():
+            report = folder/report_name
+            report.unlink(missing_ok=True)
+            result = subprocess.run([sys.executable, str(ROOT/'grader.py'), 'run', args.problem,
+                                     str(folder/filename), '--no-color', '--stop-on-fail',
+                                     '--json', str(report)], cwd=ROOT)
+            if result.returncode == 0:
+                import grader
+                data = json.loads(report.read_text())
+                data.update(source_sha256=renderer.source_hash(folder),
+                            code_sha256=hashlib.sha256((folder/filename).read_bytes()).hexdigest(),
+                            config_sha256=hashlib.sha256((folder/'config.json').read_bytes()).hexdigest(),
+                            tests_sha256=grader.tests_hash(grader.load_problem(args.problem)),
+                            language=lang, python_version=sys.version.split()[0], platform=sys.platform,
+                            root_execution=os.geteuid() == 0 if hasattr(os, 'geteuid') else False)
+                report.write_text(json.dumps(data, indent=2)+'\n')
+            failed = failed or result.returncode != 0
+        raise SystemExit(1 if failed else 0)
 
 
 if __name__ == '__main__':
