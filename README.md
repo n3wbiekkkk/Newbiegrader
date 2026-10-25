@@ -54,8 +54,7 @@ approved numbering.
 Visit [Newbiegrader](https://newbiegrader.pages.dev) and create an account to
 open the problem catalog, submit code, join contests and read official solutions.
 The landing page and account registration/recovery are available to guests.
-Statements, feedback and the interface are in Thai; repository documentation and
-identifiers are in English.
+Statements, feedback and the interface are in Thai.
 
 ## Screenshots
 
@@ -74,6 +73,7 @@ included in this view.
 | Thai problem statements | Read statements and PDFs, inspect public examples, and choose a problem by topic or level. |
 | Multiple catalog filters | Select several topics and difficulty bands together, search by title/ID/number, sort results, and remove individual filters. Choices persist in the browser. |
 | Shared code editor | Write code with line numbers and indentation shortcuts, attach a source file, and keep the same code when switching between submission and trial-run tabs. |
+| Account settings | Edit your display name and default language, choose a theme, start password recovery, sign out of this device, or delete your account after email confirmation. |
 | Trial runs | Run code against your own input without adding a scored submission to your history. |
 | Asynchronous judging | Submit a solution and follow its queued/running state until the verdict is ready. |
 | Official solution PDFs | Read the approach, correctness argument, complexity and complete **C++17 and Python 3** implementations. C++17 appears first. |
@@ -84,22 +84,20 @@ included in this view.
 
 ## How judging works
 
-1. **Submit.** The API checks admission, quotas and queue bounds, then returns
-   `202` with a job ID. Judging never runs inside the API request.
-2. **Judge.** A worker claims the job under a lease, compiles when needed, and
-   executes each test in a supervised process with its own identity, cgroup,
-   resource limits and bounded workspace.
-3. **Redact.** Results pass through the active practice/contest disclosure policy
-   and are redacted before they are returned to the client and before they are
-   stored.
-4. **Poll.** The client follows the job until the verdict and per-test
-   measurements are available.
+1. **Accept.** The API checks admission, account quotas and queue bounds, then
+   returns `202` with a job ID.
+2. **Execute.** A worker claims the job under a lease and compiles when needed.
+   On the qualified Linux deployment, each test runs under the job's private
+   identity, cgroup, resource limits and bounded workspace.
+3. **Complete.** Results pass through the current practice/contest disclosure
+   policy before storage and delivery. The browser polls while the job is queued
+   or running, then displays the verdict and permitted details.
 
 Every verdict comes from the same standard-library engine in `grader.py`;
 request handlers never reimplement judging. Database queue mode coordinates
 worker leases and commits completion and history together. Local queue mode is
-single-process and best-effort, so it guarantees no recovery after a restart or a
-database outage.
+single-process and best-effort; it does not guarantee recovery after a restart or
+a database outage.
 
 ## Feedback and access
 
@@ -122,6 +120,12 @@ See the [submission feedback policy](docs/submission-feedback-policy.md) and
 [solution access rules](docs/making-solutions.md#member-access-and-protected-backend-files)
 for the complete boundaries. Previously disclosed practice data must not be
 reused as a secret contest suite.
+
+Read the [privacy policy](https://newbiegrader.pages.dev/privacy.html),
+[terms](https://newbiegrader.pages.dev/terms.html) and
+[FAQ](https://newbiegrader.pages.dev/faq.html) before using the service. Account
+export and deletion, retention periods and rollout limits are documented in the
+[account-data guide](docs/ACCOUNT_DATA.md).
 
 ## Verdicts
 
@@ -170,6 +174,8 @@ tests, reference solutions and editable solution sources are excluded from Git.
 Maintainers transfer authoring packages separately through the
 [private synchronization workflow](docs/making-solutions.md#sync-private-authoring-packages-between-development-machines).
 A server starting successfully does not establish that judging is configured.
+For a frontend-only preview, serve `static/` locally; authentication and judging
+still require the configured backend.
 
 ## Tests
 
@@ -236,9 +242,8 @@ authors. Frequently used guides:
 
 Bug reports, problem proposals and pull requests are welcome. See
 [CONTRIBUTING.md](CONTRIBUTING.md) for the setup, validation and review workflow.
-Describe the behavior you are changing and the checks you ran. Please report
-security issues through the [maintainer's profile](https://github.com/n3wbiekkkk),
-not a public issue.
+Describe the behavior you are changing and the checks you ran. Report suspected
+vulnerabilities privately using [SECURITY.md](SECURITY.md).
 
 - **Problems:** use the [problem authoring workflow](docs/making-problems.md)
   and versioned templates in `tools/templates/problem/`.

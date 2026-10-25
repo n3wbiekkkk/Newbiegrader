@@ -1044,12 +1044,17 @@ function router() {
     return;
   }
   if (h === "#/login" || h.startsWith("#/login?")) {
-    show("login"); setTitle("login"); setAuthMode("login");
+    const recovery = h === "#/login?recover=1";
+    show("login"); setTitle("login"); setAuthMode(recovery ? "recover" : "login");
+    if (recovery && state.user) {
+      $("auth-email").value = state.user.email;
+      $("auth-name").value = state.user.name || "";
+    }
     if (state.authError) {
       $("auth-err").textContent = "ตรวจสอบการเข้าสู่ระบบไม่สำเร็จ กรุณาโหลดหน้าอีกครั้ง";
       $("auth-err").classList.remove("hidden");
     }
-    if (!state.authError && state.authReturnTo !== "#/tasks") {
+    if (!recovery && !state.authError && state.authReturnTo !== "#/tasks") {
       $("auth-err").textContent = "เข้าสู่ระบบก่อนเพื่อเปิดหน้าที่เลือกไว้";
       $("auth-err").classList.remove("hidden", "bad");
     }
@@ -1860,15 +1865,34 @@ $("signup-btn").onclick = () => {
 
 async function signOut() {
   const button = $("logout-btn");
+  if (button.disabled || state.accountDeletion?.pending) return false;
   button.disabled = true;
   try {
     await apiPostJson("/api/auth/logout", {});
   } catch (e) {
     toast("ออกจากระบบไม่สำเร็จ กรุณาลองอีกครั้ง", "t-err");
     button.disabled = false;
-    return;
+    return false;
   }
   button.disabled = false;
+  clearSignedOutWorkspace();
+  await refreshMe();
+  state.problems = [];
+  state.stats = {};
+  state.statsLoaded = false;
+  location.hash = "#/";
+  await loadPublicHome();
+  renderHome();
+  toast("ออกจากระบบแล้ว");
+  return true;
+}
+
+function clearSignedOutWorkspace() {
+  state.user = null;
+  state.is_admin = state.isAdmin = false;
+  state.meSeq = (state.meSeq || 0) + 1;
+  state.accountDeletion = null;
+  state.settingsDraft = null;
   // Identity changed: the cached problem list (and the solved marks) must not
   // survive into the next session on a shared machine. Same for drafts and
   // remembered job ids — a school computer is shared.
@@ -1883,14 +1907,19 @@ async function signOut() {
   $("file-chip").classList.add("hidden");
   setDraftHint(false);
   state.jobResults = {};
-  await refreshMe();
   state.problems = [];
   state.stats = {};
   state.statsLoaded = false;
-  location.hash = "#/";
-  await loadPublicHome();
-  renderHome();
-  toast("ออกจากระบบแล้ว");
+  state.contests = [];
+  state.contestCache = {};
+  $("settings-deletion").classList.add("hidden");
+  $("settings-body").textContent = "";
+  $("account-delete-email").value = "";
+  $("login-btn").classList.remove("hidden");
+  $("signup-btn").classList.remove("hidden");
+  ["logout-btn", "nav-admin", "user-chip"].forEach(id => $(id).classList.add("hidden"));
+  $("user-chip").textContent = "";
+  $("user-chip").title = "";
 }
 $("logout-btn").onclick = signOut;
 
@@ -2119,10 +2148,19 @@ let authBusy = false;
 
 function renderAuthStep() {
   const verifying = !!authPendingEmail;
-  $("auth-heading").textContent = verifying ? "ยืนยันอีเมล" : authMode === "login" ? "เข้าสู่ระบบ" : "สร้างบัญชี";
+  const recovery = authMode === "recover";
+  $("auth-note").textContent = recovery ? "ใช้เฉพาะรหัสล่าสุดที่ได้รับ และไม่ส่งรหัสให้ผู้อื่น" : "ใช้บัญชีอีเมลหรือ Google ของคุณ";
+  $("auth-heading").textContent = recovery ? "ตั้งรหัสผ่านใหม่" : verifying ? "ยืนยันอีเมล" : authMode === "login" ? "เข้าสู่ระบบ" : "สร้างบัญชี";
   $("auth-description").textContent = verifying ? "กรอกรหัสที่ได้รับทางอีเมล แล้วตั้งรหัสผ่านสำหรับบัญชีของคุณ" :
     authMode === "login" ? "เข้าสู่ระบบเพื่อเปิดโจทย์ ส่งคำตอบ และดูประวัติการฝึกของคุณ" : "ยืนยันอีเมลของคุณเพื่อเริ่มส่งคำตอบและเก็บประวัติการฝึก";
-  $("auth-fields").setAttribute("aria-labelledby", authMode === "login" ? "auth-tab-login" : "auth-tab-register");
+  if (recovery) $("auth-description").textContent = verifying
+    ? "กรอกรหัสที่ได้รับและตั้งรหัสผ่านใหม่ เมื่อสำเร็จ การเข้าสู่ระบบเดิมทุกอุปกรณ์จะใช้ต่อไม่ได้"
+    : "ยืนยันอีเมลบัญชีเดิมเพื่อรับรหัสสำหรับตั้งรหัสผ่านใหม่";
+  $("auth-fields").setAttribute("aria-labelledby", recovery ? "auth-heading" : authMode === "login" ? "auth-tab-login" : "auth-tab-register");
+  $("auth-tabs").classList.toggle("hidden", recovery);
+  $("auth-back-login").classList.toggle("hidden", !recovery);
+  $("google-btn").classList.toggle("hidden", recovery);
+  $("auth-google-divider").classList.toggle("hidden", recovery);
   $("row-name").style.display = verifying ? "" : "none";
   $("row-auth-code").classList.toggle("hidden", !verifying);
   $("row-auth-pass").classList.toggle("hidden", authMode !== "login" && !verifying);
@@ -2132,7 +2170,7 @@ function renderAuthStep() {
     (authMode === "login" ? "เข้าสู่ระบบ" : "ส่งรหัสยืนยันอีเมล");
   $("auth-resend").classList.toggle("hidden", !verifying);
   $("auth-recover").classList.toggle("hidden", authMode !== "login");
-  globalThis.GraderBotVerification?.prepare(authMode === "register" && !verifying);
+  globalThis.GraderBotVerification?.prepare(authMode !== "login" && !verifying);
 }
 
 function setAuthMode(m) {
@@ -2161,7 +2199,8 @@ document.querySelectorAll("[data-authtab]").forEach((b) => {
     document.querySelector(`[data-authtab="${mode}"]`).focus();
   };
 });
-$("auth-recover").onclick = () => setAuthMode("register");
+$("auth-recover").onclick = () => setAuthMode("recover");
+$("auth-back-login").onclick = () => setAuthMode("login");
 
 async function doPasswordAuth(resend = false) {
   if (authBusy) return;
@@ -3415,25 +3454,42 @@ function setLang(lang) {
 
 async function renderSettings() {
   const body = $("settings-body");
+  renderAccountDeletion();
+  bindSettingsNavigation();
   if (!state.user) {
     body.innerHTML = emptyStateHtml("ตั้งค่าบัญชีของคุณ", "เข้าสู่ระบบเพื่อเปลี่ยนชื่อที่แสดงและภาษาที่ใช้ส่งคำตอบ", "#/login", "เข้าสู่ระบบ");
     return;
   }
+  const identity = state.user;
+  const gen = _getGen;
+  const current = () => state.user && state.user.email === identity.email && gen === _getGen;
+  const seq = state.settingsSeq = (state.settingsSeq || 0) + 1;
+  const visible = () => current() && seq === state.settingsSeq;
+  body.setAttribute("aria-busy", "true");
   body.innerHTML = skel(3);
   try {
     const data = await apiGet("/api/profile");
+    if (!visible()) return;
     const p = data.profile || {};
     if (!data.configured) {
       body.innerHTML = `<div class="account-identity"><strong>${esc(p.name || "บัญชีของคุณ")}</strong><span>${esc(p.email || "")}</span></div><p class="dim">ยังแก้ไขข้อมูลบัญชีไม่ได้ในขณะนี้</p>`;
       return;
     }
+    let draft = state.settingsDraft;
+    if (!draft || draft.email !== identity.email || draft.gen !== gen || (!draft.dirty && !draft.pending)) {
+      draft = { email: identity.email, gen, displayName: p.display_name || "", language: p.default_language || state.lang,
+        savedName: p.display_name || "", savedLanguage: p.default_language || state.lang, dirty: false, pending: false, message: "", failed: false };
+      state.settingsDraft = draft;
+    }
     body.classList.remove("dim");
     body.innerHTML = `
-      <div class="account-identity"><strong>${esc(p.name || "บัญชีของคุณ")}</strong><span>${esc(p.email || "")}</span></div>
+      <dl class="settings-identity"><div><dt>อีเมลบัญชี</dt><dd>${esc(identity.email)}</dd></div><div><dt>สิทธิ์การใช้งาน</dt><dd>${state.is_admin ? "ผู้ดูแลระบบ" : "สมาชิก"}</dd></div></dl>
+      <p class="field-hint">อีเมลใช้ระบุบัญชี หากต้องการเปลี่ยน ให้ติดต่อผู้ดูแล</p>
+      <form id="settings-profile-form">
       <div class="settings-row">
         <label for="set-display">ชื่อที่แสดง</label>
-        <input id="set-display" type="text" maxlength="50" value="${esc(p.display_name || "")}" placeholder="${esc(p.name || "")}">
-        <p class="field-hint">เว้นว่างเพื่อใช้ชื่อจากบัญชีของคุณ</p>
+        <input id="set-display" type="text" maxlength="50" autocomplete="nickname" value="${esc(draft.displayName)}" placeholder="${esc(p.name || "")}" aria-describedby="settings-name-hint">
+        <p id="settings-name-hint" class="field-hint">ไม่เกิน 50 ตัวอักษร คนอื่นเห็นชื่อนี้ในประวัติและการแข่งขัน เว้นว่างเพื่อใช้ชื่อจากบัญชี</p>
       </div>
       <div class="settings-row">
         <label for="set-lang">ภาษาที่ใช้เป็นค่าเริ่มต้น</label>
@@ -3442,36 +3498,200 @@ async function renderSettings() {
           <option value="c">C</option>
           <option value="cpp">C++</option>
         </select>
+        <p class="field-hint">ใช้เป็นภาษาที่เลือกไว้เมื่อเริ่มฝึก คุณยังเปลี่ยนภาษาขณะส่งคำตอบได้</p>
       </div>
-      <div class="submit-row">
-        <button id="settings-save" type="button" class="submit-btn"><svg class="ic"><use href="#i-check"/></svg><span>บันทึกการตั้งค่า</span></button>
+      <div class="settings-save-row">
+        <button id="settings-save" type="submit" class="submit-btn" disabled>บันทึกการเปลี่ยนแปลง</button>
+        <button id="settings-discard" type="button" class="btn-ghost hidden">ยกเลิกการแก้ไข</button>
       </div>
-      <div id="settings-status" class="status dim"></div>`;
-    $("set-lang").value = p.default_language || state.lang;
-    $("settings-save").onclick = async () => {
+      <p id="settings-status" class="settings-feedback" role="status" aria-live="polite"></p>
+      </form>`;
+    const name = $("set-display"), language = $("set-lang"), form = $("settings-profile-form");
+    name.value = draft.displayName;
+    language.value = draft.language;
+    const update = () => {
+      draft.dirty = name.value.trim() !== draft.savedName || language.value !== draft.savedLanguage;
+      draft.displayName = name.value;
+      draft.language = language.value;
+      name.disabled = language.disabled = draft.pending;
+      $("settings-save").disabled = draft.pending || !draft.dirty;
+      $("settings-save").textContent = draft.pending ? "กำลังบันทึก…" : "บันทึกการเปลี่ยนแปลง";
+      $("settings-discard").classList.toggle("hidden", !draft.dirty);
+      $("settings-discard").disabled = draft.pending;
+      form.setAttribute("aria-busy", String(draft.pending));
+      $("settings-status").textContent = draft.message || (draft.dirty ? "มีการเปลี่ยนแปลงที่ยังไม่ได้บันทึก" : "ข้อมูลเป็นปัจจุบัน");
+      $("settings-status").classList.toggle("bad", draft.failed);
+    };
+    name.oninput = language.onchange = () => { draft.message = ""; draft.failed = false; update(); };
+    $("settings-discard").onclick = () => {
+      if (!current() || draft.pending) return;
+      name.value = draft.savedName;
+      language.value = draft.savedLanguage;
+      draft.message = "ยกเลิกการแก้ไขแล้ว";
+      draft.failed = false;
+      update();
+    };
+    form.onsubmit = async (event) => {
+      event.preventDefault();
+      if (!current() || draft.pending || !draft.dirty || state.accountDeletion?.pending) return;
       const payload = {
-        display_name: $("set-display").value.trim(),
-        default_language: $("set-lang").value,
+        display_name: name.value.trim(),
+        default_language: language.value,
       };
-      $("settings-status").textContent = "กำลังบันทึก...";
+      draft.pending = true;
+      draft.failed = false;
+      draft.message = "กำลังบันทึก…";
+      update();
       try {
-        const r = await fetch(API + "/api/profile", {
+        const d = await apiFetch("/api/profile", {
           method: "PUT", credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         });
-        const d = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
-        $("settings-status").textContent = "บันทึกแล้ว";
+        if (!current()) return;
+        if (!d || d.ok !== true || !d.profile) throw new Error("ระบบยังไม่ยืนยันการบันทึก");
+        draft.savedName = d.profile.display_name || "";
+        draft.savedLanguage = d.profile.default_language || payload.default_language;
+        draft.displayName = draft.savedName;
+        draft.language = draft.savedLanguage;
+        draft.dirty = false;
+        draft.message = "บันทึกแล้ว";
         toast("บันทึกโปรไฟล์แล้ว", "t-ok");
-        setLang(d.profile.default_language || state.lang);
+        setLang(draft.savedLanguage);
+        $("user-chip").textContent = draft.savedName || identity.name || identity.email;
       } catch (e) {
-        $("settings-status").textContent = "บันทึกไม่สำเร็จ: " + e.message;
+        if (!current()) return;
+        draft.failed = true;
+        draft.message = "บันทึกไม่สำเร็จ ค่าที่แก้ไขยังอยู่ กรุณาลองอีกครั้ง";
+      } finally {
+        draft.pending = false;
+        if (visible()) {
+          name.value = draft.displayName;
+          language.value = draft.language;
+          update();
+        } else if (current() && location.hash === "#/settings") {
+          void renderSettings();
+        }
       }
     };
+    update();
   } catch (e) {
-    body.innerHTML = `<span class="dim">โหลดไม่ได้: ${esc(e.message)}</span>`;
+    if (!visible()) return;
+    body.innerHTML = `<p role="status">โหลดข้อมูลบัญชีไม่ได้ กรุณาลองอีกครั้ง</p><button id="settings-retry" type="button" class="btn-ghost">ลองโหลดใหม่</button>`;
+    $("settings-retry").onclick = () => { if (current()) void renderSettings(); };
+  } finally {
+    if (visible()) body.setAttribute("aria-busy", "false");
   }
+}
+
+function bindSettingsNavigation() {
+  document.querySelectorAll("[data-settings-section]").forEach(button => {
+    button.onclick = () => {
+      const target = $(button.dataset.settingsSection);
+      if (!target || target.classList.contains("hidden")) return;
+      target.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+      target.focus({ preventScroll: true });
+    };
+  });
+  $("settings-password").onclick = () => { state.authReturnTo = "#/settings"; };
+  const logout = $("settings-logout");
+  logout.onclick = async () => {
+    if (logout.disabled || !state.user) return;
+    logout.disabled = true;
+    $("settings-logout-status").textContent = "กำลังออกจากระบบ…";
+    const ok = await signOut();
+    logout.disabled = false;
+    $("settings-logout-status").textContent = ok ? "" : "ออกจากระบบไม่สำเร็จ กรุณาลองอีกครั้ง";
+  };
+}
+
+function renderAccountDeletion() {
+  const section = $("settings-deletion");
+  section.classList.toggle("hidden", !state.user);
+  const form = $("account-delete-form");
+  const input = $("account-delete-email");
+  const open = $("account-delete-open");
+  const confirm = $("account-delete-confirm");
+  const cancel = $("account-delete-cancel");
+  const status = $("account-delete-status");
+  form.classList.add("hidden");
+  input.value = "";
+  confirm.disabled = true;
+  open.setAttribute("aria-expanded", "false");
+  if (!state.user) return;
+  const email = state.user.email;
+  const gen = _getGen;
+  const current = () => state.user && state.user.email === email && gen === _getGen;
+  const operation = state.accountDeletion && state.accountDeletion.email === email
+    ? state.accountDeletion : { email, pending: false, uncertain: false, message: "" };
+  state.accountDeletion = operation;
+  $("account-delete-identity").textContent = email;
+  const admin = !!state.is_admin;
+  $("account-delete-admin").classList.toggle("hidden", !admin);
+  const update = () => {
+    const blocked = admin || operation.pending || operation.uncertain;
+    open.disabled = blocked;
+    input.disabled = blocked;
+    cancel.disabled = operation.pending;
+    confirm.disabled = blocked || input.value !== email;
+    confirm.textContent = operation.pending ? "กำลังลบบัญชี…" : "ลบบัญชีถาวร";
+    form.setAttribute("aria-busy", operation.pending ? "true" : "false");
+    status.textContent = operation.message;
+    status.classList.toggle("bad", !operation.pending && !!operation.message);
+    $("account-delete-help").classList.toggle("hidden", !operation.uncertain);
+  };
+  open.onclick = () => {
+    if (!current() || open.disabled) return;
+    form.classList.remove("hidden");
+    open.classList.add("hidden");
+    open.setAttribute("aria-expanded", "true");
+    input.focus();
+  };
+  open.classList.remove("hidden");
+  input.oninput = update;
+  cancel.onclick = () => {
+    if (!current() || operation.pending) return;
+    form.classList.add("hidden");
+    open.classList.remove("hidden");
+    open.setAttribute("aria-expanded", "false");
+    input.value = "";
+    if (!operation.uncertain) operation.message = "";
+    update();
+    open.focus();
+  };
+  form.onsubmit = async (event) => {
+    event.preventDefault();
+    if (!current() || admin || operation.pending || operation.uncertain || input.value !== email) return;
+    operation.pending = true;
+    operation.message = "กำลังลบบัญชี กรุณารอสักครู่";
+    update();
+    try {
+      const result = await apiFetch("/api/profile", {
+        method: "DELETE", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirmation: input.value }),
+      });
+      if (!current()) return;
+      if (!result || result.ok !== true) throw new Error("unexpected deletion response");
+      clearSignedOutWorkspace();
+      location.hash = "#/";
+      // Refresh the chrome without waiting for another network request to
+      // remove the erased identity or leaving private drafts on this device.
+      void refreshMe();
+      void loadPublicHome().then(() => { if (!state.user) renderHome(); });
+      toast("ลบบัญชีแล้ว และออกจากระบบทุกอุปกรณ์แล้ว", "t-ok");
+    } catch (e) {
+      if (!current()) return;
+      operation.uncertain = !e.status || e.status >= 500;
+      operation.message = operation.uncertain
+        ? "ยังยืนยันว่าลบบัญชีครบแล้วไม่ได้ บัญชีอาจถูกระงับการเข้าสู่ระบบแล้ว กรุณาติดต่อผู้ดูแลเพื่อตรวจสอบ ไม่ต้องส่งคำขอลบซ้ำ"
+        : e.status === 409 || e.status === 400 ? e.message : "ลบบัญชีไม่ได้ กรุณาโหลดหน้าใหม่และตรวจสอบการเข้าสู่ระบบ";
+    } finally {
+      operation.pending = false;
+      if (current()) update();
+    }
+  };
+  update();
 }
 
 /* ---------------- admin tools (rejudge / plagiarism / contests) ---------------- */
@@ -4393,6 +4613,13 @@ async function init() {
   bindEditorKeys();
   setLang(lastLang() || state.lang);   // remember the language, default Python
   window.addEventListener("beforeunload", saveDraft);
+  window.addEventListener("beforeunload", (event) => {
+    const draft = state.settingsDraft;
+    if (draft && draft.dirty && state.user && draft.email === state.user.email) {
+      event.preventDefault();
+      event.returnValue = "";
+    }
+  });
   const hf = $("hist-filter"), fs = $("f-sort");
   try {
     const saved = localStorage.getItem("ng_sort");

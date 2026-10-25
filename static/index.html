@@ -18,7 +18,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anuphan:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600;700&display=swap">
-<link rel="stylesheet" href="/styles.css?v=54">
+<link rel="stylesheet" href="/styles.css?v=55">
 </head>
 <body>
 <a class="skip-link" href="#main">ข้ามไปเนื้อหา</a>
@@ -391,9 +391,9 @@
   <!-- LOGIN -->
   <section id="view-login" class="view">
     <div class="auth-layout">
-    <div class="auth-intro"><a class="backlink" href="#/"><svg class="ic" aria-hidden="true"><use href="#i-back"/></svg> กลับหน้าหลัก</a><h2 id="auth-heading">เข้าสู่ระบบ</h2><p id="auth-description" class="dim">เข้าสู่ระบบเพื่อเปิดโจทย์ ส่งคำตอบ<br>และดูประวัติการฝึกของคุณ</p><p class="auth-note">ใช้บัญชีอีเมลหรือ Google ของคุณ</p></div>
+    <div class="auth-intro"><a class="backlink" href="#/"><svg class="ic" aria-hidden="true"><use href="#i-back"/></svg> กลับหน้าหลัก</a><h2 id="auth-heading">เข้าสู่ระบบ</h2><p id="auth-description" class="dim">เข้าสู่ระบบเพื่อเปิดโจทย์ ส่งคำตอบ<br>และดูประวัติการฝึกของคุณ</p><p id="auth-note" class="auth-note">ใช้บัญชีอีเมลหรือ Google ของคุณ</p></div>
     <div class="card auth-card">
-      <div class="tabbar" role="tablist" aria-label="เลือกการเข้าสู่ระบบหรือสมัครสมาชิก">
+      <div id="auth-tabs" class="tabbar" role="tablist" aria-label="เลือกการเข้าสู่ระบบหรือสมัครสมาชิก">
         <button class="tab-btn active" id="auth-tab-login" data-authtab="login" type="button" role="tab" aria-selected="true" aria-controls="auth-fields">เข้าสู่ระบบ</button>
         <button class="tab-btn" id="auth-tab-register" data-authtab="register" type="button" role="tab" aria-selected="false" aria-controls="auth-fields" tabindex="-1">สมัครสมาชิก</button>
       </div>
@@ -429,7 +429,8 @@
       </div>
       <p class="dim"><a class="tlink" href="/privacy.html">ความเป็นส่วนตัว</a> · <a class="tlink" href="/terms.html">ข้อกำหนดการใช้งาน</a> · <a class="tlink" href="/faq.html">คำถามที่พบบ่อย</a></p>
       <button id="auth-recover" type="button" class="ghost-btn">ลืมรหัสผ่าน / ยืนยันอีเมลบัญชีเดิม</button>
-      <div class="or-divider"><span>หรือ</span></div>
+      <button id="auth-back-login" type="button" class="ghost-btn hidden">กลับไปเข้าสู่ระบบ</button>
+      <div id="auth-google-divider" class="or-divider"><span>หรือ</span></div>
       <button id="google-btn" type="button" class="google-btn"><img class="google-logo" src="/google-g.png" width="20" height="20" alt="" aria-hidden="true" loading="lazy" decoding="async"><span>Continue with Google</span></button>
       </div>
     </div>
@@ -438,22 +439,66 @@
 
   <!-- SETTINGS -->
   <section id="view-settings" class="view">
-    <div class="page-head section-heading"><div><a class="page-context" href="#/">หน้าแรก / ตั้งค่า</a><h2>ตั้งค่าของคุณ</h2></div><p class="dim">ข้อมูลบัญชี ภาษาที่ใช้<br>และหน้าตาเว็บที่คุ้นเคย</p></div>
-    <section class="settings-section" aria-labelledby="settings-account-title">
-      <div class="settings-section-heading"><h3 id="settings-account-title">ข้อมูลบัญชี</h3><p>ชื่อที่แสดงในประวัติและการแข่งขัน<br>พร้อมภาษาที่ใช้ส่งคำตอบเป็นค่าเริ่มต้น</p></div>
-      <div id="settings-body" class="dim">Loading...</div>
+    <div class="page-head section-heading"><div><a class="page-context" href="#/">หน้าแรก / ตั้งค่า</a><h2>ตั้งค่าของคุณ</h2><p class="dim settings-intro">จัดการบัญชีและปรับพื้นที่ฝึกให้เหมาะกับคุณ</p></div></div>
+    <nav class="settings-jump" aria-label="ข้ามไปส่วนของการตั้งค่า">
+      <button type="button" data-settings-section="settings-account" aria-controls="settings-account">บัญชี</button>
+      <button type="button" data-settings-section="settings-appearance" aria-controls="settings-appearance">หน้าตาเว็บ</button>
+      <button type="button" data-settings-section="settings-security" aria-controls="settings-security">ความปลอดภัย</button>
+      <button type="button" data-settings-section="settings-privacy" aria-controls="settings-privacy">ข้อมูลในเครื่อง</button>
+      <button type="button" data-settings-section="settings-deletion" aria-controls="settings-deletion">ลบบัญชี</button>
+    </nav>
+    <section id="settings-account" class="settings-section" aria-labelledby="settings-account-title" tabindex="-1">
+      <div class="settings-section-heading"><h3 id="settings-account-title">บัญชีและการฝึก</h3><p>ชื่อที่คนอื่นเห็นและภาษาที่คุณใช้<br>การเปลี่ยนส่วนนี้ต้องกดบันทึก</p></div>
+      <div id="settings-body" aria-busy="false">กำลังโหลดข้อมูลบัญชี…</div>
     </section>
-    <section class="settings-section" aria-labelledby="settings-theme-title">
-      <div class="settings-section-heading"><h3 id="settings-theme-title">หน้าตาเว็บ</h3><p>เลือกธีมที่อ่านสบาย<br>เว็บจะจำไว้ในเบราว์เซอร์นี้</p></div>
+    <section id="settings-appearance" class="settings-section" aria-labelledby="settings-theme-title" tabindex="-1">
+      <div class="settings-section-heading"><h3 id="settings-theme-title">หน้าตาเว็บ</h3><p>เลือกธีมที่อ่านสบาย<br>เปลี่ยนทันทีและจำไว้ในเบราว์เซอร์นี้</p></div>
       <div class="theme-choices" role="group" aria-label="เลือกธีม">
         <button class="theme-choice" data-setting-theme="light" type="button" aria-pressed="true"><span class="theme-preview theme-preview-light" aria-hidden="true"><i></i><i></i><i></i></span><span>สว่าง <span class="theme-choice-mark" aria-hidden="true"></span></span></button>
         <button class="theme-choice" data-setting-theme="dark" type="button" aria-pressed="false"><span class="theme-preview theme-preview-dark" aria-hidden="true"><i></i><i></i><i></i></span><span>มืด <span class="theme-choice-mark" aria-hidden="true"></span></span></button>
       </div>
     </section>
-    <section class="settings-section privacy-settings" aria-labelledby="settings-privacy-title">
-      <div class="settings-section-heading"><h3 id="settings-privacy-title">ข้อมูลในเบราว์เซอร์</h3><p>คุกกี้และข้อมูลที่เก็บไว้ในเครื่อง</p></div>
-      <div><p>เราใช้คุกกี้สำหรับการเข้าสู่ระบบ ส่วนธีม ตัวกรอง และร่างโค้ดเก็บไว้ในเบราว์เซอร์นี้</p><p>หากใช้เครื่องร่วมกับผู้อื่น ให้ออกจากระบบเมื่อใช้งานเสร็จ</p><button id="cookie-settings" type="button" class="btn-ghost">อ่านรายละเอียด</button></div>
+    <section id="settings-security" class="settings-section" aria-labelledby="settings-security-title" tabindex="-1">
+      <div class="settings-section-heading"><h3 id="settings-security-title">ความปลอดภัย</h3><p>ดูแลการเข้าสู่ระบบของคุณ<br>โดยเฉพาะเมื่อใช้เครื่องร่วมกับผู้อื่น</p></div>
+      <div class="settings-copy">
+        <h4>รหัสผ่าน</h4>
+        <p>ตั้งรหัสผ่านใหม่ผ่านรหัสยืนยันที่ส่งเข้าอีเมลบัญชี เมื่อเปลี่ยนสำเร็จ การเข้าสู่ระบบเดิมบนทุกอุปกรณ์จะใช้ต่อไม่ได้</p>
+        <a id="settings-password" class="btn-ghost settings-help-link" href="#/login?recover=1">ตั้งรหัสผ่านใหม่</a>
+        <div class="settings-security-session">
+          <h4>การเข้าสู่ระบบบนเครื่องนี้</h4>
+          <p>ออกจากระบบและล้างร่างโค้ดในเบราว์เซอร์นี้ อุปกรณ์อื่นยังใช้งานได้ และงานตรวจที่ส่งแล้วจะทำต่อ</p>
+          <button id="settings-logout" type="button" class="btn-ghost">ออกจากระบบบนเครื่องนี้</button>
+          <p id="settings-logout-status" role="status" aria-live="polite"></p>
+        </div>
+      </div>
     </section>
+    <section id="settings-privacy" class="settings-section privacy-settings" aria-labelledby="settings-privacy-title" tabindex="-1">
+      <div class="settings-section-heading"><h3 id="settings-privacy-title">ข้อมูลในเบราว์เซอร์</h3><p>คุกกี้และข้อมูลที่เก็บไว้ในเครื่อง</p></div>
+      <div><p>คุกกี้ใช้สำหรับการเข้าสู่ระบบ ส่วนธีม ตัวกรอง และร่างโค้ดเก็บไว้ในเบราว์เซอร์นี้ ไม่ได้ซิงก์ไปทุกอุปกรณ์</p><p>การล้างข้อมูลเว็บไซต์ในเบราว์เซอร์อาจทำให้ร่างโค้ดที่ยังไม่ส่งหายไป ประวัติส่งงานที่บันทึกในบัญชีจะยังอยู่</p><button id="cookie-settings" type="button" class="btn-ghost">ดูข้อมูลคุกกี้</button><p><a class="settings-help-link" href="/privacy.html">นโยบายความเป็นส่วนตัว</a></p></div>
+    </section>
+    <section id="settings-deletion" class="settings-section hidden" aria-labelledby="settings-deletion-title" tabindex="-1">
+      <div class="settings-section-heading"><h3 id="settings-deletion-title">ลบบัญชี</h3><p>ยุติการใช้งานและลบข้อมูลของคุณ<br>การลบไม่สามารถย้อนกลับได้</p></div>
+      <div class="account-deletion-body">
+        <p id="account-delete-description">บัญชี โค้ด ประวัติส่งงาน และข้อมูลที่ผูกกับบัญชีจะถูกลบ คุณจะออกจากระบบทุกอุปกรณ์ และคะแนนที่คำนวณจากประวัติจะถูกนำออกด้วย</p>
+        <p class="dim">อีเมลนี้จะสมัครซ้ำไม่ได้เป็นเวลา 90 วัน ระบบยังเก็บบันทึกที่จำเป็นและจัดการสำเนาสำรองตาม <a href="/privacy.html#retention">นโยบายความเป็นส่วนตัว</a></p>
+        <p id="account-delete-admin" class="dim hidden">บัญชีนี้เป็นผู้ดูแลระบบ ต้องให้ผู้ดูแลอีกคนถอนสิทธิ์ก่อนลบ หากเป็นผู้ดูแลหลัก ให้ติดต่อผู้ดูแลเครื่องด้วย</p>
+        <button id="account-delete-open" type="button" class="btn-ghost account-delete-btn" aria-expanded="false" aria-controls="account-delete-form">ลบบัญชีของฉัน…</button>
+        <form id="account-delete-form" class="hidden" aria-describedby="account-delete-description">
+          <div class="settings-row">
+            <label for="account-delete-email">พิมพ์อีเมล <strong id="account-delete-identity"></strong> เพื่อยืนยัน</label>
+            <input id="account-delete-email" type="email" autocomplete="off" autocapitalize="none" spellcheck="false" required aria-describedby="account-delete-hint">
+            <p id="account-delete-hint" class="field-hint">ต้องตรงกับอีเมลบัญชีทุกตัวอักษร หากยังมีงานตรวจอยู่ ให้รอจนเสร็จก่อน</p>
+          </div>
+          <div class="account-delete-actions">
+            <button id="account-delete-confirm" type="submit" class="submit-btn account-delete-confirm" disabled>ลบบัญชีถาวร</button>
+            <button id="account-delete-cancel" type="button" class="btn-ghost">ยกเลิก</button>
+          </div>
+        </form>
+        <p id="account-delete-status" role="status" aria-live="polite"></p>
+        <p id="account-delete-help" class="hidden">ติดต่อ <a href="mailto:newbiegrader.team@gmail.com">newbiegrader.team@gmail.com</a> เพื่อตรวจสอบสถานะการลบ ไม่ต้องส่งรหัสผ่านหรือ OTP</p>
+      </div>
+    </section>
+    <p class="settings-footer">มีปัญหาเรื่องบัญชี? <a href="mailto:newbiegrader.team@gmail.com">ติดต่อผู้ดูแล</a> หรืออ่าน <a href="/faq.html">คำถามที่พบบ่อย</a></p>
   </section>
 
   <!-- ADMIN (เฉพาะ admin) -->
@@ -798,6 +843,6 @@
 
 <script src="/config.js?v=6"></script>
 <script src="/turnstile.js?v=1"></script>
-<script src="/app.js?v=84"></script>
+<script src="/app.js?v=85"></script>
 </body>
 </html>

@@ -52,6 +52,38 @@ function harness(replies) {
   return { node, context, calls, bot, refreshed: () => refreshed, focused: () => focused };
 }
 
+test('password recovery has its own heading, hides signup tabs and sends no unsolicited email', () => {
+  const h = harness([]);
+  h.node('auth-recover').onclick();
+  assert.equal(h.node('auth-heading').textContent, 'ตั้งรหัสผ่านใหม่');
+  assert.equal(h.node('auth-tabs').classList.contains('hidden'), true);
+  assert.equal(h.node('google-btn').classList.contains('hidden'), true);
+  assert.equal(h.node('auth-back-login').classList.contains('hidden'), false);
+  assert.equal(h.calls.length, 0);
+  h.node('auth-back-login').onclick();
+  assert.equal(h.node('auth-heading').textContent, 'เข้าสู่ระบบ');
+  assert.equal(h.node('auth-tabs').classList.contains('hidden'), false);
+});
+
+test('recovery retains the OTP and bot boundary and submits a new password only after verification', async () => {
+  const h = harness([{ status: 202, body: { verification_required: true } }, { status: 200, body: { ok: true } }]);
+  h.context.setAuthMode('recover');
+  h.bot.value = 'synthetic-bot-token';
+  await h.context.doPasswordAuth();
+  assert.equal(h.calls[0].url, '/api/auth/email/request');
+  assert.equal(h.calls[0].payload['cf-turnstile-response'], 'synthetic-bot-token');
+  assert.equal(h.calls[0].payload.password, undefined);
+  assert.equal(h.node('auth-heading').textContent, 'ตั้งรหัสผ่านใหม่');
+  h.node('auth-code').value = '12345678';
+  h.node('auth-pass').value = 'synthetic-new-password';
+  h.node('auth-name').value = 'Existing learner';
+  await h.context.doPasswordAuth();
+  assert.equal(h.calls[1].url, '/api/auth/email/verify');
+  assert.equal(h.calls[1].payload.name, 'Existing learner');
+  assert.equal(h.calls[1].payload.password, 'synthetic-new-password');
+  assert.equal(h.refreshed(), 1);
+});
+
 test('email request submits a fresh bot token and resets it after success or failure', async () => {
   const h = harness([{ status: 503 }, { status: 202, body: { verification_required: true } }]);
   h.context.setAuthMode('register');

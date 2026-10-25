@@ -1,8 +1,11 @@
 # Contributing to Newbiegrader
 
-Thank you for your interest in Newbiegrader, an online judge for teaching competitive programming in Thai. Bug reports, feature ideas, documentation fixes, code and new problems are all welcome.
+Newbiegrader is an online judge for practicing competitive programming in Thai.
+You can contribute bug reports, documentation, code, problem proposals and tests.
 
-By taking part, you agree to keep discussions respectful and constructive. Newbiegrader is used by students, many of them beginners and some of them minors, so please keep all content and conversation suitable for a learning environment.
+Keep discussions respectful and content suitable for students, including beginners
+and minors. Start with a small, focused change; discuss larger features before
+building them.
 
 ## Table of Contents
 
@@ -34,7 +37,10 @@ By taking part, you agree to keep discussions respectful and constructive. Newbi
 
 **Do not open a public issue for a security problem.** This includes sandbox escapes, ways to read hidden tests or other users' data, authentication bypasses and anything that could be abused against the live service.
 
-Report it privately through the maintainer's GitHub profile ([@n3wbiekkkk](https://github.com/n3wbiekkkk)) or by email at [newbiegrader.team@gmail.com](mailto:newbiegrader.team@gmail.com). Please include steps to reproduce and the impact you observed. Please do not test against the production service in ways that could disrupt other users.
+Follow [SECURITY.md](SECURITY.md) and report privately to
+[newbiegrader.team@gmail.com](mailto:newbiegrader.team@gmail.com). Include a minimal
+reproduction and the impact you observed. Coordinate production testing with the
+maintainer first.
 
 For background on what is already covered, see [`docs/SECURITY_READINESS.md`](docs/SECURITY_READINESS.md) and [`docs/PUBLIC_SECURITY.md`](docs/PUBLIC_SECURITY.md).
 
@@ -81,7 +87,7 @@ python3.13 -m venv .venv
 source .venv/bin/activate
 
 # 3. Install dependencies
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 
 # 4. Create your local configuration
 cp .env.example .env
@@ -95,7 +101,12 @@ Configuration is read from environment variables; `.env.example` lists the avail
 | Variable | Purpose |
 |----------|---------|
 | `GRADER_QUEUE_MODE` | `local` (default) runs one combined API/worker process with a best-effort in-memory queue. `database` uses the durable Supabase-backed queue with leases and requires applying `supabase/schema.sql` first. |
-| `GRADER_FILE_STORAGE` | Where problem PDFs, public samples and private tests are read from. Production uses `local` (verified protected backend file roots); `supabase` is the legacy development/recovery backend. |
+| `GRADER_PROBLEM_SOURCE` | `local` (default) loads authoring packages from `problems/`. `supabase` loads database metadata; it is separate from the location of file bytes. |
+
+Production combines Supabase metadata with `GRADER_FILE_STORAGE=local` and
+verified protected file roots. The example configuration also contains legacy
+file-storage settings; do not use it as a production deployment recipe. Follow
+the [backend file guide](docs/BACKEND_PROBLEM_FILES.md) for that boundary.
 
 > **Important:** The `problems/` directory is a local working copy and is **not versioned** in this repository. Private test data and reference solutions are intentionally excluded. You will need to create your own local problems to test judging end to end (see [Contributing problems](#contributing-problems)).
 
@@ -116,9 +127,25 @@ python tools/plagiarism.py
 python tools/validate_problem.py
 ```
 
-`tools/validate_problem.py` validates the packages in your local `problems/` working copy and prints a skip when that directory does not exist, so a fresh clone will not exercise the problem checks. The Linux-only isolation and sandbox suites (`tools/run_critical_tests.py`, the PostgreSQL concurrency suites) are run by CI on Linux; passing the commands above on macOS does not qualify sandbox changes.
+`tools/validate_problem.py` validates your local `problems/` packages. A public
+clone has no private catalog, so an empty or skipped run is not catalog
+qualification. State which packages and references were actually available.
 
-Please make sure the suite passes before opening a pull request.
+Choose checks that match the change:
+
+| Change | Validation |
+| --- | --- |
+| Documentation | Check links, examples and consistency with the maintained specifications. |
+| Frontend | Run the Node checks/tests and inspect both themes at mobile and desktop widths. |
+| API, judging or identity | Run the Python suite and add regression coverage for changed behavior. |
+| Schema or queue RPCs | Run the disposable PostgreSQL checks in CI, including privileges and concurrency. |
+| Linux isolation | Require `tools/run_critical_tests.py` with zero skips and the native host qualification. |
+
+PostgreSQL checks verify real SQL behavior; an in-memory substitute does not
+replace them. Passing development tests on macOS does not qualify Linux isolation.
+
+Report the checks you ran and any failures, skips or unavailable prerequisites
+in the pull request.
 
 ## Project layout
 
@@ -148,7 +175,10 @@ Contributions are reviewed against these principles. Please read them before cha
 Related expectations:
 
 - **Strict and honest limits.** Time and memory limits are enforced and reported per test. Do not weaken sandbox restrictions to make a feature easier.
-- **Asynchronous judging.** Ambiguous queue claims must never be automatically replayed, because a duplicate submission could be created or judged twice.
+- **Asynchronous judging.** Submit returns a job ID and the client polls. Never
+  automatically replay an ambiguous lease-claim request: the database may already
+  have leased a job even when the response was lost. Admission retries require
+  an explicit rejection that confirms no job was accepted.
 - **Lightweight frontend.** The frontend is plain HTML, CSS and JavaScript, using the existing design tokens in both themes. Please do not introduce a bundler, transpiler or framework.
 - **Standard library for the grader.** `grader.py` depends only on the Python standard library. Discuss with the maintainer before adding any dependency elsewhere.
 - **Preserved boundaries.** Preserve session revocation, cookie/CSRF/origin checks, queue ownership and admission limits. Add regression coverage when you touch one of these boundaries.
@@ -158,9 +188,13 @@ Related expectations:
 - Target **Python 3.13**.
 - Follow the style of the surrounding code, and keep changes focused. Avoid unrelated reformatting in the same pull request.
 - Add or update tests for any change in behaviour, especially around verdicts, queue handling, visibility rules and redaction.
-- Never log or return secrets, hidden test data or private compiler/runtime output.
+- Never log or return credentials or other users' private data. Judge feedback
+  follows the [disclosure policy](docs/submission-feedback-policy.md): eligible
+  practice owners may receive bounded failed-case I/O and diagnostics; peers and
+  contest responses have stricter allowlists.
 - Never commit secrets, `.env` files, private test fixtures or reference solutions.
-- Update the `?v=` asset versions in `static/index.html` after changing JavaScript or CSS so browsers pick up the new files.
+- Update affected `?v=` references after changing JavaScript or CSS, including
+  standalone HTML pages as well as `static/index.html`.
 - Verify UI changes in a real browser in both light and dark themes at desktop and mobile widths, and include screenshots in the pull request.
 - Keep user-facing text accurate and consistent. The UI and policies are primarily Thai, so please preserve existing wording conventions.
 - Update documentation in `docs/` when behaviour, configuration or operations change.
@@ -203,7 +237,8 @@ Pull requests that touch judging, sandboxing, visibility/redaction, authenticati
 
 ### Checklist
 
-- [ ] Tests added or updated, and the suite passes
+- [ ] Relevant checks pass; skips and unavailable prerequisites are explained
+- [ ] Behavior changes have regression coverage
 - [ ] No secrets, private tests or reference solutions included
 - [ ] Documentation updated where needed
 - [ ] Migrations (if any) are new files, append-only and re-runnable

@@ -66,6 +66,21 @@ provider deletion before finishing application deletion. Supabase and PostgreSQL
 are separate systems, so this is recoverable sequencing, not a distributed atomic
 transaction. No production user is deleted by the test suite.
 
+The Settings page exposes account deletion after an exact-email confirmation.
+Admins see the privilege-removal requirement; the backend remains authoritative
+if permissions or active jobs change. Only a confirmed `{"ok":true}` clears the
+local identity, drafts and cached account data. Network errors, malformed success
+responses and server failures display an unresolved-state notice with operator
+contact, disable further deletion requests in that page session, and never retry
+automatically. No export-download button is shown; export requests can still be
+handled through the operator and the authenticated API above.
+
+Profile edits require an explicit save. Unsaved values stay in memory when
+navigating within the SPA and a browser unload warns before discarding them;
+they are cleared on successful logout/deletion. Theme changes apply immediately
+to the current browser. The password-reset shortcut uses the existing bot/OTP
+verification endpoints and makes no email request until the user submits.
+
 `GET /api/admin/account-audit` is admin-only and returns the latest 100 deletion
 events with a nested numeric field allowlist. It never returns an email or source.
 

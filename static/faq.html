@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>คำถามที่พบบ่อย — Newbiegrader</title>
-<meta name="description" content="คำถามที่พบบ่อยเกี่ยวกับ Newbiegrader: คิวเต็ม TLE/MLE การมองเห็นโค้ด และการรับรหัส OTP">
+<meta name="description" content="แก้ปัญหาคิวเต็ม TLE/MLE รหัส OTP การมองเห็นโค้ด และการส่งออกหรือลบบัญชี Newbiegrader">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#101010" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="/logo-icon.png?v=2">
@@ -12,15 +12,15 @@
 <link rel="icon" type="image/png" media="(prefers-color-scheme: dark)" href="/logo-icon-dark.png?v=2">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anuphan:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
-<link rel="stylesheet" href="/styles.css?v=54">
-<link rel="stylesheet" href="/legal.css?v=2">
-<script src="/legal.js?v=2"></script>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anuphan:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="/styles.css?v=55">
+<link rel="stylesheet" href="/legal.css?v=3">
+<script src="/legal.js?v=3"></script>
 </head>
 <body>
 <a class="skip-link" href="#main">ข้ามไปเนื้อหา</a>
 <header class="legal-topbar">
-  <a class="legal-brand" href="/">
+  <a class="legal-brand" href="/" aria-label="Newbiegrader — หน้าหลัก">
     <img src="/logo-icon.png?v=2" class="brand-logo logo-light" alt="">
     <img src="/logo-icon-dark.png?v=2" class="brand-logo logo-dark" alt="">
     <span class="brand-name">newbie<span class="brand-acc">grader</span></span>
@@ -31,57 +31,84 @@
     <a href="/faq.html" aria-current="page">คำถามที่พบบ่อย</a>
     <a href="/">หน้าหลัก</a>
   </nav>
-  <button type="button" class="ghost-btn legal-theme" id="legal-theme" aria-pressed="false">สลับธีม</button>
+  <button type="button" class="ghost-btn legal-theme" id="legal-theme" aria-label="ใช้ธีมมืด" title="ใช้ธีมมืด">
+    <svg class="ic legal-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <svg class="ic legal-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+  </button>
 </header>
 
-<main class="legal-page" id="main">
+<main class="legal-page" id="main" tabindex="-1">
   <div class="legal-hero">
-    <p class="legal-eyebrow">ช่วยเหลือ</p>
     <h1>คำถามที่พบบ่อย</h1>
-    <p class="legal-meta">ปรับปรุงล่าสุด: 24 ตุลาคม 2569</p>
+    <p class="legal-meta">ปรับปรุงล่าสุด <time datetime="2026-10-25">25 ตุลาคม 2569</time></p>
+    <p class="legal-lead">คำตอบเรื่องการส่งงาน บัญชี และข้อมูลของคุณ หากยังแก้ปัญหาไม่ได้ ติดต่อผู้ดูแลพร้อมหมายเลขโจทย์หรือคำตอบที่เกี่ยวข้อง</p>
+
   </div>
 
   <div class="legal-body legal-body--single">
-    <div class="legal-card">
+    <article class="legal-card legal-card--faq" aria-label="คำถามที่พบบ่อย">
       <section class="legal-section" aria-labelledby="faq-title">
         <h2 class="sr-only" id="faq-title">คำถามและคำตอบ</h2>
         <div class="legal-faq">
-          <details open>
-            <summary>กรณีคิวเต็มควรดำเนินการอย่างไร</summary>
+          <details id="queue" open>
+            <summary>คิวเต็ม ต้องส่งใหม่ไหม</summary>
             <div class="legal-answer">
-              <p>ระบบสามารถตรวจงานได้พร้อมกัน 4 งาน การเพิ่มจำนวนคิวรอไม่ได้ทำให้จำนวนงานที่ตรวจพร้อมกันเพิ่มขึ้น หากคำขอถูกปฏิเสธเพราะคิวเต็ม หน้าเว็บจะรอและลองส่งใหม่เป็นระยะ สูงสุดไม่เกิน 5 ครั้ง โปรดอย่ากดส่งซ้ำ</p>
-              <p>หากการเชื่อมต่อขาดหาย ระบบจะไม่ส่งคำขอซ้ำโดยอัตโนมัติ เนื่องจากงานแรกอาจเข้าสู่คิวแล้ว โปรดตรวจสอบรายการงานและประวัติการส่งก่อนส่งใหม่</p>
+              <p>ระบบตรวจพร้อมกัน 4 งาน และมีคิวรอได้ 50 งาน การเพิ่มคิวไม่ได้ทำให้ตรวจพร้อมกันได้มากขึ้น</p>
+              <p>ถ้าระบบยืนยันว่าคำขอถูกปฏิเสธเพราะคิวเต็ม หน้าเว็บจะรอแล้วลองส่งใหม่ให้ไม่เกิน 5 ครั้ง คุณไม่ต้องกดส่งซ้ำ หากยังเต็มหลังลองครบ ให้รอสักครู่แล้วค่อยส่งใหม่</p>
+              <p>ถ้าการเชื่อมต่อขาดหรือไม่ทราบว่างานเข้าคิวหรือยัง ระบบจะไม่ส่งซ้ำอัตโนมัติ ให้ตรวจรายการงานและประวัติก่อน เพื่อไม่ให้ส่งงานซ้ำ</p>
             </div>
           </details>
-          <details>
-            <summary>เหตุใดโค้ดที่ถูกต้องจึงได้ผล TLE หรือ MLE</summary>
+          <details id="limits">
+            <summary>ทำไมคำตอบถูก แต่ได้ TLE หรือ MLE</summary>
             <div class="legal-answer">
-              <p>เวลาที่กำหนดใช้กับแต่ละกรณีทดสอบ และหน่วยความจำรวมถึงตัวคูณของแต่ละภาษามีผลต่อการตรวจ โปรดตรวจสอบข้อจำกัดของโจทย์และรายละเอียดของผลการตรวจของท่าน หากสงสัยว่ากติกาหรือชุดทดสอบไม่ถูกต้อง โปรดรายงานปัญหาพร้อมระบุหมายเลขคำตอบ</p>
+              <p><strong>TLE</strong> หมายถึงใช้เวลาเกินกำหนด ส่วน <strong>MLE</strong> หมายถึงใช้หน่วยความจำเกินกำหนด โปรแกรมอาจให้คำตอบถูก แต่ยังใช้ทรัพยากรมากเกินข้อจำกัดได้</p>
+              <p>ดูข้อจำกัดของโจทย์และรายละเอียดผลตรวจ เวลาใช้กับแต่ละเคส และแต่ละภาษามีค่าเผื่อหน่วยความจำต่างกัน หากสงสัยว่ากติกาหรือชุดทดสอบผิด ให้รายงานพร้อมหมายเลขโจทย์และคำตอบ</p>
             </div>
           </details>
-          <details>
-            <summary>ผู้อื่นสามารถเห็นโค้ดของข้าพเจ้าหรือไม่</summary>
+          <details id="sharing">
+            <summary>คนอื่นเห็นโค้ดของฉันไหม</summary>
             <div class="legal-answer">
-              <p>ผู้ใช้ที่เข้าสู่ระบบอาจเปิดดูโค้ดของคำตอบที่ผ่านการตรวจแล้วและเข้าเงื่อนไขได้ แต่จะไม่สามารถเห็นอีเมลหรือข้อมูลทดสอบส่วนตัว การแข่งขันที่ยังไม่สิ้นสุดมีข้อจำกัดเพิ่มเติม โปรดอย่าใส่ข้อมูลที่เป็นความลับไว้ในโค้ด</p>
+              <p>ผู้ใช้ที่เข้าสู่ระบบอาจดูโค้ดคำตอบที่ตรวจเสร็จและเข้าเงื่อนไขได้ แม้ยังไม่เคยส่งโจทย์ข้อนั้น แต่ไม่เห็นอีเมลหรือข้อมูลทดสอบส่วนตัว การแข่งขันที่ยังไม่จบมีข้อจำกัดเพิ่ม</p>
+              <p>อย่าใส่ข้อมูลลับในโค้ด อ่านรายละเอียดได้ใน<a href="/privacy.html#visibility">นโยบายความเป็นส่วนตัว</a></p>
             </div>
           </details>
-          <details>
-            <summary>กรณีไม่ได้รับรหัส OTP</summary>
+          <details id="otp">
+            <summary>ไม่ได้รับรหัส OTP ต้องทำอย่างไร</summary>
             <div class="legal-answer">
-              <p>โปรดตรวจสอบว่าระบุอีเมลถูกต้อง ตรวจสอบกล่องจดหมายขยะ (spam) และรอจนครบระยะเวลาก่อนส่งซ้ำตามที่หน้าเว็บแสดง การขอส่งซ้ำต่อเนื่องอาจทำให้เกินโควตาที่กำหนด หากยังไม่ได้รับรหัส โปรดติดต่อผู้ดูแลระบบ โดยไม่ต้องส่งรหัส OTP หรือรหัสผ่านมาด้วย</p>
+              <ol>
+                <li>ตรวจว่าอีเมลสะกดถูก และดูในกล่องจดหมายขยะ</li>
+                <li>รอจนครบช่วงส่งซ้ำที่หน้าเว็บแสดง แล้วจึงขอรหัสใหม่ การกดถี่ ๆ อาจชนโควตา</li>
+                <li>หากยังไม่ได้รับ ให้ติดต่อผู้ดูแลพร้อมเวลาที่ขอรหัสและข้อความผิดพลาดที่เห็น โดยไม่ส่งรหัส OTP หรือรหัสผ่านมาด้วย</li>
+              </ol>
+            </div>
+          </details>
+          <details id="password">
+            <summary>จะตั้งรหัสผ่านใหม่ได้อย่างไร</summary>
+            <div class="legal-answer">
+              <ol>
+                <li>เปิด <a href="/#/login?recover=1">หน้าตั้งรหัสผ่านใหม่</a> หรือไปที่ “ตั้งค่า → ความปลอดภัย → ตั้งรหัสผ่านใหม่”</li>
+                <li>กรอกอีเมลบัญชีเดิม ผ่านการตรวจสอบบอต และกดส่งรหัสยืนยันอีเมล</li>
+                <li>กรอกรหัสล่าสุดที่ได้รับ พร้อมรหัสผ่านใหม่ แล้วกดยืนยัน</li>
+              </ol>
+              <p>เมื่อเปลี่ยนรหัสผ่านสำเร็จ การเข้าสู่ระบบเดิมทุกอุปกรณ์จะใช้ต่อไม่ได้ และคุณจะเข้าสู่ระบบด้วยการยืนยันครั้งใหม่นี้</p>
+            </div>
+          </details>
+          <details id="account-data">
+            <summary>จะขอส่งออกหรือลบบัญชีได้อย่างไร</summary>
+            <div class="legal-answer">
+              <p>ลบบัญชีได้ที่ <a href="/#/settings">ตั้งค่า → ลบบัญชี</a> โดยพิมพ์อีเมลบัญชีให้ตรงเพื่อยืนยัน หากเป็นผู้ดูแลระบบ ต้องถอนสิทธิ์ผู้ดูแลก่อน หากต้องการส่งออกข้อมูล ให้ติดต่อผู้ดูแลผ่านอีเมลด้านล่าง ข้อมูลที่ส่งออกมีเฉพาะของคุณ ไม่รวมผลรายเคสและข้อมูลทดสอบส่วนตัว</p>
+              <p>เมื่อลบบัญชีสำเร็จ ประวัติและบัญชีจะหายไป ทุกอุปกรณ์จะถูกออกจากระบบ และอีเมลเดิมจะสมัครซ้ำไม่ได้เป็นเวลา 90 วัน ต้องรอให้งานตรวจที่รับไว้จบก่อนลบ อ่านระยะเก็บและข้อจำกัดของสำเนาสำรองใน<a href="/privacy.html#retention">นโยบายความเป็นส่วนตัว</a></p>
             </div>
           </details>
         </div>
       </section>
 
       <section class="legal-section" id="contact" aria-labelledby="contact-title">
-        <h2 id="contact-title">การติดต่อ</h2>
-        <ul>
-          <li>ผู้ดูแลระบบ Newbiegrader ผ่านทาง <a href="https://github.com/n3wbiekkkk">GitHub</a> หรืออีเมล <a href="mailto:newbiegrader.team@gmail.com">newbiegrader.team@gmail.com</a></li>
-          <li>โปรดอย่าระบุรหัสผ่าน รหัส OTP หรือข้อมูลส่วนบุคคลใน issue สาธารณะ</li>
-        </ul>
+        <h2 id="contact-title">ติดต่อผู้ดูแล</h2>
+        <p>อีเมล <a href="mailto:newbiegrader.team@gmail.com">newbiegrader.team@gmail.com</a></p>
+        <p>รายงานปัญหาทั่วไปผ่าน <a href="https://github.com/n3wbiekkkk/Newbiegrader/issues">GitHub Issues</a> ได้ โปรดอย่าใส่รหัสผ่าน รหัส OTP ข้อมูลส่วนบุคคล หรือรายละเอียดช่องโหว่ในที่สาธารณะ เรื่องบัญชีและความปลอดภัยให้ใช้อีเมล</p>
       </section>
-    </div>
+    </article>
   </div>
 </main>
 
