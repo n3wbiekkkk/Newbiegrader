@@ -65,26 +65,5 @@
     "monitor_mode_stop_start_verified": true,
     "nextcloud_mode_reboot_tested": false
   },
-  "monitor_extension_qualification": {
-    "linux_full": {
-      "tests": 653,
-      "skipped": 0,
-      "passed": true
-    },
-    "linux_critical": {
-      "tests": 384,
-      "skipped": 0,
-      "passed": true
-    },
-    "hardware_sensors_both_nodes": true,
-    "app_health_both_services": true,
-    "nextcloud_webdav_put_get_delete": true,
-    "nextcloud_version": "34.0.5",
-    "nextcloud_quota_gib": 350,
-    "encrypted_initial_checkpoint_off_host_readable": true,
-    "ongoing_personal_file_backup_configured": false,
-    "smart_tools_installed": false,
-    "watchdog_check_only": true,
-    "test_alert_messages_sent": false
-  }
+  "monitor_extension_record": "Moved to the separate homeserver repository on 2026-10-26; application qualification above is retained."
 }

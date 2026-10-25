@@ -60,31 +60,25 @@ def peer_node(peer, now):
         return unavailable
 
 
-def app_metrics(config):
+def auxiliary_metrics(config):
+    """Optional home-service exporters live in the separate homeserver repository.
+
+    Missing/broken optional modules must not stop worker capacity observation.
+    """
+    import importlib
     lines = []
-    for name, app in config.get("apps", {}).items():
-        if not re.fullmatch(r"[a-z0-9_-]{1,32}", name):
+    plugins = [(bool(config.get("apps")), "app_health", "apps", config),
+               (bool(config.get("hardware_metrics")), "hardware_metrics", "hardware", config["id"])]
+    for enabled, module, label, settings in plugins:
+        if not enabled:
             continue
-        started = time.monotonic()
-        ok = False
         try:
-            request = urllib.request.Request(app["url"], headers={
-                "User-Agent": "Newbiegrader-fleet-observer/1", "Accept": "application/json"})
-            with urllib.request.urlopen(request, timeout=3) as response:
-                raw = response.read(16385)
-            if len(raw) > 16384:
-                raise ValueError("oversized health response")
-            value = json.loads(raw)
-            if app["kind"] == "nextcloud":
-                ok = (value.get("installed") is True and value.get("maintenance") is False
-                      and value.get("needsDbUpgrade") is False)
-            elif app["kind"] == "grader":
-                ok = value.get("ok") is True and value.get("count") == 100
-        except (OSError, ValueError, TypeError, KeyError, AttributeError):
-            pass
-        labels = '{node=' + json.dumps(config["id"]) + ',app=' + json.dumps(name) + '}'
-        lines.extend(['newbiegrader_app_up'+labels+' '+str(int(ok)),
-                      'newbiegrader_app_response_seconds'+labels+' '+str(time.monotonic()-started)])
+            exporter = importlib.import_module(module)
+            values = exporter.app_metrics(settings) if module == "app_health" else exporter.collect(settings)
+            lines.extend(values)
+            lines.append('newbiegrader_auxiliary_exporter_up{exporter="'+label+'"} 1')
+        except Exception:
+            lines.append('newbiegrader_auxiliary_exporter_up{exporter="'+label+'"} 0')
     return lines
 
 
@@ -116,9 +110,7 @@ def main():
         'newbiegrader_node_workers_configured' + label + ' ' + str(node['configured_workers']),
         'newbiegrader_node_snapshot_seconds' + label + ' ' + str(now),
     ]) + "\n"
-    metrics += "\n".join(app_metrics(config)) + "\n"
-    import hardware_metrics
-    metrics += "\n".join(hardware_metrics.collect(config["id"])) + "\n"
+    metrics += "\n".join(auxiliary_metrics(config)) + "\n"
     if config.get("judge_metrics"):
         import judge_metrics
         metrics += "\n".join(judge_metrics.collect(config["judge_metrics"], now)) + "\n"

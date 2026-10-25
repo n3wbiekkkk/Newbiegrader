@@ -265,35 +265,15 @@ def _retention_health() -> tuple[bool, str]:
 
 
 def _extra_health_checks(raw: str) -> list[dict]:
-    """Optional private HTTPS apps, using no login cookies or credentials."""
+    """Optional private-service checks are owned by the homeserver repository."""
     if not raw:
         return []
     try:
-        endpoints = json.loads(raw)
-        if not isinstance(endpoints, dict) or len(endpoints) > 8:
-            raise ValueError("invalid optional endpoints")
-        checks = []
-        for label, url in endpoints.items():
-            if not isinstance(url, str):
-                raise ValueError("invalid optional health endpoint")
-            parsed = urllib.parse.urlsplit(url)
-            if (not isinstance(label, str) or not 1 <= len(label) <= 40
-                    or parsed.scheme != "https" or not parsed.hostname
-                    or parsed.username or parsed.password or parsed.query or parsed.fragment):
-                raise ValueError("unsafe optional health endpoint")
-            try:
-                value = _get_json(url)
-                ok = (isinstance(value, dict) and value.get("installed") is True
-                      and value.get("maintenance") is False and value.get("needsDbUpgrade") is False)
-                checks.append({"name": "service " + label, "ok": ok,
-                               "detail": "HTTPS application ready" if ok else "application not ready"})
-            except Exception:
-                checks.append({"name": "service " + label, "ok": False,
-                               "detail": "HTTPS service unavailable"})
-        return checks
-    except (ValueError, TypeError):
+        from private_service_health import collect_checks as private_checks
+        return private_checks(raw)
+    except Exception:
         return [{"name": "optional health configuration", "ok": False,
-                 "detail": "invalid private service health configuration"}]
+                 "detail": "private service health integration unavailable"}]
 
 
 def collect_checks() -> list[dict]:
