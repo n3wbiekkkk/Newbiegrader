@@ -8,9 +8,11 @@ Current source fingerprint: `1ebfe1d7fc64156c913b56fbdd4282a7cf8598b1b9c7135396c
 
 - **Frontend:** Cloudflare Pages, `https://newbiegrader.pages.dev`, vanilla SPA.
 - **Transport:** same-origin Pages Function → private `newbiegrader-pc-production`
-  Worker → VPC service `newbiegrader-pc-api` → named `newbiegrader-pc` QUIC tunnel
+  Worker → VPC service `newbiegrader-pc-api` → dedicated `newbiegrader-home-api` QUIC tunnel
   → loopback Nginx port 8081 → FastAPI port 8000. The origin has no public HTTP
-  listener and no retired-host fallback.
+  listener and no retired-host fallback. Worker/service labels retain their PC
+  names for binding compatibility. The old PC tunnel is no longer this API's
+  destination, so returning PC workers cannot introduce an older serving API.
 - **Backend:** temporarily Ubuntu 24.04 x86_64 homeserver, Ryzen 3 4300U
   (four cores), about 3.2 GiB RAM; dedicated Python 3.13 venv. The main PC is
   powered off. Its existing four-worker allocation is retained for recovery.
@@ -34,7 +36,7 @@ Current source fingerprint: `1ebfe1d7fc64156c913b56fbdd4282a7cf8598b1b9c7135396c
   17-case jobs take 2.82–3.03 seconds; public Python/C/C++ checks observed
   3.75–4.81 seconds from submit to result. Larger jobs retain their actual
   runtime; these are prior PC measurements, not homeserver capacity results.
-  Homeserver HTTPS smoke checks completed in 5.09–5.57 seconds per 17-case job after the launch update.
+  Homeserver HTTPS smoke checks completed in 5.73–7.35 seconds per 17-case job after the dedicated transport switch.
   See the [PC measurements](releases/pc-execution-performance-2026-10-22.json) and
   [homeserver recovery record](releases/homeserver-recovery-2026-10-25.json).
 - **Availability:** boot-enabled Tailscale, API, tunnel and two workers.

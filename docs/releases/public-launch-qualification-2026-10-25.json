@@ -1,5 +1,5 @@
 {
-  "recorded_at": "2026-10-25T09:02:55.598543+00:00",
+  "recorded_at": "2026-10-25T09:19:44.607119+00:00",
   "status": "backend_activated",
   "grader_version": "2.0.8",
   "candidate_build_sha256": "1ebfe1d7fc64156c913b56fbdd4282a7cf8598b1b9c7135396c0cdfdb9ba2ce2",
@@ -158,11 +158,58 @@
     "running": 0
   },
   "committed_archive_sha256": "92ba021ac580aa921f66e6ba237762157e3d4d9d724bbc90923b370692939fc3",
-  "frontend_scope": "Privacy copy reviewed locally in light/dark themes; released by the accompanying main push. Hosted verification follows that deployment.",
+  "frontend_scope": "Hosted Privacy and queue FAQ verified after Pages publication on 25 October; both themes reviewed. FAQ describes the stable queue limit without a fixed worker-count claim.",
   "post_activation_protected_files": {
     "problems": 100,
     "cases": 1814,
     "pdfs": 100,
     "passed": true
+  },
+  "dedicated_api_origin": {
+    "checked_at": "2026-10-25T09:19:08.235475+00:00",
+    "tunnel": "newbiegrader-home-api",
+    "pc_tunnel_is_api_destination": false,
+    "vpc_service_binding_preserved": true,
+    "only_loopback_origin": true,
+    "new_credentials_in_successful_encrypted_backup": true,
+    "public_checks_passed": 10,
+    "pc_worker_target": 4,
+    "home_worker_target": 2
+  },
+  "post_transport_https": {
+    "fresh_provider_login": false,
+    "external_messages_sent": false,
+    "host": "newbie",
+    "workers": 2,
+    "build_sha256": "1ebfe1d7fc64156c913b56fbdd4282a7cf8598b1b9c7135396c0cdfdb9ba2ce2",
+    "anonymous_boundary": true,
+    "authenticated_member_reads": true,
+    "public_jobs": [
+      {
+        "language": "python",
+        "accepted": true,
+        "passed": 17,
+        "history_verified": true,
+        "seconds": 7.35
+      },
+      {
+        "language": "c",
+        "accepted": true,
+        "passed": 17,
+        "history_verified": true,
+        "seconds": 5.84
+      },
+      {
+        "language": "cpp",
+        "accepted": true,
+        "passed": 17,
+        "history_verified": true,
+        "seconds": 5.73
+      }
+    ],
+    "copied_session_rejected_after_logout": true,
+    "passed": true,
+    "temporary_family_revoked": true,
+    "checked_at": "2026-10-25T09:16:58.117423+00:00"
   }
 }

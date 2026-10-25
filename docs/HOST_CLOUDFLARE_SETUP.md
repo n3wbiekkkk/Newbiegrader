@@ -3,8 +3,16 @@
 Requests follow Pages Function → private Worker service binding → one VPC
 Service → named tunnel → loopback Nginx (8081) → FastAPI (8000). No public origin
 HTTP listener is required. Production uses `newbiegrader-pc-production` and the
-`newbiegrader-pc` tunnel. A separate gated staging Pages project is used for
+dedicated `newbiegrader-home-api` tunnel on the homeserver. The existing Worker
+and VPC service labels retain their PC names for binding compatibility. A separate gated staging Pages project is used for
 qualification; it is not a production dependency.
+
+As of 2026-10-25, the VPC service selects only the homeserver's own tunnel ID.
+The PC's original tunnel is no longer the API destination: powering the PC back
+on can restore its four database workers without routing public requests to its
+older API release. The homeserver keeps two workers, for an approved six-worker
+target; the actual six-worker fleet still requires live verification. No origin
+listener was opened beyond loopback and the retired AWS route was untouched.
 
 The bridge fixes its VPC destination and requires a server-side shared key for
 all API paths except anonymous health. Pages strips incoming proxy/staging keys,
