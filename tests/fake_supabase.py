@@ -314,7 +314,7 @@ class _AuthRPC:
         if self.name == "auth_email_budget":
             now = dt.datetime.now(dt.timezone.utc).timestamp()
             email, network = p["p_email_key"], p["p_network_key"]
-            limits = ([("send:global", 100, 86400), ("send:network:" + network, 50, 3600),
+            limits = ([("send:global", 300, 86400), ("send:network:" + network, 200, 3600),
                        ("send:hour:" + email, 5, 3600), ("send:minute:" + email, 1, 60)]
                       if p["p_action"] == "request" else
                       [("verify:global", 1000, 3600), ("verify:network:" + network, 100, 900),

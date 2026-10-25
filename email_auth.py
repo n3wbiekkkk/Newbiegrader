@@ -16,6 +16,15 @@ class Unavailable(Exception):
     pass
 
 
+class RateLimited(Unavailable):
+    def __init__(self, retry_after=60):
+        try:
+            self.retry_after = max(1, min(3600, int(retry_after)))
+        except (ValueError, TypeError):
+            self.retry_after = 60
+        super().__init__('provider rate limited')
+
+
 class InvalidCode(Exception):
     pass
 
@@ -53,6 +62,10 @@ def _post(url, key, path, body, *, verify=False):
                 raise Unavailable()
             return result
     except HTTPError as exc:
+        if exc.code == 429:
+            retry_after = exc.headers.get('Retry-After', '60') if exc.headers else '60'
+            exc.close()
+            raise RateLimited(retry_after) from None
         exc.close()
         if verify and exc.code in (400, 401, 403, 422):
             raise InvalidCode() from None

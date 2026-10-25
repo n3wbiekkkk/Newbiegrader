@@ -1,13 +1,17 @@
 # Account data and public-readiness rollout
 
-Status on 2026-10-24: the maintainer applied the lifecycle SQL and the compatible
+Status on 2026-10-25: the maintainer applied the lifecycle SQL and the compatible
 backend `c3ba9ad` is active, with queue 50 and daily account retention. See
 [the activation record](releases/account-lifecycle-2026-10-24.json). Public rollout
-qualification remains incomplete: unused-email signup was deferred by the
-operator, bulk delivery is unqualified, and off-host backup retention and erasure
-reconciliation still require completion.
+qualification now includes a real unused-email signup confirmed by the operator,
+50 verification messages received in a controlled Gmail inbox, off-host scheduled
+backup cleanup and offline PostgreSQL erasure reconciliation. See the
+[dated qualification and its limits](releases/public-launch-qualification-2026-10-25.json).
+Pending source changes are separately qualified and have not replaced that running
+application. The backend currently runs on the homeserver with two workers while
+the PC is powered off; see [emergency recovery](releases/homeserver-recovery-2026-10-25.json).
 The Thai [privacy page](../static/privacy.html), [terms](../static/terms.html)
-and [FAQ](../static/faq.html) explicitly identify the features awaiting activation.
+and [FAQ](../static/faq.html) describe the available account controls and operator contact.
 
 ## Approved policy
 
@@ -91,9 +95,12 @@ the visibility-filtered slug list. `/api/problems` continues to require login.
 ## Queue behavior
 
 The active host and env examples set `GRADER_QUEUE_MAX=50`, meaning
-50 waiting jobs in addition to the four executing workers. This changes backlog
+50 waiting jobs in addition to the active workers (currently two on the homeserver).
+This changes backlog
 capacity, not CPU/RAM budgets or a measured number of concurrent learners. The
-live API and all four worker configurations were read back at 50 during activation; CPU/RAM budgets and the signing key were preserved.
+PC API and all four worker configurations were read back at 50 during the original
+activation. Homeserver recovery preserved the queue limit and signing key with
+the separately approved two-worker resource allocation.
 
 Only a 503 carrying `X-Newbiegrader-Admission: rejected-queue-full` permits the
 frontend to resend. It honors `Retry-After`, increases the delay, adds jitter and
@@ -114,9 +121,9 @@ Unclassified 503s, network errors and ambiguous responses never replay a POST.
 3. Install `newbiegrader-account-retention.service` and `.timer` in the systemd
    unit directory. First run `account_retention.py` without `--execute` and review
    the counts. Review expired-row counts before enabling real cleanup, then run
-   the service, enable the daily timer and inspect its exit status/journal.
+   enable/start the timer, run the service and inspect its exit status/journal.
    A failed maintenance unit is an operational failure requiring investigation;
-   the existing worker watchdog does not automatically certify this new timer.
+   the qualified watchdog checks the timer and recent successful completion.
 4. Update the scheduled backup script and verify age pruning on the private
    bucket. Inventory every off-host destination. Review
    `prune_operator_backups.py --directory <private-backup-directory>` before its

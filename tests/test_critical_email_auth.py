@@ -111,6 +111,38 @@ class EmailAuth(unittest.TestCase):
         self.assertEqual(self.client.post("/api/submit", data={
             "problem": "synthetic", "language": "python", "code": "print(0)"}).status_code, 401)
 
+    def test_mail_outage_has_a_monitor_marker_without_identity_or_provider_data(self):
+        self.sender.side_effect = email_auth.Unavailable('PRIVATE_PROVIDER_SECRET')
+        with self.assertLogs('newbiegrader.auth', level='ERROR') as captured:
+            response = self.start()
+        self.assertEqual(response.status_code, 503)
+        self.assertIsNone(self.client.get('/api/auth/me').json()['user'])
+        logs = '\n'.join(captured.output)
+        self.assertIn('email verification provider unavailable', logs)
+        self.assertNotIn(EMAIL, logs)
+        self.assertNotIn('PRIVATE_PROVIDER_SECRET', logs + response.text)
+
+    def test_provider_throttle_is_a_bounded_retry_hint_not_success_or_automatic_resend(self):
+        self.sender.side_effect = email_auth.RateLimited(90)
+        with self.assertLogs('newbiegrader.auth', level='WARNING') as captured:
+            response = self.start()
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response.headers['retry-after'], '90')
+        self.assertIn('กรุณารอ', response.json()['detail'])
+        self.assertEqual(self.sender.call_count, 1)
+        self.assertIsNone(self.client.get('/api/auth/me').json()['user'])
+        self.assertNotIn(EMAIL, '\n'.join(captured.output))
+
+    def test_verification_provider_throttle_keeps_challenge_without_issuing_identity(self):
+        self.start()
+        self.verifier.side_effect = email_auth.RateLimited('invalid-private-provider-text')
+        with self.assertLogs('newbiegrader.auth', level='WARNING'):
+            response = self.finish()
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response.headers['retry-after'], '60')
+        self.assertNotIn('invalid-private-provider-text', response.text)
+        self.assertIsNone(self.client.get('/api/auth/me').json()['user'])
+
     def test_verified_owner_chooses_password_and_history_owner_never_changes(self):
         self.db.rows("submissions").append({"user_email": EMAIL, "id": "synthetic-history"})
         self.start(password=OLD_PASSWORD)
@@ -337,6 +369,20 @@ class ProviderTransport(unittest.TestCase):
         opener = Mock()
         opener.open.return_value = io.BytesIO(json.dumps(payload).encode())
         return patch.object(email_auth, "build_opener", return_value=opener), opener
+
+    def test_provider_retry_header_is_bounded_and_body_never_read(self):
+        for hint, expected in (('90', 90), ('999999', 3600), ('-1', 1),
+                               ('PRIVATE_PROVIDER_TEXT', 60)):
+            body, opener = Mock(), Mock()
+            opener.open.side_effect = HTTPError('https://synthetic.invalid', 429,
+                                                'private error', {'Retry-After': hint}, body)
+            with patch.object(email_auth, 'build_opener', return_value=opener):
+                with self.assertRaises(email_auth.RateLimited) as captured:
+                    email_auth.request_code('https://synthetic.supabase.co', 'synthetic-public', EMAIL)
+            self.assertEqual(captured.exception.retry_after, expected)
+            self.assertNotIn('private error', str(captured.exception))
+            body.read.assert_not_called()
+            body.close.assert_called_once()
 
     def test_delete_identity_is_hard_delete_and_does_not_read_error_bodies(self):
         context, opener = self.post_response({})

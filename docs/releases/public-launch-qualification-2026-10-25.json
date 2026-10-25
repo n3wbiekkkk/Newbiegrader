@@ -1,0 +1,102 @@
+{
+  "recorded_at": "2026-10-25T08:50:15.806863+00:00",
+  "status": "source_candidate_qualified_pending_publication",
+  "grader_version": "2.0.8",
+  "candidate_build_sha256": "1ebfe1d7fc64156c913b56fbdd4282a7cf8598b1b9c7135396c0cdfdb9ba2ce2",
+  "candidate_base_commit": "ec8994423a6da7835c06215e7dc1b16d56e6735b",
+  "running_build_sha256": "8c548584ece552a55ab155514f8dd78486f67496a95fb76116e69bb774e7777f",
+  "live_checks": {
+    "fresh_signup": {
+      "date": "2026-10-25",
+      "previous_app_and_auth_identity_absent": true,
+      "otp_and_password_entered_by_user": true,
+      "user_confirmed_authenticated_access": true,
+      "verified_mapping_read_back": true
+    },
+    "email_delivery": {
+      "started_at": "2026-10-25T03:48:19.984229+00:00",
+      "completed_at": "2026-10-25T03:55:25.105797+00:00",
+      "accepted_initially": 48,
+      "accepted_after_wait": 2,
+      "receipt": "user confirmed all 50 messages received in controlled Gmail inbox",
+      "invalid_address_status": 400,
+      "immediate_duplicate_status": 429,
+      "initial_49th_request_status": 429,
+      "temporary_auth_identities_deleted": 50,
+      "remaining_temporary_auth_identities": 0,
+      "existing_real_accounts_preserved": true,
+      "scope": "50 aliases in one controlled Gmail inbox; not 50 browser signups or diverse-provider deliverability"
+    },
+    "approved_email_limits": {
+      "provider_emails_per_hour": 100,
+      "app_requests_per_day": 300,
+      "network_requests_per_hour": 200,
+      "email_requests_per_hour": 5,
+      "email_resend_interval_seconds": 60,
+      "sql_applied_by_maintainer_and_read_back": true,
+      "provider_ip_token_bucket_still_applies": true
+    },
+    "operator_backup_retention": {
+      "reviewed_archives": 50,
+      "schedule_seconds": 3600,
+      "initial_expired": 0,
+      "initial_deleted": 0,
+      "last_exit": 0,
+      "encryption_identity_and_source_archives_excluded": true,
+      "other_destinations": "operator confirmed no other user-data copies",
+      "offline_operator_machine": "cleanup resumes after it comes online"
+    },
+    "guardian_requests": "operator accepted responsibility for manual process; no automated age/guardian verification claimed"
+  },
+  "restore_rehearsal": {
+    "postgres_major": 17,
+    "private_unix_socket_only": true,
+    "schema_idempotence_and_real_sql_concurrency": true,
+    "synthetic_all_owned_tables_and_sessions_erased": true,
+    "pending_provider_work_and_counts_only_audit_preserved": true,
+    "old_encrypted_archive_authenticated": true,
+    "old_archive_tables_restored_in_isolation": 12,
+    "matching_deleted_identities_in_actual_old_archive": 0,
+    "repeat_execution_idempotent": true,
+    "production_database_modified": false,
+    "scope": "application rows only; hosted Auth/Storage/PITR recovery separate"
+  },
+  "candidate_tests": {
+    "linux_python": "3.13",
+    "critical": {
+      "passed": 384,
+      "skips": 0
+    },
+    "full_suite": {
+      "passed": 629,
+      "skips": 0
+    },
+    "node": {
+      "passed": 194,
+      "skips": 0
+    },
+    "dependency_audits": [
+      "requirements.txt: no known vulnerabilities",
+      "host lock: no known vulnerabilities",
+      "packaged image: no known vulnerabilities"
+    ],
+    "catalog": {
+      "problems_passed": 100,
+      "failures": 0,
+      "warnings": 0
+    },
+    "provenance": "Python 3.11/3.13 share original rendering-source provenance; no problem/PDF byte changes",
+    "ui_copy": "privacy retention and deletion scope checked in desktop light/dark themes",
+    "plagiarism_self_test": "passed",
+    "fixture_setup": "Private reference readability normalized only inside the disposable credential-free test container; operator files and production restrictions unchanged."
+  },
+  "not_claimed": [
+    "Unlimited email capacity",
+    "Diverse-recipient Inbox delivery",
+    "Six live workers while the PC is powered off",
+    "Homeserver reboot test",
+    "Fresh Google/recovery/independent-device tests on 25 October; earlier scoped evidence remains dated 24 October",
+    "Manual guardian authorization already tested on a real minor",
+    "Source candidate backend deployed or new privacy copy already published"
+  ]
+}

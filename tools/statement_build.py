@@ -34,11 +34,36 @@ def renderer_source(path: Path) -> bytes:
     """
     raw = path.read_bytes()
     try:
-        tokens = [tok for tok in tokenize.tokenize(io.BytesIO(raw).readline)
-                  if tok.type not in _IGNORED_TOKENS]
+        tokens = list(tokenize.tokenize(io.BytesIO(raw).readline))
     except (tokenize.TokenError, IndentationError, SyntaxError):
         return raw
-    return b"".join(f"{tok.type}:{tok.string}\n".encode() for tok in tokens)
+    # Python 3.12 split f-strings into multiple tokens; 3.13 also changed OP's
+    # numeric ID. Preserve the original 3.11 provenance for identical source.
+    # Slice complete f-strings from source so nested expressions, escaped braces
+    # and multiline strings retain every byte relevant to rendering.
+    encoding, _ = tokenize.detect_encoding(io.BytesIO(raw).readline)
+    lines = raw.decode(encoding).splitlines(keepends=True)
+    legacy = {'ENDMARKER': 0, 'NAME': 1, 'NUMBER': 2, 'STRING': 3,
+              'INDENT': 5, 'DEDENT': 6, 'OP': 54, 'ERRORTOKEN': 60}
+    result = []
+    depth = 0
+    for tok in tokens:
+        kind = tokenize.tok_name[tok.type]
+        if kind == 'FSTRING_START':
+            if depth == 0:
+                start = tok.start
+            depth += 1
+        elif kind == 'FSTRING_END':
+            depth -= 1
+            if depth == 0:
+                first, col = start
+                last, end = tok.end
+                text = ''.join(lines[first - 1:last])
+                text = text[col:len(text) - len(lines[last - 1]) + end]
+                result.append(f'3:{text}\n'.encode())
+        elif depth == 0 and tok.type not in _IGNORED_TOKENS:
+            result.append(f'{legacy.get(kind, kind)}:{tok.string}\n'.encode())
+    return b''.join(result)
 
 
 def build_record(cfg: dict, md: str, pdf: bytes) -> dict:

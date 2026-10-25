@@ -2267,7 +2267,14 @@ async def auth_register(request: Request):
     request.session.clear()
     try:
         await asyncio.to_thread(email_auth.request_code, *config, email)
+    except email_auth.RateLimited as exc:
+        logging.getLogger("newbiegrader.auth").warning("email verification provider rate limited")
+        raise HTTPException(status_code=429, detail="มีผู้ขอรหัสยืนยันจำนวนมาก กรุณารอสักครู่แล้วขอรหัสใหม่",
+                            headers={"Retry-After": str(exc.retry_after)}) from None
     except email_auth.Unavailable:
+        # A stable, credential-free marker lets the existing host watchdog
+        # detect SMTP/provider failures without recording recipient or OTP.
+        logging.getLogger("newbiegrader.auth").error("email verification provider unavailable")
         raise HTTPException(status_code=503, detail="email verification unavailable") from None
     request.session["email_challenge"] = {"email": email, "issued_at": int(time.time())}
     resp = _json_response({"ok": True, "verification_required": True,
@@ -2299,7 +2306,12 @@ async def auth_email_verify(request: Request):
         subject = await asyncio.to_thread(email_auth.verify_code, *config, email, code)
     except email_auth.InvalidCode:
         raise HTTPException(status_code=400, detail="invalid or expired verification code") from None
+    except email_auth.RateLimited as exc:
+        logging.getLogger("newbiegrader.auth").warning("email verification provider rate limited")
+        raise HTTPException(status_code=429, detail="ตรวจรหัสยืนยันถี่เกินไป กรุณารอสักครู่แล้วลองใหม่",
+                            headers={"Retry-After": str(exc.retry_after)}) from None
     except email_auth.Unavailable:
+        logging.getLogger("newbiegrader.auth").error("email verification provider unavailable")
         raise HTTPException(status_code=503, detail="email verification unavailable") from None
     # Consumed OTP + failed DB write requires a fresh code; never trust a replay.
     request.session.clear()

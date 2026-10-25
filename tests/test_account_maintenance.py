@@ -10,7 +10,8 @@ from unittest.mock import Mock, patch
 from types import SimpleNamespace
 from deploy.host import account_retention
 
-from deploy.host.prune_operator_backups import expired_archives
+from deploy.host.prune_operator_backups import expired_archives, reviewed_archives
+import hashlib
 
 spec = importlib.util.spec_from_file_location('scheduled_backup',
     Path(__file__).resolve().parents[1] / 'deploy/host/newbiegrader-backup.py')
@@ -19,6 +20,60 @@ spec.loader.exec_module(backup)
 
 
 class BackupRetention(unittest.TestCase):
+    def test_reviewed_historical_formats_require_matching_hash_and_stay_inside_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            root.chmod(0o700)
+            archive = root / 'old-snapshot.dump.age'
+            archive.write_bytes(b'synthetic encrypted archive')
+            manifest = root / 'reviewed.json'
+            row = {'path': archive.name, 'created_at': '2000-01-01T00:00:00Z',
+                   'sha256': hashlib.sha256(archive.read_bytes()).hexdigest()}
+            def save(rows):
+                manifest.write_text(json.dumps({'format': 1, 'archives': rows}))
+                manifest.chmod(0o600)
+            save([row])
+            self.assertEqual(reviewed_archives(root, manifest), [archive])
+            archive.write_bytes(b'changed')
+            with self.assertRaises(ValueError):
+                reviewed_archives(root, manifest)
+            for name in ('../escape.tar.age', '/escape.tar.age', 'backup-identity.txt',
+                         'backup-identity.tar.age', 'allocated-uids.tar.age'):
+                save([{**row, 'path': name}])
+                with self.assertRaises(ValueError):
+                    reviewed_archives(root, manifest)
+            link = root / 'link'
+            link.symlink_to(root, target_is_directory=True)
+            save([{**row, 'path': 'link/' + archive.name}])
+            with self.assertRaises(ValueError):
+                reviewed_archives(root, manifest)
+            save([row, row])
+            with self.assertRaises(ValueError):
+                reviewed_archives(root, manifest)
+            archive.unlink()
+            save([row])
+            self.assertEqual(reviewed_archives(root, manifest), [])
+
+    def test_reviewed_canonical_directories_cover_future_archives_without_following_symlinks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            root.chmod(0o700)
+            canonical = root / 'host-backups'
+            canonical.mkdir(mode=0o700)
+            future = canonical / '20000101T000000Z-backup.tar.age'
+            future.write_bytes(b'synthetic encrypted archive')
+            (canonical / '20000101T000000Z-authoring-source.tar.age').write_bytes(b'preserve source')
+            (canonical / '20000101T000000Z-allocated-uids.tar.age').write_bytes(b'preserve ledger')
+            manifest = root / 'reviewed.json'
+            manifest.write_text(json.dumps({'format': 1, 'archives': [],
+                                           'canonical_directories': ['host-backups']}))
+            manifest.chmod(0o600)
+            self.assertEqual(reviewed_archives(root, manifest), [future])
+            canonical.rename(root / 'real')
+            canonical.symlink_to(root / 'real', target_is_directory=True)
+            with self.assertRaises(ValueError):
+                reviewed_archives(root, manifest)
+
     def test_local_expiration_preserves_identity_unknown_files_and_symlinks(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -60,7 +115,9 @@ class BackupRetention(unittest.TestCase):
     def test_account_migration_stays_appended_and_server_only(self):
         root = Path(__file__).resolve().parents[1]
         sql = (root / 'supabase/account_lifecycle.sql').read_text()
-        self.assertTrue((root / 'supabase/schema.sql').read_text().endswith(sql))
+        schema = (root / 'supabase/schema.sql').read_text()
+        self.assertIn(sql, schema)
+        self.assertTrue(schema.endswith((root / 'supabase/auth_email_capacity.sql').read_text()))
         self.assertNotIn('security definer', sql)
         self.assertIn("interval '1 year'", sql)
         self.assertIn("interval '90 days'", sql)

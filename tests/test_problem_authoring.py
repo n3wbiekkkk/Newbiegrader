@@ -1,6 +1,7 @@
 """Authoring contract regressions; synthetic data only, no local problems/ needed."""
 from contextlib import ExitStack, redirect_stdout, redirect_stderr
 import io
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -14,7 +15,27 @@ from tools import import_problems_supabase as importer
 from tools import make_statement_tex as renderer
 from tools import problem_authoring as author
 from tools import validate_problem as validator
-from tools.statement_build import build_record, check_build
+from tools.statement_build import build_record, check_build, renderer_source
+
+
+class RendererProvenance(unittest.TestCase):
+    def test_nested_multiline_fstrings_keep_the_python311_provenance(self):
+        source = 'value = f"ด่าน {n:03d}: {f\'{x + 1}\'}"\ntext = f"""first {x}\nsecond {{x}}"""\n'
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'renderer.py'
+            path.write_text(source, encoding='utf-8')
+            # Recorded from the original Python 3.11 tokenizer, not recomputed
+            # with the implementation under test. CI runs this on Python 3.13.
+            self.assertEqual(hashlib.sha256(renderer_source(path)).hexdigest(),
+                             '774e95cfffa4feb2b59960931e0033cafa0bc6e44f359481d3c13706d017cf06')
+            path.write_text('# licence\n' + source, encoding='utf-8')
+            original = renderer_source(path)
+            path.write_text(source, encoding='utf-8')
+            self.assertEqual(renderer_source(path), original)
+            for change in (source.replace('03d', '04d'), source.replace('x + 1', 'x + 2'),
+                           source.replace('{{x}}', '{{y}}')):
+                path.write_text(change, encoding='utf-8')
+                self.assertNotEqual(renderer_source(path), original)
 
 
 # Deliberately independent grammar: small integer grid and trailing step count.

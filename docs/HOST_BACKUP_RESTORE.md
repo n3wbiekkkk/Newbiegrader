@@ -87,13 +87,32 @@ outside that rehearsal.
 
 The [account-data runbook](ACCOUNT_DATA.md) defines the candidate one-year history,
 90-day audit/deletion-block and 30-day encrypted-backup policy. Its migration and
-maintenance schedule are not yet production-qualified. The scheduled backup
-candidate now prunes its own recognized archives by age as well as count and
+daily account maintenance were activated on 2026-10-24. The scheduled backup
+now prunes its own recognized archives by age as well as count and
 fails visibly if pruning fails. Off-host destinations require their own reviewed
 cleanup; unknown filenames and backup identities are never removed automatically.
+
+Enable/start `newbiegrader-account-retention.timer` before the initial manual
+maintenance run, then verify the service completed successfully with a nonzero
+`ExecMainExitTimestampMonotonic`. A finished, unreferenced oneshot can be unloaded
+by systemd and lose that timestamp. Do not use `RemainAfterExit=yes`: an active
+oneshot would prevent the next calendar activation from running maintenance.
+The watchdog requires a successful completion within 36 hours and an active timer.
+The timer also runs maintenance shortly after boot so a reboot does not wait
+until the next daily calendar event to establish that proof or retry pending work.
+
+For historical encrypted filenames, `prune_operator_backups.py --manifest
+<private-reviewed-manifest>` accepts an explicit inventory of relative paths,
+creation times and SHA256 checksums. Only reviewed archive types are eligible;
+changed files, symlink paths and invalid manifests stop cleanup. Reviewed
+`canonical_directories` additionally cover future `YYYYMMDDTHHMMSSZ-backup.tar.age` exports in those
+private directories. Keep the manifest private and review the exact deletion set
+before enabling `--execute`. Source authoring packages and the live decryption
+identity/UID ledger are operational material, not cleanup candidates.
 
 An old backup can contain an account deleted after that snapshot. Preserve the
 latest deletion blocks, pending work and matching privacy salt, reconcile erased
 accounts before reopening, and restore no sessions. If deletion state is missing,
-stop restoration for operator resolution. The older recovery rehearsals above do
-not qualify this new erasure-reconciliation step.
+stop restoration for operator resolution. Follow
+[the offline erasure reconciliation gate](RESTORE_ERASURE.md), including a fresh
+independent deletion snapshot, count review and removal of every old session.

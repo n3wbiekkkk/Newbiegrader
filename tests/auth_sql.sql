@@ -63,15 +63,26 @@ begin
 
   -- Isolated test transaction: existing fixture rows are restored by rollback.
   delete from public.auth_rate_buckets;
-  for i in 1..100 loop
+  for i in 1..300 loop
     r := public.auth_email_budget(md5('email-' || i) || md5('email-' || i),
       md5('network-' || i) || md5('network-' || i), 'request');
     if r->>'allowed' <> 'true' then raise exception 'global send budget early refusal'; end if;
   end loop;
   r := public.auth_email_budget(repeat('d',64), repeat('e',64), 'request');
-  if r->>'allowed' <> 'false' or (select count(*) from public.auth_rate_buckets) <> 301 then
+  if r->>'allowed' <> 'false' or (select count(*) from public.auth_rate_buckets) <> 901 then
     raise exception 'new addresses bypassed global budget or created rejected buckets';
   end if;
+
+  delete from public.auth_rate_buckets;
+  for i in 1..200 loop
+    r := public.auth_email_budget(md5('classroom-' || i) || md5('classroom-' || i),
+      repeat('f',64), 'request');
+    if r->>'allowed' <> 'true' then raise exception 'classroom budget early refusal'; end if;
+  end loop;
+  r := public.auth_email_budget(repeat('d',64),repeat('f',64),'request');
+  if r->>'allowed' <> 'false' then raise exception 'classroom exceeded 200/hour'; end if;
+  r := public.auth_email_budget(repeat('d',64),repeat('e',64),'request');
+  if r->>'allowed' <> 'true' then raise exception 'classroom cap blocked another network'; end if;
 
   if has_table_privilege('anon', 'public.auth_rate_buckets', 'select')
      or has_table_privilege('authenticated', 'public.auth_rate_buckets', 'select') then
