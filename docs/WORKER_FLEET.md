@@ -33,8 +33,11 @@ It observes local active supervisors and marks readiness conservatively when
 recent worker transport errors or unreadable journals prevent confirmation.
 It writes numeric node metrics atomically and reads bounded peer responses.
 Peer collection timestamps, finite integral counts and configured bounds are
-checked. No database credential, user identity, submission, source, test data or
-compiler diagnostic is included. This is operational observation, not a fresh
+checked. No database credential, user identity, source, test data or compiler diagnostic
+is included in exported metrics. An optional privileged collector reads bounded
+allowlisted job/submission fields and exports aggregate queue counts, recent
+processing percentiles, verdict counts and infrastructure errors. It never
+passes credentials to child processes. This is operational observation, not a fresh
 provider-login test or an end-to-end guarantee that every worker can judge.
 
 Use root-owned directories; snapshots should be root:API-group 0640. The reader
@@ -54,7 +57,7 @@ the dashboard containers.
 
 | Node | Responsibility | Worker allocation |
 | --- | --- | --- |
-| ubuntu-pc | Native judge workers, private Homepage, Prometheus and Grafana | 10 × one CPU / 1 GiB, aggregate 10 CPUs / 10 GiB |
+| ubuntu-pc | Native judge workers, private Homepage, Prometheus, Grafana and fresh Nextcloud Files | 10 × one CPU / 1 GiB, aggregate 10 CPUs / 10 GiB |
 | homeserver | FastAPI, Nginx/private tunnel, durable-queue workers, account retention, backups and existing alerts/presence | 2 × one CPU / 1 GiB, aggregate two CPUs / 2 GiB; API separate one CPU / 320 MiB |
 
 Both machines have an OS exporter and a bounded fleet observer. The homeserver
@@ -69,12 +72,36 @@ the other node can observe the PC and report zero ready PC workers. Central
 monitor dashboards are unavailable while their PC host is in Desktop Mode or
 offline. The homeserver API and two workers continue independently.
 
-Nextcloud and AdGuard remain stopped with their existing data retained; this
-rollout does not migrate them or change DNS. Existing external alert routing is
+The old Nextcloud and AdGuard on the homeserver remain stopped with their data
+retained. A fresh Nextcloud Files stack on the PC uses MariaDB, Redis locking and
+a five-minute cron. It is available through private Tailscale Serve HTTPS, with
+only a loopback app port and no published database/Redis ports. The primary user
+has a 350 GiB quota (future accounts default to 50 GiB); these are application
+quotas on the existing data filesystem, not new partitions. Its separate cgroup
+is limited to 2 GiB / 1.5 CPUs. PC workers retain their ten-slot allocation.
+Desktop Mode stops the cloud stack alongside Docker. No Office or other optional
+apps were installed. An encrypted initial cloud/configuration checkpoint was
+verified off-host; ongoing personal-file backups still need a destination and
+schedule. The existing judge backup does not cover future Nextcloud uploads.
+
+Hardware graphs use existing kernel sensors for CPU/GPU temperatures, GPU power
+and SSD temperature, plus exporter disk throughput, utilization and latency.
+SMART tools were declined, so temperature and I/O do not prove SSD health. Judge
+statistics cover at most 1,000 rows created in the last hour; processing
+percentiles exclude playground runs, and empty/failed collection is not zero
+latency. Truncated windows and unavailable collection are explicit.
+
+The always-on homeserver watchdog also checks the PC Nextcloud HTTPS endpoint,
+using the existing transition-only alert channel. It can detect cloud downtime
+when the PC is offline, while the central dashboards themselves are unavailable.
+Its fixed private hostname has a local hosts entry because this node does not
+resolve the tailnet hostname through its existing DNS configuration. Existing external alert routing is
 preserved. Prometheus alert rules are visible locally; no new notification
 receiver is configured by this monitoring stack.
 
 For recovery, preserve the newest UID ledger and current session key, back up
 configuration, pause/drain before switching application releases, and qualify the
 new release before reopening. Monitor configuration and Grafana state need their
-own backup; graph history can be rebuilt, but it is not a database backup.
+own backup; graph history can be rebuilt, but it is not a database backup. The
+existing PC configuration checkpoint now includes monitor/cloud configuration;
+this still does not back up future cloud uploads or a consistent cloud database.

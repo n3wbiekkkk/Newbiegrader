@@ -264,6 +264,38 @@ def _retention_health() -> tuple[bool, str]:
         return False, "retention completion unavailable"
 
 
+def _extra_health_checks(raw: str) -> list[dict]:
+    """Optional private HTTPS apps, using no login cookies or credentials."""
+    if not raw:
+        return []
+    try:
+        endpoints = json.loads(raw)
+        if not isinstance(endpoints, dict) or len(endpoints) > 8:
+            raise ValueError("invalid optional endpoints")
+        checks = []
+        for label, url in endpoints.items():
+            if not isinstance(url, str):
+                raise ValueError("invalid optional health endpoint")
+            parsed = urllib.parse.urlsplit(url)
+            if (not isinstance(label, str) or not 1 <= len(label) <= 40
+                    or parsed.scheme != "https" or not parsed.hostname
+                    or parsed.username or parsed.password or parsed.query or parsed.fragment):
+                raise ValueError("unsafe optional health endpoint")
+            try:
+                value = _get_json(url)
+                ok = (isinstance(value, dict) and value.get("installed") is True
+                      and value.get("maintenance") is False and value.get("needsDbUpgrade") is False)
+                checks.append({"name": "service " + label, "ok": ok,
+                               "detail": "HTTPS application ready" if ok else "application not ready"})
+            except Exception:
+                checks.append({"name": "service " + label, "ok": False,
+                               "detail": "HTTPS service unavailable"})
+        return checks
+    except (ValueError, TypeError):
+        return [{"name": "optional health configuration", "ok": False,
+                 "detail": "invalid private service health configuration"}]
+
+
 def collect_checks() -> list[dict]:
     """Every check returns {name, ok, detail}. No check may raise."""
     checks: list[dict] = []
@@ -347,6 +379,7 @@ def collect_checks() -> list[dict]:
         except Exception as exc:
             add("public HTTPS", False, type(exc).__name__ + ": public transport unavailable")
 
+    checks.extend(_extra_health_checks(os.environ.get("NEWBIEGRADER_EXTRA_HEALTH_URLS", "")))
     return checks
 
 

@@ -2,7 +2,8 @@
 
 Current production is Cloudflare Pages with a private tunnel to the homeserver API,
 ten isolated workers on ubuntu-pc and two on the homeserver. The PC also hosts
-private Homepage / Prometheus / Grafana monitoring for both machines. Supabase
+private Homepage / Prometheus / Grafana monitoring for both machines and a fresh
+Nextcloud Files stack. Supabase
 retains metadata, identities, history and the durable queue. The engine remains
 2.0.8 / Python 3.13.17. The fleet-reporting source fingerprint is
 `15cd08f34384a26e6c8217102be4a2580b47d7810b16b40d6059ca026f511b12`; the [fleet qualification](releases/worker-fleet-2026-10-25.json)

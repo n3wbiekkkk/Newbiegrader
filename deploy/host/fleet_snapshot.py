@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Observe named local services and peer metrics without database credentials."""
+"""Observe service/peer health; optional privileged metrics export aggregates only."""
 import argparse
 import json
 import math
@@ -60,6 +60,34 @@ def peer_node(peer, now):
         return unavailable
 
 
+def app_metrics(config):
+    lines = []
+    for name, app in config.get("apps", {}).items():
+        if not re.fullmatch(r"[a-z0-9_-]{1,32}", name):
+            continue
+        started = time.monotonic()
+        ok = False
+        try:
+            request = urllib.request.Request(app["url"], headers={
+                "User-Agent": "Newbiegrader-fleet-observer/1", "Accept": "application/json"})
+            with urllib.request.urlopen(request, timeout=3) as response:
+                raw = response.read(16385)
+            if len(raw) > 16384:
+                raise ValueError("oversized health response")
+            value = json.loads(raw)
+            if app["kind"] == "nextcloud":
+                ok = (value.get("installed") is True and value.get("maintenance") is False
+                      and value.get("needsDbUpgrade") is False)
+            elif app["kind"] == "grader":
+                ok = value.get("ok") is True and value.get("count") == 100
+        except (OSError, ValueError, TypeError, KeyError, AttributeError):
+            pass
+        labels = '{node=' + json.dumps(config["id"]) + ',app=' + json.dumps(name) + '}'
+        lines.extend(['newbiegrader_app_up'+labels+' '+str(int(ok)),
+                      'newbiegrader_app_response_seconds'+labels+' '+str(time.monotonic()-started)])
+    return lines
+
+
 def atomic(path, content, mode, gid=None):
     path = Path(path)
     fd, temp = tempfile.mkstemp(prefix=".snapshot-", dir=path.parent)
@@ -88,6 +116,12 @@ def main():
         'newbiegrader_node_workers_configured' + label + ' ' + str(node['configured_workers']),
         'newbiegrader_node_snapshot_seconds' + label + ' ' + str(now),
     ]) + "\n"
+    metrics += "\n".join(app_metrics(config)) + "\n"
+    import hardware_metrics
+    metrics += "\n".join(hardware_metrics.collect(config["id"])) + "\n"
+    if config.get("judge_metrics"):
+        import judge_metrics
+        metrics += "\n".join(judge_metrics.collect(config["judge_metrics"], now)) + "\n"
     atomic(config["metrics_file"], metrics, 0o644)
     nodes = [node] + [peer_node(peer, now) for peer in config["peers"]]
     snapshot = {"schema": 1, "checked_at": now, "nodes": sorted(nodes, key=lambda n: n["id"])}

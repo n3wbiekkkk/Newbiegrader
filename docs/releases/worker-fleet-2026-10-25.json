@@ -47,7 +47,44 @@
     "no_admission_or_execution_budget_change": true
   },
   "activation": {
-    "verified": false,
-    "note": "Qualification artifact; operational activation is recorded after live checks."
+    "verified": true,
+    "source_commit": "0f846ee66bd8d8fb1ba1b6004b24f35769e57815",
+    "ready_workers": 12,
+    "preflights": 12,
+    "native_pc_isolation_tests": 12,
+    "native_pc_skipped": 0,
+    "https_submissions": {
+      "python": "AC 17/17",
+      "c": "AC 17/17",
+      "cpp": "AC 17/17"
+    },
+    "peer_exporter_outage_display": 2,
+    "peer_exporter_recovery_display": 12,
+    "session_key_preserved": true,
+    "database_ddl_changed": false,
+    "monitor_mode_stop_start_verified": true,
+    "nextcloud_mode_reboot_tested": false
+  },
+  "monitor_extension_qualification": {
+    "linux_full": {
+      "tests": 653,
+      "skipped": 0,
+      "passed": true
+    },
+    "linux_critical": {
+      "tests": 384,
+      "skipped": 0,
+      "passed": true
+    },
+    "hardware_sensors_both_nodes": true,
+    "app_health_both_services": true,
+    "nextcloud_webdav_put_get_delete": true,
+    "nextcloud_version": "34.0.5",
+    "nextcloud_quota_gib": 350,
+    "encrypted_initial_checkpoint_off_host_readable": true,
+    "ongoing_personal_file_backup_configured": false,
+    "smart_tools_installed": false,
+    "watchdog_check_only": true,
+    "test_alert_messages_sent": false
   }
 }
