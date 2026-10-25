@@ -1,23 +1,23 @@
 # Documentation
 
-Current production is Cloudflare Pages with a private tunnel to a temporary Ubuntu
-homeserver running two isolated workers and a separate API while the main PC is off.
-The approved return target is PC four + homeserver two workers; that six-worker
-fleet has not yet been verified live. Supabase retains metadata,
-identities, history and the durable queue. The current verified application code
-is `97985ed0e1d0bb8e9f5cd7a62b8362a1a2a2d4b8` (2026-10-25), grader 2.0.8 / Python 3.13.17. Documentation-only
-updates can follow that release without changing the running application.
-Current source fingerprint: `1ebfe1d7fc64156c913b56fbdd4282a7cf8598b1b9c7135396c0cdfdb9ba2ce2`. See the [25 October activation](releases/public-launch-qualification-2026-10-25.json). Historical qualification dates below retain their original scope.
-
+Current production is Cloudflare Pages with a private tunnel to the homeserver API,
+ten isolated workers on ubuntu-pc and two on the homeserver. The PC also hosts
+private Homepage / Prometheus / Grafana monitoring for both machines. Supabase
+retains metadata, identities, history and the durable queue. The engine remains
+2.0.8 / Python 3.13.17. The fleet-reporting source fingerprint is
+`15cd08f34384a26e6c8217102be4a2580b47d7810b16b40d6059ca026f511b12`; the [fleet qualification](releases/worker-fleet-2026-10-25.json)
+records tests and deployment separately. Earlier release records retain their
+historical scope. See [fleet observation and monitoring](WORKER_FLEET.md).
 
 ## Operating the current deployment
 
 | Topic | Guide |
 | --- | --- |
 | Topology, catalog, services and allocations | [Production architecture](PRODUCTION_ARCHITECTURE.md) |
-| Installation, four-worker activation, precompilation and boot recovery | [Host deployment](HOST_DEPLOYMENT.md) |
+| Native installation, precompilation and boot recovery | [Host deployment](HOST_DEPLOYMENT.md) |
 | Pages/Worker/VPC/tunnel transport and staging boundary | [Private Cloudflare transport](HOST_CLOUDFLARE_SETUP.md) |
 | Encrypted backup coverage, restore and UID preservation | [Backup and recovery](HOST_BACKUP_RESTORE.md) |
+| Observed worker counts, monitoring and per-machine responsibilities | [Worker fleet](WORKER_FLEET.md) |
 | Queue bounds, scheduling, latency and load testing | [Load handling](load-handling.md) |
 | Public website security scope and accepted limitations | [Public security](PUBLIC_SECURITY.md) |
 | Release validation and remaining accounting limits | [Security readiness](SECURITY_READINESS.md) |

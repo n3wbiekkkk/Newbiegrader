@@ -1,11 +1,11 @@
 # Load handling and rollout
 
-Current production temporarily uses two isolated homeserver workers while the PC
-is powered off, as described in
-[the architecture](PRODUCTION_ARCHITECTURE.md) and [host runbook](HOST_DEPLOYMENT.md).
-The approved return target is PC four + homeserver two workers. The PC benchmarks
-below remain historical; six live workers and their sustained throughput have not
-yet been qualified. The queue holds up to 50 waiting jobs across the shared database.
+Current production uses ten isolated PC workers and two homeserver workers,
+sharing the durable queue with up to 50 waiting jobs. The homeserver serves the
+API; the PC also hosts private monitoring. The architecture and allocations are
+in [the architecture](PRODUCTION_ARCHITECTURE.md), [fleet guide](WORKER_FLEET.md)
+and [host runbook](HOST_DEPLOYMENT.md). Older benchmarks below retain their scope
+and do not establish sustained throughput for the current fleet.
 The frontend stays static and FastAPI remains the API. Judge work now runs in supervised subprocesses; compilation, submissions, playground runs, and rejudges share host execution slots. Tests within a submission run serially. Output streams are bounded during collection, and timeout/cancellation waits for process cleanup before returning a slot.
 
 ## Queue modes and roles
@@ -28,18 +28,20 @@ The Docker entrypoint selects the command from `GRADER_ROLE` and uses `PORT` for
 
 Defaults derive from cgroup CPU/RAM limits. The scheduler reserves interpreter/API memory and budgets each active job for its supervisor plus the larger compiler/test address-space ceiling, including the enabled languages’ memory multipliers and virtual headroom. It caps requested worker count to both CPU and memory capacity. `GRADER_JUDGE_JOBS` no longer enables concurrent tests: effective test parallelism is one. Large worker/memory overrides cannot override the host safety calculation. Inspect `/api/version` for effective values.
 
-Production has four separate one-CPU / one-GiB worker units and a four-CPU /
-four-GiB judge slice. Each unit runs one job with serial tests. Its private tmpfs
-is 128 MiB / 4,096 inodes; each job also receives a cgroup ceiling of 640 MiB,
-64 tasks, one CPU and no swap. The API has a separate one-CPU / 320 MiB budget.
-Declared problem memory is capped at 128 MiB with existing language allowances;
+The configured production fleet has ten one-CPU / one-GiB units on the PC
+and two on the homeserver, with aggregate ten-CPU / ten-GiB and two-CPU /
+two-GiB slices. Each unit still runs one job with serial tests, a private
+128 MiB / 4096-inode tmpfs, and a per-job ceiling of 640 MiB / 64 tasks /
+one CPU with no swap. The homeserver API has a separate one-CPU / 320 MiB budget.
+Declared memory remains capped at 128 MiB with existing language allowances;
 overall judging timeout is 240 seconds.
 
-Exactly four jobs can execute at once. The last verified live durable queue
-setting is 25 waiting jobs. The public-readiness candidate and env examples use
-50 waiting jobs; activation requires an actual env change/readback under the
-[account-data rollout gate](ACCOUNT_DATA.md#activation-gate). Each ordinary account has at most one queued/running job. Queue
-capacity is a backlog bound, not a measured simultaneous-user capacity.
+There are twelve configured execution slots and 50 waiting places. Each ordinary
+account has at most one queued/running job. Ready capacity is observed from
+fresh host snapshots, not inferred from API-local settings. PC Desktop Mode
+stops its ten consumers, leaving the homeserver's two. See the
+[fleet observation contract](WORKER_FLEET.md). Queue capacity is a backlog bound,
+not a measured simultaneous-user capacity.
 
 File locks coordinate processes sharing one resource allocation. The production
 worker units have separate allocations and separate
@@ -110,7 +112,7 @@ test. Heavy solutions and backlogs retain their actual execution/queue time.
 1. Complete the [security release checks](SECURITY_READINESS.md) and native host checks on Linux. Synthetic CI and other-platform checks do not replace actual host isolation tests.
 2. Trial the new revision against a disposable database and test accounts. Build the image, run all checks, and exercise both local and database modes.
 3. For a local-to-database transition, stop admissions, drain jobs if practical, and stop all old local-mode processes. Have the maintainer apply the complete idempotent `supabase/schema.sql` in Supabase SQL Editor. Do not run a mixed local/database fleet. Legacy running rows without ownership receive an expired lease so database workers can reclaim them; live leased ownership is left alone.
-4. For the current host, follow the four-instance activation in the host runbook. Verify health/version, admission, judging, history, ownership and redaction before opening service. API-only mode requires the qualified worker fleet.
+4. Follow the host runbook with the selected per-node instance counts in the fleet configuration. Verify health/version, admission, judging, history, ownership and redaction before opening service. API-only mode requires the qualified worker fleet.
 5. Deploy the backend before frontend changes that depend on it. Verify effective limits and watch queue wait, errors, memory, and throughput. Change allocations only after repeating native qualification and measuring the resulting capacity.
 
 To roll back queue mode, stop every database consumer and resolve/drain in-flight jobs first. Do not enable local recovery while database workers are alive.

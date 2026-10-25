@@ -1,0 +1,53 @@
+{
+  "date": "2026-10-25",
+  "engine_version": "2.0.8",
+  "python": "3.13.17",
+  "build_sha256": "15cd08f34384a26e6c8217102be4a2580b47d7810b16b40d6059ca026f511b12",
+  "qualification": {
+    "linux_full": {
+      "tests": 639,
+      "skipped": 0,
+      "passed": true
+    },
+    "linux_critical": {
+      "tests": 384,
+      "skipped": 0,
+      "passed": true
+    },
+    "frontend": {
+      "tests": 194,
+      "passed": true
+    },
+    "catalog": {
+      "problems": 100,
+      "passed": true
+    },
+    "fleet_regressions": 10
+  },
+  "nodes": [
+    {
+      "id": "ubuntu-pc",
+      "configured_workers": 10,
+      "worker_cpu": 1,
+      "worker_memory_mib": 1024,
+      "aggregate_memory_mib": 10240
+    },
+    {
+      "id": "homeserver",
+      "configured_workers": 2,
+      "worker_cpu": 1,
+      "worker_memory_mib": 1024,
+      "aggregate_memory_mib": 2048
+    }
+  ],
+  "observation": {
+    "snapshot_max_age_s": 45,
+    "refresh_s": 15,
+    "unknown_on_invalid_snapshot": true,
+    "no_admission_or_execution_budget_change": true
+  },
+  "activation": {
+    "verified": false,
+    "note": "Qualification artifact; operational activation is recorded after live checks."
+  }
+}

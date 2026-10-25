@@ -1,6 +1,6 @@
 # Public website security qualification
 
-Current release read back 2026-10-25: grader 2.0.8 / Python 3.13.17. Application release:
+Base release qualified 2026-10-25: grader 2.0.8 / Python 3.13.17. Application release:
 `97985ed0e1d0bb8e9f5cd7a62b8362a1a2a2d4b8`.
 The deployed controls passed the scoped public-website checks below. This is
 historical PC release evidence, with the operator's retained
@@ -8,14 +8,14 @@ limitations; it is not a guarantee against every vulnerability or kernel escape.
 See the [current session qualification](releases/session-revocation-2026-10-23.json),
 [earlier public readiness](releases/public-readiness-2026-10-23.json) and
 [previous security qualification](releases/public-security-2026-10-22.json).
-Current source fingerprint: `1ebfe1d7fc64156c913b56fbdd4282a7cf8598b1b9c7135396c0cdfdb9ba2ce2`. See the [25 October activation](releases/public-launch-qualification-2026-10-25.json). Historical qualification dates below retain their original scope.
+Fleet-reporting source fingerprint: `15cd08f34384a26e6c8217102be4a2580b47d7810b16b40d6059ca026f511b12`. The [fleet record](releases/worker-fleet-2026-10-25.json) records current qualification and activation separately; historical dates below retain their original scope.
 
-The main PC is currently powered off. The previous qualified 2.0.8 application was recovered
-onto a homeserver with two isolated workers and unchanged per-worker protections.
-Its [recovery record](releases/homeserver-recovery-2026-10-25.json) contains the
-actual Linux/native gates and Python/C/C++ HTTPS results. Earlier four-worker
-throughput measurements below do not establish homeserver capacity. The approved
-future fleet is PC four + homeserver two; six live workers remain unverified.
+The current fleet is ten workers on ubuntu-pc plus two on the homeserver API host.
+Per-worker isolation and memory budgets remain unchanged. The earlier
+[homeserver recovery](releases/homeserver-recovery-2026-10-25.json) and PC
+throughput records retain their original scope. Fresh bounded host observation
+updates the reported ready worker count; it does not change admission or
+execution limits. See [fleet and monitoring](WORKER_FLEET.md).
 
 The [25 October launch checkpoint](releases/public-launch-qualification-2026-10-25.json)
 separately records fresh email signup, 50 messages received in a controlled
@@ -112,8 +112,7 @@ earlier PC qualification.
 
 Every web job retains its private numeric UID, capability drop, Landlock,
 seccomp, cgroup, workspace limits and descendant cleanup. Each current worker
-retains one CPU / 1 GiB, with a two-CPU / 2 GiB fleet on the homeserver. The PC's
-four-worker allocation remains the approved return target alongside these two.
+retains one CPU / 1 GiB, with a two-CPU / 2 GiB fleet on the homeserver and a ten-CPU / 10 GiB fleet on the PC.
 With explicit operator approval, compiler
 and runtime filters additionally deny SysV shared memory/semaphores/message
 queues, Linux keyrings, BPF and `perf_event_open`, preventing their use to leave

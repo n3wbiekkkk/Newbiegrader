@@ -1,9 +1,9 @@
 # Current production architecture
 
 Updated 2026-10-25 after emergency recovery onto the homeserver.
-Verified application release: `97985ed0e1d0bb8e9f5cd7a62b8362a1a2a2d4b8`.
+Base application release: `97985ed0e1d0bb8e9f5cd7a62b8362a1a2a2d4b8`; the fleet-reporting revision is identified by the fingerprint below.
 Documentation-only updates do not change that running application release.
-Current source fingerprint: `1ebfe1d7fc64156c913b56fbdd4282a7cf8598b1b9c7135396c0cdfdb9ba2ce2`. See the [25 October activation](releases/public-launch-qualification-2026-10-25.json). Historical qualification dates below retain their original scope.
+Fleet-reporting source fingerprint: `15cd08f34384a26e6c8217102be4a2580b47d7810b16b40d6059ca026f511b12`; qualification and activation are recorded separately from historical releases. See the [25 October activation](releases/public-launch-qualification-2026-10-25.json). Historical qualification dates below retain their original scope.
 
 
 - **Frontend:** Cloudflare Pages, `https://newbiegrader.pages.dev`, vanilla SPA.
@@ -13,23 +13,22 @@ Current source fingerprint: `1ebfe1d7fc64156c913b56fbdd4282a7cf8598b1b9c7135396c
   listener and no retired-host fallback. Worker/service labels retain their PC
   names for binding compatibility. The old PC tunnel is no longer this API's
   destination, so returning PC workers cannot introduce an older serving API.
-- **Backend:** temporarily Ubuntu 24.04 x86_64 homeserver, Ryzen 3 4300U
-  (four cores), about 3.2 GiB RAM; dedicated Python 3.13 venv. The main PC is
-  powered off. Its existing four-worker allocation is retained for recovery.
-  API and judging use separate systemd services. The API has one CPU / 320 MiB;
-  the system Python is preserved and the project uses Python 3.13.17.
-- **Judging:** two active `newbiegrader-worker@N.service` instances, one job
-  per unit and serial tests within each job. Each has one CPU / 1 GiB, with an
-  aggregate two-CPU / 2 GiB slice. Private workspace tmpfs, per-job cgroups,
-  unique reserved UIDs, Landlock and seccomp remain mandatory. Per-problem limits
-  and language memory allowances are unchanged; declared memory is capped at
-  128 MiB and the overall submission deadline remains 240 seconds.
-- **Admission:** two executing jobs plus up to 50 queued jobs; one active job
-  per ordinary account. Queue size and measured job throughput do not establish
-  a tested number of simultaneous users. The approved recovery target is the
-  PC's four workers plus the homeserver's two, sharing the same atomic database
-  queue. Six live workers have not yet been verified while the PC is offline.
-  `/api/version` reports the serving host's allocation, not a global fleet count.
+- **Backend:** Ubuntu 24.04 homeserver (Ryzen 3 4300U, about 3.2 GiB RAM)
+  serves FastAPI/Nginx and the private tunnel. The API retains one CPU / 320 MiB.
+  Ubuntu 26.04 PC (i5-12400F, about 15 GiB RAM) supplies additional native workers
+  and private monitoring. Both use dedicated Python 3.13.17; system Python is preserved.
+- **Judging:** ten PC workers plus two homeserver workers, one job per unit,
+  serial tests. Each has one CPU / 1 GiB, with aggregate 10-CPU / 10-GiB and
+  two-CPU / 2-GiB slices respectively. Per-job cgroups, private numeric UIDs,
+  bounded tmpfs, Landlock, seccomp, language memory allowances, the 128 MiB
+  declared-memory cap and 240-second overall timeout are unchanged.
+- **Admission:** twelve configured execution slots and up to 50 waiting jobs;
+  one active job per ordinary account. Both hosts use the existing atomic
+  database queue. Neither the backlog bound nor a short synthetic benchmark
+  establishes a sustained simultaneous-user capacity. Optional fresh fleet
+  observations report actual ready workers; stale/missing configured observation
+  is unknown rather than a static total. Local allocation remains separately
+  reported. See [worker fleet and monitoring](WORKER_FLEET.md).
 - **Startup/feedback latency:** precompiled trusted runtime, a credential-free
   executor that avoids web/database imports, immediate next-job claim and a
   one-second scheduled polling cap for active/head-of-queue jobs. Synthetic
@@ -39,8 +38,8 @@ Current source fingerprint: `1ebfe1d7fc64156c913b56fbdd4282a7cf8598b1b9c7135396c
   Homeserver HTTPS smoke checks completed in 5.73–7.35 seconds per 17-case job after the dedicated transport switch.
   See the [PC measurements](releases/pc-execution-performance-2026-10-22.json) and
   [homeserver recovery record](releases/homeserver-recovery-2026-10-25.json).
-- **Availability:** boot-enabled Tailscale, API, tunnel and two workers.
-  An actual homeserver reboot has not been exercised during this recovery.
+- **Availability:** boot-enabled Tailscale, API, tunnel and two local workers; the PC starts ten workers and monitor containers in Server Mode.
+  The PC has passed Server/Desktop/Server reboots. An actual homeserver reboot has not been exercised during this recovery.
   Tailnet device-key expiry is managed separately in its
   admin console and must be reviewed for unattended operation.
 - **Database, identities and durable queue:** the existing Supabase project;

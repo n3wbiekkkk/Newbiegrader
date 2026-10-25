@@ -1981,7 +1981,7 @@ async function loadOverview() {
       } else {
         banners.push(`<div class="dash-banner dash-banner-ok">${icon("check")}` +
           `<div><strong>คิวตรวจทำงานปกติ</strong>` +
-          `<span>${esc(String(depth))} งานรอ · ${esc(String(j.running ?? 0))} กำลังตรวจ · ${esc(String(j.workers ?? 0))} workers</span>` +
+          `<span>${esc(String(depth))} งานรอ · ${esc(String(j.running ?? 0))} กำลังตรวจ · ${esc(String(j.workers ?? "—"))} workers</span>` +
           `</div></div>`);
       }
       if (reportsOpen) {
@@ -2004,7 +2004,7 @@ async function loadOverview() {
       overviewKpi("queue", "งานรอคิว", j.queued ?? 0, "queued") +
       overviewKpi("refresh", "กำลังตรวจ", j.running ?? 0, "running") +
       overviewKpi("alert", "คิวค้าง", depth, queueFull ? "คิวเต็ม" : "รอตรวจ", queueAlert ? "is-warn" : "") +
-      overviewKpi("server", "Workers", j.workers ?? 0, "ตัวช่วยตรวจ");
+      overviewKpi("server", "Workers", j.workers ?? "—", j.workers == null ? "ยังยืนยันสถานะไม่ได้" : "ตัวช่วยตรวจที่พร้อมใช้งาน");
 
     const pp = d.per_problem || {};
     const entries = Object.entries(pp).sort((a, b) =>

@@ -1,5 +1,10 @@
 # Native backend deployment
 
+For the current ten-PC / two-homeserver topology and mode-aware PC startup,
+see [worker fleet and monitoring](WORKER_FLEET.md). Four-instance allocations
+and commands below describe the original PC qualification template; select
+the actual per-node units and budgets from the current fleet configuration.
+
 The backend runs on an Ubuntu PC with Python 3.13, Nginx and systemd. The
 frontend remains on Cloudflare Pages; Supabase retains metadata, identities and
 the durable queue. See [current architecture](PRODUCTION_ARCHITECTURE.md).

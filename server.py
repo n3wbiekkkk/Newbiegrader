@@ -82,7 +82,7 @@ logging.getLogger("uvicorn.access").addFilter(AuthQueryLogFilter())
 
 STATIC_DIR = ROOT / "static"
 
-BUILD_SOURCE_FILES = ("grader.py", "server.py", "judge_runner.py", "judge_execution.py", "job_resources.py", "problem_store.py", "backend_problem_files.py",
+BUILD_SOURCE_FILES = ("grader.py", "server.py", "judge_runner.py", "judge_execution.py", "job_resources.py", "problem_store.py", "backend_problem_files.py", "worker_fleet.py",
                       "container_entrypoint.py", "worker.py", "job_sandbox.py", "email_auth.py", "database_client.py")
 
 
@@ -2977,9 +2977,22 @@ def _visible_problem_or_404(pid: str, email: str) -> grader.Problem:
     return p
 
 
+def _worker_fleet() -> dict:
+    path = os.environ.get("GRADER_FLEET_STATUS_FILE", "")
+    if path:
+        import worker_fleet
+        return worker_fleet.read_snapshot(path)
+    return {"status": "ok", "scope": "local", "workers": JUDGE_WORKERS,
+            "active_workers": JUDGE_WORKERS, "configured_workers": JUDGE_WORKERS,
+            "nodes": []}
+
+
 def _host_limits() -> dict:
+    fleet = _worker_fleet()
     return {"cpu_quota": CPU_QUOTA, "host_memory_mb": RAM_MB,
-            "judge_workers": JUDGE_WORKERS, "judge_jobs": JUDGE_JOBS,
+            "judge_workers": fleet["workers"], "local_judge_workers": JUDGE_WORKERS,
+            "worker_scope": fleet["scope"], "worker_fleet": fleet,
+            "judge_jobs": JUDGE_JOBS,
             "memory_cap_mb": MEMORY_CAP_MB, "queue_max": QUEUE_MAX,
             "overall_timeout_s": OVERALL_TIMEOUT,
             "sample_interval_ms": round(grader.SAMPLE_INTERVAL * 1000, 2),
@@ -4054,7 +4067,7 @@ async def admin_overview(request: Request) -> dict:
         "jobs": {
             **counts,
             "queue_depth": queued,
-            "workers": JUDGE_WORKERS,
+            "workers": _worker_fleet()["workers"],
             "queue_max": QUEUE_MAX,
             # Ops monitor: frontend shows a banner when true.
             "queue_alert": queued >= 5,
