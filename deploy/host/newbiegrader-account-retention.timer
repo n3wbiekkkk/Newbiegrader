@@ -2,6 +2,7 @@
 Description=Daily Newbiegrader account retention
 
 [Timer]
+OnBootSec=30s
 OnCalendar=daily
 RandomizedDelaySec=900
 Persistent=true

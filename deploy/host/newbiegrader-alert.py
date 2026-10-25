@@ -24,6 +24,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -35,12 +36,15 @@ DEFAULT_BACKUP_MARKER = Path("/var/lib/newbiegrader/last-backup")
 API_BASE = "http://127.0.0.1:8000"
 EXPECTED_PROBLEMS = 100
 BACKUP_MAX_AGE_H = 30
+RETENTION_MAX_AGE_H = 36
 JOURNAL_ERROR_PATTERNS = (
     "worker unavailable",
     "judge database unavailable",
     "queue claim failed",
     "PRIVILEGE_DROP_FAILED",
     "SandboxUnavailable",
+    "email verification provider unavailable",
+    "email verification provider rate limited",
 )
 
 
@@ -242,6 +246,24 @@ def _backup_age_hours(marker: Path) -> float | None:
     return round(delta.total_seconds() / 3600.0, 2)
 
 
+def _retention_health() -> tuple[bool, str]:
+    """A successful backup does not prove that account retention ran."""
+    timer = _service_state("newbiegrader-account-retention.timer")
+    raw = _systemctl("show", "newbiegrader-account-retention.service",
+                     "-p", "Result", "-p", "ExecMainStatus", "-p", "ExecMainExitTimestampMonotonic")
+    fields = dict(line.split("=", 1) for line in raw.splitlines() if "=" in line)
+    try:
+        exited = int(fields["ExecMainExitTimestampMonotonic"]) / 1_000_000
+        age = (time.monotonic() - exited) / 3600
+        ok = (timer == "active" and fields["Result"] == "success"
+              and fields["ExecMainStatus"] == "0" and exited > 0
+              and 0 <= age <= RETENTION_MAX_AGE_H)
+        return ok, (f"timer={timer} result={fields['Result']} exit={fields['ExecMainStatus']} "
+                    f"last completion {age:.1f}h ago (limit {RETENTION_MAX_AGE_H}h)")
+    except (KeyError, ValueError):
+        return False, "retention completion unavailable"
+
+
 def collect_checks() -> list[dict]:
     """Every check returns {name, ok, detail}. No check may raise."""
     checks: list[dict] = []
@@ -304,6 +326,12 @@ def collect_checks() -> list[dict]:
     else:
         add("backup freshness", age <= BACKUP_MAX_AGE_H,
             f"last backup {age}h ago (limit {BACKUP_MAX_AGE_H}h)")
+
+    try:
+        ok, detail = _retention_health()
+        add("account retention", ok, detail)
+    except Exception as exc:
+        add("account retention", False, type(exc).__name__ + ": maintenance status unavailable")
 
     # 8. The journal shows no repeating infrastructure failure.
     hits = _journal_hits(60)

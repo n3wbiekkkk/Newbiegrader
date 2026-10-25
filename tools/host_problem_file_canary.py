@@ -98,10 +98,11 @@ def main():
         try:measurements.append({'peak_bytes':int((boundary.group/'memory.peak').read_text()),'oom_kills':dict(l.split() for l in (boundary.group/'memory.events').read_text().splitlines()).get('oom_kill','0')})
         finally:close(boundary)
     suite=unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromTestCase(c) for c in [KernelIsolation,baseline.Verdicts,FileBoundary])
+    expected_tests=suite.countTestCases()
     with patch.object(resources.JobResources,'close',measured):result=unittest.TextTestRunner(verbosity=2,failfast=True).run(suite)
     report={'synthetic_only':True,'single_worker':True,'problem_file_canary':True,
             'tests':result.testsRun,'failures':len(result.failures),'errors':len(result.errors),
-            'skipped':len(result.skipped),'success':result.wasSuccessful() and not result.skipped and result.testsRun==21,
+            'skipped':len(result.skipped),'success':result.wasSuccessful() and not result.skipped and result.testsRun==expected_tests and expected_tests>0,
             'jobs_observed':len(measurements),'peak_job_bytes':max((r['peak_bytes'] for r in measurements),default=0),
             'controlled_job_oom_kills':sum(int(r['oom_kills']) for r in measurements),'repeatability':baseline.repeatability}
     print(json.dumps(report,sort_keys=True));return 0 if report['success'] else 1

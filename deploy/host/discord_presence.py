@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Discord presence follows public HTTPS and the four workers; never sends messages.
+"""Discord presence follows public HTTPS and the configured workers; never sends messages.
 
 The token is read from a systemd credential, never argv, env, or logs. No gateway
 intents are requested. Existing REST watchdog delivery remains independent.
@@ -98,13 +98,13 @@ def health_ok(public_url: str, units: list[str]) -> bool:
         if p.scheme != "https" or not p.hostname or p.username or p.password \
                 or p.path not in ("", "/") or p.query or p.fragment:
             return False
-        expected = [f"newbiegrader-worker@{i}.service" for i in range(1, 5)]
-        if units != expected:
+        expected = [f"newbiegrader-worker@{i}.service" for i in range(1, len(units) + 1)]
+        if len(units) not in (2, 4) or units != expected:
             return False
         result = subprocess.run(["systemctl", "show", "--property=ActiveState", "--value", *units,
             "newbiegrader-api.service", "newbiegrader-tunnel.service"],
             capture_output=True, text=True, timeout=5)
-        if result.returncode or result.stdout.split() != ["active"] * 6:
+        if result.returncode or result.stdout.split() != ["active"] * (len(units) + 2):
             return False
         local = get_json("http://127.0.0.1:8000/api/health")
         count = local.get("count")

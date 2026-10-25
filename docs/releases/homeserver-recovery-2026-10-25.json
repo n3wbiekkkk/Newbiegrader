@@ -1,0 +1,103 @@
+{
+  "release": "2.0.8",
+  "source_commit": "c3ba9ad0fd34946cad589d8eeb0c0b4a1acb06ae",
+  "build_sha256": "8c548584ece552a55ab155514f8dd78486f67496a95fb76116e69bb774e7777f",
+  "activated_at": "2026-10-25T08:23:54.041142+00:00",
+  "purpose": "Emergency service recovery while the main PC is powered off",
+  "runtime": {
+    "python": "3.13.17",
+    "os": "Ubuntu 24.04.5",
+    "workers": 2,
+    "worker_cpu": 1,
+    "worker_memory_mib": 1024,
+    "fleet_memory_mib": 2048,
+    "declared_memory_cap_mib": 128,
+    "queue_max": 50,
+    "queue_mode": "database"
+  },
+  "gates": {
+    "linux_critical": {
+      "tests": 380,
+      "skips": 0
+    },
+    "linux_full": {
+      "tests": 613,
+      "skips": 0
+    },
+    "native_file_and_verdict": {
+      "tests": 22,
+      "skips": 0
+    },
+    "concurrent_native_allocations": 2,
+    "manager_crash_cleanup": true,
+    "protected_catalog": {
+      "problems": 100,
+      "cases": 1814,
+      "pdfs": 100
+    },
+    "https": [
+      {
+        "language": "python",
+        "accepted": true,
+        "passed": 17,
+        "history_verified": true,
+        "seconds": 5.43
+      },
+      {
+        "language": "c",
+        "accepted": true,
+        "passed": 17,
+        "history_verified": true,
+        "seconds": 5.84
+      },
+      {
+        "language": "cpp",
+        "accepted": true,
+        "passed": 17,
+        "history_verified": true,
+        "seconds": 6.42
+      }
+    ],
+    "anonymous_problem_access_rejected": true,
+    "temporary_session_revoked": true,
+    "monitor_checks": {
+      "passed": 9,
+      "journal_error_lines_last_hour": 0
+    },
+    "backup_completed": true,
+    "account_retention_completed": true
+  },
+  "preserved": {
+    "original_homeserver_app_data": true,
+    "database_not_restored": true,
+    "session_signing_key": true,
+    "append_only_uid_ledger": true,
+    "private_backup_identity_remained_off_host": true
+  },
+  "qualification_harness_notes": [
+    "Trusted synthetic critical fixtures used /tmp, umask 0022 and setuid fixture creation; production worker controls unchanged.",
+    "The filesystem test summary expected 21 although 22 tests passed; a separate qualification wrapper required every discovered test without editing the immutable release."
+  ],
+  "future_fleet": {
+    "approved_pc_workers": 4,
+    "approved_homeserver_workers": 2,
+    "target": 6,
+    "six_live_workers_verified": false
+  },
+  "limits": [
+    "This is recovery of the known release; pending source changes have separate qualification.",
+    "No actual homeserver reboot or sustained two-host capacity test in this record.",
+    "Three-language HTTPS canaries use a temporary operator-provisioned session, not a fresh provider login.",
+    "Named tunnel and serving-host capacity fields retain their existing semantics."
+  ],
+  "followup_operations": {
+    "monitor_checks_passed": 10,
+    "monitor_source_sha256": "19a8b2d64e4fac4fe1db4e17451b781551c993997fee057f28b4d73373045cce",
+    "presence_health_check_passed": true,
+    "account_retention_timer_started_before_successful_run": true,
+    "account_retention_on_boot_delay_seconds": 30,
+    "six_worker_fleet_still_unverified": true,
+    "presence_source_sha256": "9d2b7a3907bb72652641ec6e10a89a381dfa4703e4768b5f4dd67556e9bd50ff",
+    "retention_timer_sha256": "d6a40aaf104357fe3aeca97cb010f5bf6d8bae277c0d2a50c3666a791aaed62f"
+  }
+}

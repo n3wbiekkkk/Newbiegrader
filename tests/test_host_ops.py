@@ -84,11 +84,35 @@ class AlertWatchdog(unittest.TestCase):
         names = {c["name"] for c in checks}
         for expected in ("api health", "api role and queue", "judge worker",
                          "cloudflare tunnel", "durable queue", "disk space",
-                         "backup freshness", "journal errors"):
+                         "backup freshness", "account retention", "journal errors"):
             self.assertIn(expected, names)
         for check in checks:
             self.assertIn("ok", check)
             self.assertIn("detail", check)
+
+    def test_retention_requires_enabled_timer_recent_success_and_zero_exit(self):
+        completed = 200_000_000_000
+        for timer, result, status, exited, hours, expected in (
+                ('active', 'success', '0', completed, 24, True),
+                ('inactive', 'success', '0', completed, 1, False),
+                ('active', 'exit-code', '1', completed, 1, False),
+                ('active', 'success', '0', completed, 37, False),
+                ('active', 'success', '0', 0, 1, False),
+                ('active', 'success', '0', completed, -1, False)):
+            with self.subTest(timer=timer, result=result, status=status, hours=hours), \
+                    patch.object(alert, '_service_state', return_value=timer), \
+                    patch.object(alert, '_systemctl', return_value=(
+                        f'Result={result}\nExecMainStatus={status}\nExecMainExitTimestampMonotonic={exited}')), \
+                    patch.object(alert.time, 'monotonic', return_value=completed/1_000_000+hours*3600):
+                self.assertEqual(alert._retention_health()[0], expected)
+        with patch.object(alert, '_service_state', return_value='active'), \
+                patch.object(alert, '_systemctl', return_value='unavailable'):
+            self.assertFalse(alert._retention_health()[0])
+
+    def test_mail_outage_marker_is_detected_without_provider_details(self):
+        with patch.object(alert.subprocess, 'run', return_value=SimpleNamespace(
+                stdout='email verification provider unavailable\n', returncode=0)):
+            self.assertEqual(alert._journal_hits(60), ['email verification provider unavailable'])
 
     def test_webhook_must_be_a_private_root_file(self):
         with tempfile.TemporaryDirectory() as tmp:

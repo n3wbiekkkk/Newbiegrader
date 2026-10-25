@@ -87,6 +87,21 @@ class PresenceConfiguration(unittest.TestCase):
                 self.assertEqual(presence.health_ok('https://public.example.invalid', units),
                                  type(count) is int and count > 0)
 
+    def test_two_worker_recovery_requires_both_workers_and_rejects_arbitrary_units(self):
+        units = ['newbiegrader-worker@1.service', 'newbiegrader-worker@2.service']
+        with patch.object(presence.subprocess, 'run', return_value=SimpleNamespace(
+                returncode=0, stdout='active\n' * 4)), \
+                patch.object(presence, 'get_json', side_effect=[{'ok': True, 'count': 100}, {'user': None}]):
+            self.assertTrue(presence.health_ok('https://public.example.invalid', units))
+        with patch.object(presence.subprocess, 'run') as run:
+            for invalid in ([], units[:1], units[::-1], units[:1] * 2,
+                            ['newbiegrader-worker@1.service', 'other.service']):
+                self.assertFalse(presence.health_ok('https://public.example.invalid', invalid))
+            run.assert_not_called()
+        with patch.object(presence.subprocess, 'run', return_value=SimpleNamespace(
+                returncode=0, stdout='active\ninactive\nactive\nactive\n')):
+            self.assertFalse(presence.health_ok('https://public.example.invalid', units))
+
     def test_public_probe_never_follows_redirects_or_sends_credentials(self):
         from unittest.mock import MagicMock
         for body in [b'{"user":null}', b'{}']:
