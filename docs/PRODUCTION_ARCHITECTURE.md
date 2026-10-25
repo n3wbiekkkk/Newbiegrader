@@ -1,9 +1,9 @@
 # Current production architecture
 
 Updated 2026-10-25 after emergency recovery onto the homeserver.
-Verified application release: `c3ba9ad0fd34946cad589d8eeb0c0b4a1acb06ae`.
+Verified application release: `97985ed0e1d0bb8e9f5cd7a62b8362a1a2a2d4b8`.
 Documentation-only updates do not change that running application release.
-Current source fingerprint: `8c548584ece552a55ab155514f8dd78486f67496a95fb76116e69bb774e7777f`. See the [2.0.8 account-lifecycle activation](releases/account-lifecycle-2026-10-24.json). Historical qualification dates below retain their original scope.
+Current source fingerprint: `1ebfe1d7fc64156c913b56fbdd4282a7cf8598b1b9c7135396c0cdfdb9ba2ce2`. See the [25 October activation](releases/public-launch-qualification-2026-10-25.json). Historical qualification dates below retain their original scope.
 
 
 - **Frontend:** Cloudflare Pages, `https://newbiegrader.pages.dev`, vanilla SPA.
@@ -34,7 +34,7 @@ Current source fingerprint: `8c548584ece552a55ab155514f8dd78486f67496a95fb76116e
   17-case jobs take 2.82–3.03 seconds; public Python/C/C++ checks observed
   3.75–4.81 seconds from submit to result. Larger jobs retain their actual
   runtime; these are prior PC measurements, not homeserver capacity results.
-  Homeserver HTTPS smoke checks completed in 5.43–6.42 seconds per 17-case job.
+  Homeserver HTTPS smoke checks completed in 5.09–5.57 seconds per 17-case job after the launch update.
   See the [PC measurements](releases/pc-execution-performance-2026-10-22.json) and
   [homeserver recovery record](releases/homeserver-recovery-2026-10-25.json).
 - **Availability:** boot-enabled Tailscale, API, tunnel and two workers.

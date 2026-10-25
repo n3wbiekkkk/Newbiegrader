@@ -1,16 +1,16 @@
 # Public website security qualification
 
 Current release read back 2026-10-25: grader 2.0.8 / Python 3.13.17. Application release:
-`c3ba9ad0fd34946cad589d8eeb0c0b4a1acb06ae`.
+`97985ed0e1d0bb8e9f5cd7a62b8362a1a2a2d4b8`.
 The deployed controls passed the scoped public-website checks below. This is
 historical PC release evidence, with the operator's retained
 limitations; it is not a guarantee against every vulnerability or kernel escape.
 See the [current session qualification](releases/session-revocation-2026-10-23.json),
 [earlier public readiness](releases/public-readiness-2026-10-23.json) and
 [previous security qualification](releases/public-security-2026-10-22.json).
-Current source fingerprint: `8c548584ece552a55ab155514f8dd78486f67496a95fb76116e69bb774e7777f`. See the [2.0.8 account-lifecycle activation](releases/account-lifecycle-2026-10-24.json). Historical qualification dates below retain their original scope.
+Current source fingerprint: `1ebfe1d7fc64156c913b56fbdd4282a7cf8598b1b9c7135396c0cdfdb9ba2ce2`. See the [25 October activation](releases/public-launch-qualification-2026-10-25.json). Historical qualification dates below retain their original scope.
 
-The main PC is currently powered off. The same application release was recovered
+The main PC is currently powered off. The previous qualified 2.0.8 application was recovered
 onto a homeserver with two isolated workers and unchanged per-worker protections.
 Its [recovery record](releases/homeserver-recovery-2026-10-25.json) contains the
 actual Linux/native gates and Python/C/C++ HTTPS results. Earlier four-worker
@@ -20,8 +20,8 @@ future fleet is PC four + homeserver two; six live workers remain unverified.
 The [25 October launch checkpoint](releases/public-launch-qualification-2026-10-25.json)
 separately records fresh email signup, 50 messages received in a controlled
 Gmail inbox separate from administrator sign-in, temporary Auth cleanup, offline restore/erasure and
-backup maintenance. Its pending source changes must not be confused with the
-running backend fingerprint above.
+backup maintenance. The subsequent compatible backend activation and fresh
+three-language HTTPS results identify the running fingerprint above.
 
 
 ## Account lifecycle activation
@@ -93,8 +93,8 @@ nine checks passed after deployment, with zero matching journal error lines in
 the preceding hour. This short observation is not proof that overnight connection
 errors can never recur; scheduled monitoring remains enabled.
 
-A separate unprivileged Discord presence service now checks local API health,
-all four worker units and the public HTTPS identity path every 30 seconds. The
+A separate unprivileged Discord presence service checks local API health,
+the configured local workers (currently two on the homeserver) and the public HTTPS identity path every 30 seconds. The
 bot displays `Newbiegrader website` while healthy and Invisible/Offline otherwise.
 It starts automatically at boot and retains the existing token through a systemd
 credential; the API and judge accounts do not receive that credential. Its ceiling
@@ -105,13 +105,16 @@ power/network loss may take minutes to become visibly offline. It supplements
 monitoring; it is not an independent off-host uptime monitor. Real staging and
 production Gateway readiness/health checks passed, with eight synthetic protocol,
 credential and health regressions. The final label-only rollback restarted only
-presence; API and all four worker process start times stayed unchanged.
+presence; API and all four worker process start times stayed unchanged in that
+earlier PC qualification.
 
 ## Untrusted code
 
 Every web job retains its private numeric UID, capability drop, Landlock,
-seccomp, cgroup, workspace limits and descendant cleanup. Four workers and all
-CPU/memory budgets remain unchanged. With explicit operator approval, compiler
+seccomp, cgroup, workspace limits and descendant cleanup. Each current worker
+retains one CPU / 1 GiB, with a two-CPU / 2 GiB fleet on the homeserver. The PC's
+four-worker allocation remains the approved return target alongside these two.
+With explicit operator approval, compiler
 and runtime filters additionally deny SysV shared memory/semaphores/message
 queues, Linux keyrings, BPF and `perf_event_open`, preventing their use to leave
 persistent kernel objects. Programs requiring these APIs receive EPERM and may

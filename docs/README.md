@@ -5,9 +5,9 @@ homeserver running two isolated workers and a separate API while the main PC is 
 The approved return target is PC four + homeserver two workers; that six-worker
 fleet has not yet been verified live. Supabase retains metadata,
 identities, history and the durable queue. The current verified application code
-is `c3ba9ad0fd34946cad589d8eeb0c0b4a1acb06ae` (2026-10-24), grader 2.0.8 / Python 3.13.17. Documentation-only
+is `97985ed0e1d0bb8e9f5cd7a62b8362a1a2a2d4b8` (2026-10-25), grader 2.0.8 / Python 3.13.17. Documentation-only
 updates can follow that release without changing the running application.
-Current source fingerprint: `8c548584ece552a55ab155514f8dd78486f67496a95fb76116e69bb774e7777f`. See the [2.0.8 account-lifecycle activation](releases/account-lifecycle-2026-10-24.json). Historical qualification dates below retain their original scope.
+Current source fingerprint: `1ebfe1d7fc64156c913b56fbdd4282a7cf8598b1b9c7135396c0cdfdb9ba2ce2`. See the [25 October activation](releases/public-launch-qualification-2026-10-25.json). Historical qualification dates below retain their original scope.
 
 
 ## Operating the current deployment
@@ -45,7 +45,7 @@ Current source fingerprint: `8c548584ece552a55ab155514f8dd78486f67496a95fb76116e
   HTTPS jobs. Existing homeserver app data was preserved.
 - [Public-launch qualification](releases/public-launch-qualification-2026-10-25.json)
   records real signup, bounded email delivery, retention, offline restore and
-  the separately qualified source candidate; deployment status is explicit.
+  the qualified source and subsequent two-worker backend activation.
 
 - [Account lifecycle and queue activation](releases/account-lifecycle-2026-10-24.json)
   records the live backend, three-language HTTPS jobs, export/deletion/session

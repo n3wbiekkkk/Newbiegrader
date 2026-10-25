@@ -1,14 +1,13 @@
 # Account data and public-readiness rollout
 
 Status on 2026-10-25: the maintainer applied the lifecycle SQL and the compatible
-backend `c3ba9ad` is active, with queue 50 and daily account retention. See
-[the activation record](releases/account-lifecycle-2026-10-24.json). Public rollout
+backend `97985ed` is active, with queue 50 and daily account retention. See
+[the activation record](releases/public-launch-qualification-2026-10-25.json). Public rollout
 qualification now includes a real unused-email signup confirmed by the operator,
 50 verification messages received in a controlled Gmail inbox, off-host scheduled
 backup cleanup and offline PostgreSQL erasure reconciliation. See the
 [dated qualification and its limits](releases/public-launch-qualification-2026-10-25.json).
-Pending source changes are separately qualified and have not replaced that running
-application. The backend currently runs on the homeserver with two workers while
+The qualified source is now active with the same session key and two-worker allocation. The backend currently runs on the homeserver with two workers while
 the PC is powered off; see [emergency recovery](releases/homeserver-recovery-2026-10-25.json).
 The Thai [privacy page](../static/privacy.html), [terms](../static/terms.html)
 and [FAQ](../static/faq.html) describe the available account controls and operator contact.

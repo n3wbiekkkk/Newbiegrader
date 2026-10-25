@@ -1,10 +1,10 @@
 {
-  "recorded_at": "2026-10-25T08:50:15.806863+00:00",
-  "status": "source_candidate_qualified_pending_publication",
+  "recorded_at": "2026-10-25T09:02:55.598543+00:00",
+  "status": "backend_activated",
   "grader_version": "2.0.8",
   "candidate_build_sha256": "1ebfe1d7fc64156c913b56fbdd4282a7cf8598b1b9c7135396c0cdfdb9ba2ce2",
   "candidate_base_commit": "ec8994423a6da7835c06215e7dc1b16d56e6735b",
-  "running_build_sha256": "8c548584ece552a55ab155514f8dd78486f67496a95fb76116e69bb774e7777f",
+  "running_build_sha256": "1ebfe1d7fc64156c913b56fbdd4282a7cf8598b1b9c7135396c0cdfdb9ba2ce2",
   "live_checks": {
     "fresh_signup": {
       "date": "2026-10-25",
@@ -96,7 +96,73 @@
     "Six live workers while the PC is powered off",
     "Homeserver reboot test",
     "Fresh Google/recovery/independent-device tests on 25 October; earlier scoped evidence remains dated 24 October",
-    "Manual guardian authorization already tested on a real minor",
-    "Source candidate backend deployed or new privacy copy already published"
-  ]
+    "Manual guardian authorization already tested on a real minor"
+  ],
+  "application_commit": "97985ed0e1d0bb8e9f5cd7a62b8362a1a2a2d4b8",
+  "previous_running_build_sha256": "8c548584ece552a55ab155514f8dd78486f67496a95fb76116e69bb774e7777f",
+  "backend_activation": {
+    "release": "97985ed0e1d0bb8e9f5cd7a62b8362a1a2a2d4b8",
+    "previous_release": "c3ba9ad0fd34946cad589d8eeb0c0b4a1acb06ae",
+    "started_at": "2026-10-25T08:58:35.772418+00:00",
+    "drained_jobs_and_live_leases": true,
+    "two_allocation_native_canaries": true,
+    "canary_crash_recovery": true,
+    "actual_worker_preflights": 2,
+    "daily_retention_installed_and_executed": true,
+    "queue_max": 50,
+    "admission_reopened": true,
+    "signing_key_preserved": true,
+    "build_sha256": "1ebfe1d7fc64156c913b56fbdd4282a7cf8598b1b9c7135396c0cdfdb9ba2ce2",
+    "completed_at": "2026-10-25T08:59:10.029135+00:00"
+  },
+  "post_activation_https": {
+    "fresh_provider_login": false,
+    "external_messages_sent": false,
+    "host": "newbie",
+    "workers": 2,
+    "build_sha256": "1ebfe1d7fc64156c913b56fbdd4282a7cf8598b1b9c7135396c0cdfdb9ba2ce2",
+    "anonymous_boundary": true,
+    "authenticated_member_reads": true,
+    "public_jobs": [
+      {
+        "language": "python",
+        "accepted": true,
+        "passed": 17,
+        "history_verified": true,
+        "seconds": 5.34
+      },
+      {
+        "language": "c",
+        "accepted": true,
+        "passed": 17,
+        "history_verified": true,
+        "seconds": 5.57
+      },
+      {
+        "language": "cpp",
+        "accepted": true,
+        "passed": 17,
+        "history_verified": true,
+        "seconds": 5.09
+      }
+    ],
+    "copied_session_rejected_after_logout": true,
+    "passed": true,
+    "temporary_family_revoked": true,
+    "checked_at": "2026-10-25T08:59:54.840440+00:00"
+  },
+  "post_activation_monitor": {
+    "passed": 10,
+    "failed": 0,
+    "queued": 0,
+    "running": 0
+  },
+  "committed_archive_sha256": "92ba021ac580aa921f66e6ba237762157e3d4d9d724bbc90923b370692939fc3",
+  "frontend_scope": "Privacy copy reviewed locally in light/dark themes; released by the accompanying main push. Hosted verification follows that deployment.",
+  "post_activation_protected_files": {
+    "problems": 100,
+    "cases": 1814,
+    "pdfs": 100,
+    "passed": true
+  }
 }

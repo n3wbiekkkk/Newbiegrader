@@ -1,7 +1,11 @@
 # Load handling and rollout
 
-Current production is the four-worker Ubuntu PC described in
+Current production temporarily uses two isolated homeserver workers while the PC
+is powered off, as described in
 [the architecture](PRODUCTION_ARCHITECTURE.md) and [host runbook](HOST_DEPLOYMENT.md).
+The approved return target is PC four + homeserver two workers. The PC benchmarks
+below remain historical; six live workers and their sustained throughput have not
+yet been qualified. The queue holds up to 50 waiting jobs across the shared database.
 The frontend stays static and FastAPI remains the API. Judge work now runs in supervised subprocesses; compilation, submissions, playground runs, and rejudges share host execution slots. Tests within a submission run serially. Output streams are bounded during collection, and timeout/cancellation waits for process cleanup before returning a slot.
 
 ## Queue modes and roles
