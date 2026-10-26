@@ -22,7 +22,7 @@ function harness(storage = new Map(), blocked = false) {
     icon: () => "<svg></svg>", scoreCls: () => "s0",
     toast: (value) => messages.push(value),
     apiPostJson: async () => ({}), clearGetCache: () => calls.push("cache"),
-    clearLocalWorkspace: () => calls.push("workspace"),
+    clearLocalWorkspace: () => calls.push("workspace"), activateWorkspace() {},
     setDraftHint: () => {}, refreshMe: async () => {}, renderTasksTable: () => calls.push("render"),
     loadPublicHome: async () => calls.push("public-home"), renderHome: () => {},
     $: (key) => {

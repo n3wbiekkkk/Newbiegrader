@@ -274,8 +274,8 @@ def _run_playground(prob: Optional[grader.Problem], ext: str, source: str,
         except SystemExit as e:
             return {"error": _sanitize_compile_error(str(e))}
         _tl, eff_mem, limits = _effective(prob, time_limit, memory_mb, settings)
-        res = grader.run_one(cmd, stdin_data, time_limit, eff_mem,
-                             grader.detect_language(src))
+        lang = grader.detect_language(src)
+        res = grader.run_one(cmd, stdin_data, time_limit, eff_mem, lang)
         reason = res.get("reason", "")
         if reason in ("sandbox-unavailable", "spawn-fail"):
             # No user code ran (or mandatory isolation was unavailable): this
@@ -286,6 +286,8 @@ def _run_playground(prob: Optional[grader.Problem], ext: str, source: str,
         elif reason == "ole":
             verdict = "OLE"
         elif reason in ("oom", "sigkill"):
+            verdict = "MLE"
+        elif grader.over_memory_limit(eff_mem, res.get("peak_mb", 0.0), lang):
             verdict = "MLE"
         elif reason.startswith("signal:"):
             verdict = "RE"

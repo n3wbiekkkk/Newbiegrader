@@ -408,7 +408,9 @@ class _AuthRPC:
             return {"valid": False}
         elif row["expires_at"] < now + 45 * 86400:
             row["expires_at"] = now + 60 * 86400
-        return {"valid": True, "user": {"email": account["email"],
+        return {"valid": True, "db_admin": "admins" not in self.db.missing and any(
+            admin.get("email") == account["email"] for admin in self.db.rows("admins")),
+            "user": {"email": account["email"],
             "name": account.get("name") or account["email"], "auth_version": account["auth_version"],
             "provider": row["provider"], "picture": row["picture"]}}
 
@@ -541,8 +543,10 @@ class _QueueRPC:
             if submission is not None and not p.get("p_error"):
                 submission = {**submission, "job_id": row["id"]}
                 if row.get("target_id"):
+                    submission.pop("created_at", None)
                     res = self.db.table("submissions").update(submission).eq("id",row["target_id"]).execute()
                 else:
+                    submission["created_at"] = row["created_at"]
                     res = self.db.table("submissions").insert(submission).execute()
                 sid = res.data[0]["id"] if res.data else None
             result = p.get("p_result")

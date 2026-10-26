@@ -8,6 +8,7 @@ function harness() {
   const state = {user: {email: 'synthetic@example.invalid'}, problems: [{id: 'private'}]};
   const c = vm.createContext({state, API: '', PROBLEMS_CACHE_KEY: 'synthetic',
     fetch: () => new Promise(r => {respond = r;}), clearGetCache() {},
+    clearSignedOutWorkspace() { state.user = null; state.problems = []; },
     localStorage: {removeItem() {}}, router() {redirects++;}, refreshMe: async () => {}});
   vm.runInContext(source.slice(source.indexOf('async function apiFetch('), source.indexOf('function apiGet(')), c);
   return {c, state, respond: () => respond({ok: false, status: 401,

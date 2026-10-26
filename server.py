@@ -29,6 +29,7 @@ import time
 import traceback
 import uuid
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Dict, List, Optional
 from urllib.parse import urlencode
@@ -249,8 +250,7 @@ async def _lifespan(_app: "FastAPI"):
         print(f"[web] local job recovery failed: {e}", file=sys.stderr)
     workers = ([] if GRADER_ROLE == "api" else
                [asyncio.create_task(_judge_worker(i)) for i in range(JUDGE_WORKERS)])
-    # Realtime admins live in Postgres; keep a small in-process snapshot so the
-    # many synchronous _is_admin() checks never wait on the network.
+    # Keep the legacy presentation snapshot separate from live role decisions.
     admin_task = None
     if _sb is not None:
         await asyncio.to_thread(_load_db_admins_sync)
@@ -1351,7 +1351,7 @@ def _submission_row(job: dict, result: dict, stored: Optional[dict] = None) -> d
     """Persist only feedback permitted by the server-selected job policy."""
     prob = PROBLEMS.get(job.get("problem", ""))
     results = _stored_result(job, stored if stored is not None else result).get("results", [])
-    return {
+    row = {
         "problem": job.get("problem", ""), "language": job.get("language", ""),
         "filename": job.get("filename"), "name": job.get("name", ""),
         "user_email": job.get("user_email", ""),
@@ -1368,6 +1368,10 @@ def _submission_row(job: dict, result: dict, stored: Optional[dict] = None) -> d
         "contest_id": job.get("contest_id"),
         "job_id": job.get("id"),
     }
+    # A rejudge updates the existing row without moving its original timestamp.
+    if not job.get("target_id") and job.get("created_at"):
+        row["created_at"] = job["created_at"]
+    return row
 
 
 # ---- contest policy (B7) ----
@@ -1677,8 +1681,9 @@ ADMIN_EMAILS = {e.strip().lower() for e in os.environ.get(
     "ADMIN_EMAILS", "sphetpitak@gmail.com").split(",") if e.strip()}
 
 # Additional admins are managed from the admin page and stored in public.admins.
-# _is_admin() stays synchronous and network-free: this snapshot is refreshed by
-# a background task (and updated immediately after an add/remove).
+# This snapshot is for admin-list presentation only, never authorization.
+# Verified requests carry the role from their single live identity RPC.
+_request_admin = ContextVar("request_admin", default=None)
 _ADMIN_CACHE_TTL = max(2.0, float(os.environ.get("GRADER_ADMIN_CACHE_TTL", "5") or 5))
 _db_admin_emails: frozenset = frozenset()
 _admin_cache_error = False
@@ -1726,7 +1731,22 @@ async def _admin_cache_loop() -> None:
 
 def _is_admin(email: str) -> bool:
     value = _norm_email(email)
-    return bool(value) and (value in ADMIN_EMAILS or value in _db_admin_emails)
+    if not value:
+        return False
+    if value in ADMIN_EMAILS:
+        return True
+    decision = _request_admin.get()
+    if decision is not None and decision[0] == value:
+        return decision[1]
+    # Other owners (feedback), signup targets and trusted direct callers have
+    # no request decision. Check live storage, failing closed on any outage.
+    if _sb is None:
+        return False
+    try:
+        rows = _sb.table("admins").select("email").eq("email", value).limit(1).execute().data
+        return isinstance(rows, list) and any(row.get("email") == value for row in rows)
+    except Exception:
+        return False
 
 
 REPORT_KINDS = ("statement", "tests", "other")
@@ -1808,6 +1828,8 @@ def _session_identity(token, *, mode="session", previous=()) -> dict:
         "p_token_hash": hashed, "p_mode": mode, "p_previous": list(previous)})
     if result.get("valid") is not True:
         return {}
+    if type(result.get("db_admin")) is not bool:
+        raise HTTPException(status_code=503, detail="identity service unavailable")
     user = result.get("user")
     if not isinstance(user, dict) or type(user.get("auth_version")) is not int \
             or user["auth_version"] < 1:
@@ -1818,7 +1840,7 @@ def _session_identity(token, *, mode="session", previous=()) -> dict:
         raise HTTPException(status_code=503, detail="identity service unavailable") from None
     return {"email": email, "name": user.get("name") or email,
             "picture": user.get("picture") or "", "provider": user.get("provider") or "",
-            "auth_version": user["auth_version"]}
+            "auth_version": user["auth_version"], "_db_admin": result["db_admin"]}
 
 
 class VerifiedIdentityMiddleware:
@@ -1834,26 +1856,31 @@ class VerifiedIdentityMiddleware:
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
         session = scope.get("session", {})
+        role_token = _request_admin.set(None)
 
         async def opaque_send(message):
             if message["type"] == "http.response.start":
                 session.pop("user", None)
             await send(message)
 
-        if scope.get("path") != "/api/auth/logout":
-            session.pop("user", None)  # Legacy identity cookies never upgrade silently.
-            token = session.get(_SESSION_KEY)
-            if token:
-                try:
-                    user = await asyncio.to_thread(_session_identity, token)
-                except HTTPException:
-                    return await JSONResponse({"detail": "identity service unavailable"}, 503,
-                        headers={"Cache-Control": "no-store"})(scope, receive, opaque_send)
-                if user:
-                    session["user"] = user
-                else:
-                    session.pop(_SESSION_KEY, None)
-        await self.app(scope, receive, opaque_send)
+        try:
+            if scope.get("path") != "/api/auth/logout":
+                session.pop("user", None)  # Legacy identity cookies never upgrade silently.
+                token = session.get(_SESSION_KEY)
+                if token:
+                    try:
+                        user = await asyncio.to_thread(_session_identity, token)
+                    except HTTPException:
+                        return await JSONResponse({"detail": "identity service unavailable"}, 503,
+                            headers={"Cache-Control": "no-store"})(scope, receive, opaque_send)
+                    if user:
+                        _request_admin.set((user["email"], user.pop("_db_admin")))
+                        session["user"] = user
+                    else:
+                        session.pop(_SESSION_KEY, None)
+            await self.app(scope, receive, opaque_send)
+        finally:
+            _request_admin.reset(role_token)
 
 
 def _json_response(payload: dict):
@@ -1979,6 +2006,7 @@ def auth_finish(request: Request, token: str = "", next: str = "#/"):
     user = _session_identity(sid, mode="finish", previous=_browser_session_hashes(request))
     if not user:
         return RedirectResponse(FRONTEND_URL + "/#/?login=failed", status_code=307)
+    user.pop("_db_admin", None)
     if not isinstance(next, str) or not next.startswith("#/"):
         next = "#/"
     request.session.clear()
@@ -2027,6 +2055,7 @@ def auth_restore(request: Request) -> dict:
     user = _session_identity(sid, mode="remember")
     if not user:
         return {"ok": True, "restored": False}
+    user.pop("_db_admin", None)
     request.session.update({_SESSION_KEY: sid, "user": user})
     return {"ok": True, "restored": True}
 
@@ -2278,7 +2307,7 @@ async def auth_register(request: Request):
     _require_users_table()
     body = await _json_object(request)
     email = _auth_email(body)
-    if _is_admin(email):
+    if await asyncio.to_thread(_is_admin, email):
         raise HTTPException(status_code=403, detail="this email is reserved; use Google")
     config = _email_provider_config()
     await asyncio.to_thread(_email_budget, request, email, "request")
@@ -2488,12 +2517,21 @@ def export_profile(request: Request):
     try:
         for table, (owner, allowed) in fields.items():
             entries = []
-            for offset in range(0, 10000, 100):
+            offset = 0
+            for _ in range(1001):
                 query = _sb.table(table).select(",".join((owner, *allowed))).eq(owner, email)
                 order = "email" if table == "users" else (
                     "user_email" if table == "profiles" else
                     "contest_id" if table == "contest_registrations" else "id")
-                rows = query.order(order).range(offset, offset + 99).execute().data or []
+                requested = min(100, 10001 - offset)
+                rows = query.order(order).range(offset, offset + requested - 1).execute().data
+                if not isinstance(rows, list) or len(rows) > requested or any(not isinstance(row, dict) for row in rows):
+                    raise RuntimeError("invalid export page")
+                if not rows:
+                    break
+                offset += len(rows)
+                if offset > 10000:
+                    raise HTTPException(413, "ข้อมูลมากเกินไป กรุณาติดต่อผู้ดูแลเพื่อส่งออก")
                 for row in rows:
                     if row.get(owner) != email:
                         raise RuntimeError("export ownership mismatch")
@@ -2502,8 +2540,6 @@ def export_profile(request: Request):
                     if size > 20 * 1024 * 1024:
                         raise HTTPException(413, "ข้อมูลมากเกินไป กรุณาติดต่อผู้ดูแลเพื่อส่งออก")
                     entries.append(entry)
-                if len(rows) < 100:
-                    break
             else:
                 raise HTTPException(413, "ข้อมูลมากเกินไป กรุณาติดต่อผู้ดูแลเพื่อส่งออก")
             data["data"][table] = entries
@@ -3663,9 +3699,12 @@ def _public_history_row(row: dict) -> dict:
                         if key in _CASE_VERDICTS and type(value) is int and value >= 0} \
         if isinstance(counts, dict) else {}
     # Old profiles/submissions sometimes fell back to the authentication email.
-    name = row.get("name")
-    public["name"] = name if isinstance(name, str) and name.strip() and "@" not in name else "นักเรียน"
+    public["name"] = _public_display_name(row.get("name"))
     return public
+
+
+def _public_display_name(name: object) -> str:
+    return name if isinstance(name, str) and name.strip() and "@" not in name else "นักเรียน"
 
 
 def _peer_submission_detail(row: dict) -> dict:
@@ -3718,11 +3757,12 @@ async def history(request: Request, problem: Optional[str] = None, limit: int = 
     rows = res.data or []
     if not mine and not _is_admin(email):
         # The public feed must not advertise contest-only problems.
-        hidden = _hidden_pids()
-        contests = {r.get("id"): r for r in _contest_policy_rows()}
+        def _policy():
+            return (_hidden_pids(), {r.get("id"): r for r in _contest_policy_rows()},
+                    bool(wanted_problem and _visible_to(wanted_problem, email)))
+        hidden, contests, visible_problem = await asyncio.to_thread(_policy)
         # A hidden problem reached through an ended contest still has its
         # per-problem feed. The global feed must not advertise hidden tasks.
-        visible_problem = wanted_problem and _visible_to(wanted_problem, email)
         rows = [r for r in rows if ((r.get("problem") or "") not in hidden
                 or (visible_problem and r.get("problem") == wanted_problem))
                 and not _contest_result_frozen(contests.get(r.get("contest_id")), r)]
@@ -3932,7 +3972,7 @@ async def admin_add_admin(request: Request) -> dict:
     if email in ADMIN_EMAILS:
         raise HTTPException(status_code=409,
                             detail="this email is a bootstrap admin (ADMIN_EMAILS)")
-    if email in _db_admin_emails:
+    if await asyncio.to_thread(_is_admin, email):
         raise HTTPException(status_code=409, detail="already an admin")
     try:
         await asyncio.to_thread(
@@ -3966,9 +4006,7 @@ async def admin_remove_admin(request: Request, email: str) -> dict:
                             detail="cannot remove your own admin access")
     if _sb is None:
         raise HTTPException(status_code=404, detail="supabase not configured")
-    if target not in _db_admin_emails:
-        await asyncio.to_thread(_load_db_admins_sync)
-    if target not in _db_admin_emails:
+    if not await asyncio.to_thread(_is_admin, target):
         raise HTTPException(status_code=404, detail="admin not found")
     try:
         await asyncio.to_thread(
@@ -4060,8 +4098,8 @@ async def admin_overview(request: Request) -> dict:
         if r.get("accepted"):
             p["accepted"] += 1
         p["best"] = max(p["best"], r.get("score") or 0)
-    hidden = sorted(_hidden_pids())
-    listed, contest_hidden = _contest_problem_sets()
+    hidden = sorted(await asyncio.to_thread(_hidden_pids))
+    listed, contest_hidden = await asyncio.to_thread(_contest_problem_sets)
     if QUEUE_MODE == "database":
         try:
             counts = await asyncio.to_thread(
@@ -4433,8 +4471,8 @@ def _contest_scoreboard(contest: dict, live: bool, allowed_pids: Optional[set] =
         u = r.get("user_email") or ""
         if not u:
             continue
-        agg = users.setdefault(u, {"name": r.get("name") or "?", "best": {}, "solved": set()})
-        agg["name"] = r.get("name") or agg["name"]
+        agg = users.setdefault(u, {"name": _public_display_name(r.get("name")), "best": {}, "solved": set()})
+        agg["name"] = _public_display_name(r.get("name"))
         p = r.get("problem") or ""
         agg["best"][p] = max(agg["best"].get(p, 0), r.get("score") or 0)
         if r.get("accepted"):
@@ -4711,7 +4749,7 @@ async def admin_rejudge(request: Request) -> dict:
                 "target_id": row.get("id"),
                 # Owner-facing storage policy, never the requester's: an admin
                 # rejudge must not declassify a live show_samples=false contest.
-                "reveal": _reveal_for_row(
+                "reveal": await asyncio.to_thread(_reveal_for_row,
                     row.get("contest_id"), row.get("user_email") or "", pid),
                 "tests_hash": _tests_hash(pid),
                 "grader_version": grader.GRADER_VERSION,

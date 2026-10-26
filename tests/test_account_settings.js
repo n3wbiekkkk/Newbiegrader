@@ -26,7 +26,7 @@ function harness() {
     localStorage: { removeItem() {} },
     apiFetch: async (url, opts) => { calls.push({ url, opts }); return { ok: true, profile: JSON.parse(opts.body) }; },
     apiGet: async () => ({ configured: true, profile: { email, name: 'Learner' } }),
-    clearGetCache() { c._getGen++; }, clearLocalWorkspace: () => calls.push('workspace'),
+    clearGetCache() { c._getGen++; }, clearLocalWorkspace: () => calls.push('workspace'), activateWorkspace() {},
     setEditorValue: value => { node('editor').value = value; }, setDraftHint() {},
     refreshMe: async () => {}, loadPublicHome: async () => {}, renderHome() {},
     toast: message => messages.push(message), esc: value => String(value), skel: () => 'loading', setLang: value => { c.state.lang = value; },

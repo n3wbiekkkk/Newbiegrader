@@ -31,6 +31,16 @@ class OptimizationReview(unittest.TestCase):
                 'freeze_minutes': 5}
 
     def test_list_query_budget_and_200_row_contract(self):
+        def listing_for(email, response=None):
+            # Direct handler calls bypass middleware. Supply its per-request
+            # role decision; the separate identity regression checks one RPC.
+            token = server._request_admin.set((email, False))
+            try:
+                request = Request({'type': 'http', 'session': {'user': {'email': email}}})
+                return server.list_contests(request, response)
+            finally:
+                server._request_admin.reset(token)
+
         for n in (0, 1, 200, 1200):
             with self.subTest(contests=n):
                 server._reg_count_cache['at'] = 0
@@ -40,8 +50,7 @@ class OptimizationReview(unittest.TestCase):
                     {'contest_id': r['id'], 'user_email': 'one@example.invalid'} for r in rows]
                 self.table.reset_mock()
                 response = Response()
-                listing = server.list_contests(Request({'type': 'http', 'session': {
-                    'user': {'email': 'one@example.invalid'}}}), response)
+                listing = listing_for('one@example.invalid', response)
                 returned = min(n, 200)
                 self.assertEqual(len(listing['contests']), returned)
                 self.assertTrue(all(r['registered'] for r in listing['contests']))
@@ -49,8 +58,7 @@ class OptimizationReview(unittest.TestCase):
                 self.assertEqual(self.table.call_count, expected)
                 self.assertEqual(response.headers['cache-control'], 'private, no-store')
                 # Another account must not reuse the first account's registrations.
-                other = server.list_contests(Request({'type': 'http', 'session': {
-                    'user': {'email': 'two@example.invalid'}}}))
+                other = listing_for('two@example.invalid')
                 self.assertTrue(all(not r['registered'] for r in other['contests']))
 
     def test_counts_do_not_truncate_after_5000_registrations(self):

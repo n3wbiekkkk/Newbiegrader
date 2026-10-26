@@ -122,7 +122,7 @@ test('late admin task data and persistent cache rows are filtered for the curren
 test('late identity response cannot restore an account after logout refresh wins', async () => {
   const requests=[];
   const c=vm.createContext({state:{user:{email:'old@example.invalid'},is_admin:true,problems:[]},
-    apiGet:()=>new Promise(resolve=>requests.push(resolve)), clearGetCache(){},
+    apiGet:()=>new Promise(resolve=>requests.push(resolve)), clearGetCache(){}, clearMemberWorkspace(){},
     $:()=>({classList:{toggle(){}},textContent:''}),location:{hash:'#/tasks'},setLang(){}});
   vm.runInContext(slice('function problemRowsForIdentity(', 'const _byPidIndex'),c);
   vm.runInContext(slice('async function refreshMe()', '$("login-btn").onclick'),c);

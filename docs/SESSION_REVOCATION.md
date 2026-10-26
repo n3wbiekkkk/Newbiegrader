@@ -21,6 +21,14 @@ Identity invalidation clears rendered playground output/status/input and fences
 late run responses, including errors and button updates. Ordinary cache expiry
 does not discard a current user's run.
 
+The 2026-10-26 audit fix extends this boundary to scored submissions, resumed
+jobs, admin reads/actions and asynchronous file reads. Identity transitions clear
+rendered member/admin data and reject stale success, error and button updates.
+Drafts and remembered job IDs use account-scoped storage: a same-account reload
+retains them, while switching accounts or signing out erases the previous
+account's workspace. Legacy unscoped drafts/job IDs are cleared rather than
+assigned to an unproven owner. Durable jobs and stored history are unaffected.
+
 A successful password/email-code login creates a random 256-bit session token.
 Only its SHA256 hash is stored in the server-only `public.web_sessions` table.
 The signed HttpOnly session cookie persists the opaque token, without a `user`
@@ -29,6 +37,24 @@ currently verified account and credential version. This replaces the previous
 account lookup; it does not add a second database round trip on protected requests.
 There is no positive authorization cache. Anonymous requests without a session
 need no session lookup.
+
+### Live administrator roles (2026-10-26 candidate)
+
+Apply [live_roles_submission_time.sql](../supabase/live_roles_submission_time.sql)
+through the maintainer's SQL Editor **before activating the matching backend**.
+The identical idempotent migration is appended to `schema.sql`. It adds a
+`db_admin` boolean to the existing identity RPC result, using the current grant
+in `public.admins`. The middleware keeps that decision only for the current
+request; background presentation snapshots never authorize access. Bootstrap
+`ADMIN_EMAILS` remains effective. Requests without the new role result fail
+closed with 503, so do not reverse the rollout order.
+
+An existing browser session observes grant/removal at its next authorization
+without a new login and without another protected-request RPC. Already
+authorized requests may finish; this is not a cancellation mechanism for
+in-flight operations. Fresh checks of another owner's role (feedback policy)
+query live storage and fail closed on outage. The patch does not rotate
+`SESSION_SECRET`, revoke existing valid sessions or backfill old history.
 
 Guests can view the landing page and use authentication/recovery. Other website
 pages redirect to login after the session/remember checks finish. The API denies

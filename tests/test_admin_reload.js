@@ -54,6 +54,7 @@ function harness({ me, restore = async () => ({ restored: false }), stats = asyn
       throw new Error('Unexpected API request: ' + url);
     },
     _getGen: 0, clearGetCache() { context._getGen++; }, problemRowsForIdentity: (rows) => rows,
+    clearMemberWorkspace() { context.clearGetCache(); },
     setLang() {}, lastLang: () => null, bindEditorKeys() {}, saveDraft() {},
     openPalette() {}, maybeShowCookieBanner() {}, loadProblemsCache: () => false,
     problemsCacheAgeMs: () => Infinity, saveProblemsCache() {}, buildFilterOptions() {},

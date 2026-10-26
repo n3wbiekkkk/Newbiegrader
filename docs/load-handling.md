@@ -14,6 +14,16 @@ The frontend stays static and FastAPI remains the API. Judge work now runs in su
 
 `GRADER_QUEUE_MODE=database` requires the appended queue migration in `supabase/schema.sql`. Admission, per-account quotas, job claims, heartbeats, completion fencing, and history persistence use service-role-only RPCs. A database failure rejects new work rather than silently accepting a local-only job. Status reads use shared database state. Students take priority over queued bulk rejudges; rejudge admission cannot exceed the queue's remaining space.
 
+The 2026-10-26 candidate's
+[additive SQL patch](../supabase/live_roles_submission_time.sql) writes new
+submission timestamps from the database job's admission time, rather than the
+worker completion time. Queue delay therefore cannot move a pre-freeze
+submission past the scoreboard cutoff. Rejudges preserve the original timestamp;
+the patch does not backfill historical rows. Local mode carries its admission
+timestamp into the inserted history row. Apply SQL before the matching backend
+under the normal reviewed rollout; the standalone patch is also appended to
+the canonical schema.
+
 Roles in database mode:
 
 | Role | Command | Responsibility |

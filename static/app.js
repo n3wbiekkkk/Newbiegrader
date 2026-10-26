@@ -164,18 +164,38 @@ document.querySelectorAll("[data-setting-theme]").forEach((button) => {
  * language choice remembered separately, and the last job per problem kept so
  * the Submit tab can pick a run back up (the server owns the job; we keep the id).
  */
-const DRAFT_KEY = "ng_draft_v1";
-const JOB_KEY = "ng_job_v1";
+const DRAFT_KEY = "ng_draft_v2";
+const JOB_KEY = "ng_job_v2";
 const LANG_KEY = "ng_lang";
 const JOB_RESUME_MS = 30 * 60 * 1000;   // older than this: read it in History
 const DRAFT_MAX = 40;                   // newest N problems
 const JOB_MAX = 20;
 
 function lsJson(key) {
+  key = workspaceKey(key);
+  if (!key) return {};
   try { return JSON.parse(localStorage.getItem(key)) || {}; } catch (e) { return {}; }
 }
 function lsPut(key, obj) {
+  activateWorkspace();
+  key = workspaceKey(key);
+  if (!key) return;
   try { localStorage.setItem(key, JSON.stringify(obj)); } catch (e) { /* quota: fine */ }
+}
+function workspaceKey(key, email = state.user && state.user.email) {
+  return email ? `${key}:${encodeURIComponent(email.toLowerCase())}` : null;
+}
+function activateWorkspace() {
+  try {
+    const email = ((state.user && state.user.email) || "").toLowerCase();
+    const previous = localStorage.getItem("ng_workspace_owner_v2");
+    if (previous && previous !== email) {
+      [DRAFT_KEY, JOB_KEY].forEach(key => localStorage.removeItem(workspaceKey(key, previous)));
+    }
+    if (email) localStorage.setItem("ng_workspace_owner_v2", email);
+    else localStorage.removeItem("ng_workspace_owner_v2");
+    ["ng_draft_v1", "ng_job_v1"].forEach(key => localStorage.removeItem(key));
+  } catch (e) { /* blocked storage: rendered state is still cleared */ }
 }
 function keepNewest(map, n) {
   Object.keys(map)
@@ -215,7 +235,10 @@ function lastJobFor(pid) {
   return e && Date.now() - (e.t || 0) < JOB_RESUME_MS ? e : null;
 }
 function clearLocalWorkspace() {
-  try { [DRAFT_KEY, JOB_KEY].forEach((k) => localStorage.removeItem(k)); } catch (e) { /* ignore */ }
+  try {
+    [DRAFT_KEY, JOB_KEY].map(key => workspaceKey(key)).filter(Boolean).forEach((key) => localStorage.removeItem(key));
+    ["ng_draft_v1", "ng_job_v1"].forEach((key) => localStorage.removeItem(key));
+  } catch (e) { /* ignore */ }
 }
 function lastLang() {
   try { return localStorage.getItem(LANG_KEY) || ""; } catch (e) { return ""; }
@@ -706,13 +729,7 @@ async function apiFetch(path, opts) {
   const data = await r.json().catch(() => ({}));
   if (!r.ok) {
     if (r.status === 401 && !path.startsWith("/api/auth/") && state.user && state.user === identity) {
-      state.user = null;
-      state.is_admin = state.isAdmin = false;
-      state.problems = [];
-      state.stats = {};
-      state.statsLoaded = false;
-      clearGetCache();
-      try { localStorage.removeItem(PROBLEMS_CACHE_KEY); } catch (e) { /* ignore */ }
+      clearSignedOutWorkspace();
       router();
       void refreshMe();
     }
@@ -1804,7 +1821,9 @@ async function refreshMe() {
     state.is_admin = state.isAdmin = false;
   }
   if (previousIdentity !== JSON.stringify([state.user && state.user.email, !!state.is_admin])) {
-    clearGetCache();
+    // Preserve same-account drafts on reload; erase the previous account's
+    // workspace on a switch, including data left by an expired session.
+    clearMemberWorkspace();
     state.problems = problemRowsForIdentity(state.problems);
     state.contests = [];
     state.contestCache = {};
@@ -1889,22 +1908,49 @@ async function signOut() {
 }
 
 function clearSignedOutWorkspace() {
+  clearLocalWorkspace();  // Remove this identity's stored workspace before clearing it.
   state.user = null;
   state.is_admin = state.isAdmin = false;
   state.meSeq = (state.meSeq || 0) + 1;
   state.accountDeletion = null;
   state.settingsDraft = null;
+  clearMemberWorkspace();
+}
+
+function clearMemberWorkspace() {
+  activateWorkspace();
   // Identity changed: the cached problem list (and the solved marks) must not
   // survive into the next session on a shared machine. Same for drafts and
   // remembered job ids — a school computer is shared.
-  try { localStorage.removeItem(PROBLEMS_CACHE_KEY); } catch (e) { /* ignore */ }
+  try {
+    [PROBLEMS_CACHE_KEY, "ng_draft_v1", "ng_job_v1"].forEach(key => localStorage.removeItem(key));
+  } catch (e) { /* ignore */ }
   clearGetCache();   // GET cache holds per-user answers (history?mine=1): must not leak to the next login
-  clearLocalWorkspace();
   setEditorValue("");
   $("run-input").value = "";
   fi.value = "";
   state.file = null;
   state.current = null;
+  state.contest = null;
+  state.myBest = {};
+  state.myBestLoaded = false;
+  state.settingsDraft = null;
+  ["submit-btn", "admin-add-btn", "rejudge-btn", "ct-save"].forEach(id => { $(id).disabled = false; });
+  $("admin-add-email").value = "";
+  ["ct-id", "ct-title", "ct-start", "ct-end", "ct-problem-search"].forEach(id => { $(id).value = ""; });
+  state.editingContest = "";
+  $("ct-editor").classList.add("hidden");
+  ["result-body", "hist-body", "hist-stats", "task-mine-body", "report-mine",
+    "overview-stats", "overview-problems", "overview-recent", "overview-hidden", "overview-health",
+    "admin-history-body", "admin-history-pager", "admin-history-meta", "admin-reports",
+    "admins-list", "admin-candidates", "ct-list", "ct-announcements", "plag-body",
+    "plag-status", "ct-status", "ct-problems", "ct-editor-title", "ct-editor-note",
+    "ct-preview", "ct-problem-count", "rejudge-status", "admins-status", "toast-stack"].forEach((id) => {
+    const el = $(id);
+    if (el) el.textContent = "";
+  });
+  ["adminOverviewLoaded", "adminHistoryLoaded", "adminReportsLoaded", "adminAdminsLoaded",
+    "adminToolsBuilt", "adminHistoryBuilt"].forEach(key => { state[key] = false; });
   $("file-chip").classList.add("hidden");
   setDraftHint(false);
   state.jobResults = {};
@@ -1946,6 +1992,8 @@ function setDashCount(id, value) {
 }
 
 async function loadOverview() {
+  const identity = state.user && state.user.email, gen = state.inspectionIdentityGen || 0;
+  const current = () => identity === (state.user && state.user.email) && gen === (state.inspectionIdentityGen || 0);
   const stats = $("overview-stats"), probs = $("overview-problems"), recent = $("overview-recent");
   const hiddenBox = $("overview-hidden"), health = $("overview-health"), meta = $("overview-meta");
   [stats, probs, recent, hiddenBox].forEach((el) => {
@@ -1956,6 +2004,7 @@ async function loadOverview() {
   if (health) health.innerHTML = "";
   try {
     const d = await apiGet("/api/admin/overview");
+    if (!current()) return;
     const j = d.jobs || {};
     const sys = d.system || {};
     const depth = j.queue_depth ?? j.queued ?? 0;
@@ -2055,6 +2104,7 @@ async function loadOverview() {
         `<p class="dash-note">โจทย์เหล่านี้ไม่ขึ้นในหน้า Task ของผู้ใช้ทั่วไป — เข้าถึงได้จากหน้าคอนเทสต์และจากตรงนี้</p>`
       : `<p class="dash-empty">ไม่มีโจทย์ที่ซ่อนอยู่ — โจทย์ทุกข้อแสดงในหน้า Task ปกติ</p>`;
   } catch (e) {
+    if (!current()) return;
     const err = `<p class="dash-empty dash-error">โหลดไม่ได้: ${esc(e.message)}</p>`;
     [stats, probs, recent, hiddenBox].forEach((el) => {
       if (!el) return;
@@ -2071,6 +2121,8 @@ async function loadOverview() {
 
 /* ---------------- report ---------------- */
 async function loadMyReports() {
+  const identity = state.user && state.user.email, gen = state.inspectionIdentityGen || 0;
+  const current = () => identity === (state.user && state.user.email) && gen === (state.inspectionIdentityGen || 0);
   const box = $("report-mine");
   if (!box || !state.current) return;
   if (!state.user) {
@@ -2079,22 +2131,27 @@ async function loadMyReports() {
   }
   try {
     const d = await apiGet(`/api/reports?mine=1&problem=${encodeURIComponent(state.current)}&limit=10`);
+    if (!current()) return;
     const rows = (d.configured && d.reports) || [];
     box.innerHTML = rows.length
       ? rows.map((r) => `<div class="report-item">[${esc(r.kind)}] ${esc(r.message)} — <span class="dim">${esc(r.status)} · ${esc(new Date(r.created_at).toLocaleString())}</span></div>`).join("")
       : `<span class="dim">ยังไม่เคยรีพอร์ตข้อนี้</span>`;
   } catch (e) {
+    if (!current()) return;
     box.innerHTML = `<span class="dim">โหลดไม่ได้</span>`;
   }
 }
 
 async function loadAdminReports() {
+  const identity = state.user && state.user.email, gen = state.inspectionIdentityGen || 0;
+  const current = () => identity === (state.user && state.user.email) && gen === (state.inspectionIdentityGen || 0);
   const box = $("admin-reports");
   if (!box) return;
   box.classList.add("dim");
   box.innerHTML = skel(3);
   try {
     const d = await apiGet("/api/reports?all=1&limit=50");
+    if (!current()) return;
     const rows = (d.configured && d.reports) || [];
     setDashCount("admin-reports-count", `${rows.length} รายการ`);
     box.classList.remove("dim");
@@ -2119,6 +2176,7 @@ async function loadAdminReports() {
     }).join("");
     box.querySelectorAll("[data-close]").forEach((b) => {
       b.onclick = async () => {
+        if (!current()) return;
         b.disabled = true;
         try {
           const res = await fetch(API + `/api/reports/${encodeURIComponent(b.dataset.close)}`, {
@@ -2126,16 +2184,19 @@ async function loadAdminReports() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ status: "closed" }),
           });
+          if (!current()) return;
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           toast("ปิดรีพอร์ตแล้ว", "t-ok");
           loadAdminReports();
         } catch (e) {
+          if (!current()) return;
           b.disabled = false;
           toast("ปิดรีพอร์ตไม่สำเร็จ: " + e.message, "t-err");
         }
       };
     });
   } catch (e) {
+    if (!current()) return;
     box.classList.remove("dim");
     setDashCount("admin-reports-count", "—");
     box.innerHTML = `<p class="dash-empty dash-error">โหลดไม่ได้: ${esc(e.message)}</p>`;
@@ -2375,8 +2436,11 @@ $("file-clear").onclick = () => {
 };
 
 $("file-load").onclick = async () => {
-  if (!state.file) return;
-  setEditorValue(await state.file.text());
+  const file = state.file, identity = state.user && state.user.email, gen = state.inspectionIdentityGen || 0;
+  if (!file) return;
+  const code = await file.text();
+  if (state.file !== file || identity !== (state.user && state.user.email) || gen !== (state.inspectionIdentityGen || 0)) return;
+  setEditorValue(code);
   $("submit-status").textContent = "โหลดเนื้อหาไฟล์ลง editor แล้ว";
 };
 
@@ -2466,9 +2530,11 @@ const polling = new Set();
 async function resumeJob(pid, jid) {
   if (polling.has(jid)) return;
   polling.add(jid);
+  const identity = state.user && state.user.email, gen = state.inspectionIdentityGen || 0;
+  const current = () => identity === (state.user && state.user.email) && gen === (state.inspectionIdentityGen || 0);
   // Never yank the user to the submit tab: they may have opened this problem
   // just to read the statement. The status line only shows on the submit tab.
-  const onSubmitTab = () => state.current === pid && state.taskTab === "submit";
+  const onSubmitTab = () => current() && state.current === pid && state.taskTab === "submit";
   if (onSubmitTab()) {
     setJudgeStatus("กำลังดึงผลงานที่ค้างอยู่...", true);
   }
@@ -2479,6 +2545,7 @@ async function resumeJob(pid, jid) {
         setJudgeStatus(`${jobStateText(j) || "กำลังตรวจโค้ด"} — ${waitedText(t0)}`, true);
       }
     });
+    if (!current()) return;
     if (done.status === "error") throw new Error(done.error || "ตรวจไม่สำเร็จ");
     state.jobResults[pid] = { result: done.result || {}, secs: null };
     forgetJob(pid);
@@ -2487,6 +2554,7 @@ async function resumeJob(pid, jid) {
       setJudgeStatus("ผลล่าสุดของข้อนี้", false);
     }
   } catch (e) {
+    if (!current()) return;
     if (e.timeout || e.keepJob) rememberJob(pid, jid);
     else forgetJob(pid);       // stale id: server restarted, or the job aged out
     if (onSubmitTab()) {
@@ -2526,6 +2594,8 @@ $("submit-btn").onclick = doSubmit;
 
 async function doSubmit() {
   if (!state.current) return;
+  const identity = state.user && state.user.email, gen = state.inspectionIdentityGen || 0;
+  const current = () => identity === (state.user && state.user.email) && gen === (state.inspectionIdentityGen || 0);
   const pid = state.current;   // judging is async: the student may navigate away
   const btn = $("submit-btn");
   const code = $("editor").value;
@@ -2553,11 +2623,14 @@ async function doSubmit() {
   try {
     // 202 {job_id, status:"queued", ...} — judging happens in the background.
     const job = await submitWithQueueRetry(fd, pid);
+    if (!current()) return;
     rememberJob(pid, job.job_id);   // survives reload and navigation
     setJudgeStatus(jobStateText(job) || "อยู่ในคิว", true);
     const done = await pollJob(job.job_id, (j) => {
+      if (!current()) return;
       setJudgeStatus(`${jobStateText(j) || "กำลังตรวจโค้ด"} — ${waitedText(t0)}`, true);
     });
+    if (!current()) return;
     if (done.status === "error") {
       forgetJob(pid);
       if (state.current === pid) {
@@ -2581,6 +2654,7 @@ async function doSubmit() {
       toast(`ตรวจเสร็จ: ${result.score}/100 คะแนน`, result.score === 100 ? "t-ok" : "");
     }
     await fetchStats();
+    if (!current()) return;
     state.myBestLoaded = false;
     renderTasksTable();
     refreshYourScore();
@@ -2588,6 +2662,7 @@ async function doSubmit() {
     if (state.taskTab === "mine") loadTaskMine();
     if (document.querySelector("#view-history.active")) loadHistory();
   } catch (e) {
+    if (!current()) return;
     // A timeout (or a lost network) means the job is still queued/running
     // server-side: keep the id so returning to this problem picks it back up.
     if ((e.timeout || e.keepJob) && e.job_id) rememberJob(pid, e.job_id);
@@ -2613,7 +2688,7 @@ async function doSubmit() {
       setJudgeStatus(`error: ${e.message}${extra}`, false);
     }
   } finally {
-    btn.disabled = false;
+    if (current()) btn.disabled = false;
   }
 }
 
@@ -3849,12 +3924,15 @@ function setAdminsStatus(text, isError) {
 }
 
 async function loadAdmins() {
+  const identity = state.user && state.user.email, gen = state.inspectionIdentityGen || 0;
+  const current = () => identity === (state.user && state.user.email) && gen === (state.inspectionIdentityGen || 0);
   const box = $("admins-list");
   if (!box) return;
   box.classList.add("dim");
   box.innerHTML = skel(3);
   try {
     const d = await apiGet("/api/admin/admins");
+    if (!current()) return;
     const rows = d.admins || [];
     setDashCount("admins-count", `${rows.length} คน`);
     const dl = $("admin-candidates");
@@ -3887,6 +3965,7 @@ async function loadAdmins() {
       b.onclick = () => removeAdmin(b.dataset.adminRemove, b);
     });
   } catch (e) {
+    if (!current()) return;
     box.classList.remove("dim");
     setDashCount("admins-count", "—");
     box.innerHTML = `<p class="dash-empty dash-error">โหลดไม่ได้: ${esc(e.message)}</p>`;
@@ -3894,6 +3973,8 @@ async function loadAdmins() {
 }
 
 async function addAdminByEmail(ev) {
+  const identity = state.user && state.user.email, gen = state.inspectionIdentityGen || 0;
+  const current = () => identity === (state.user && state.user.email) && gen === (state.inspectionIdentityGen || 0);
   ev.preventDefault();
   const input = $("admin-add-email");
   const btn = $("admin-add-btn");
@@ -3903,31 +3984,37 @@ async function addAdminByEmail(ev) {
   setAdminsStatus("กำลังเพิ่ม…", false);
   try {
     const d = await apiPostJson("/api/admin/admins", { email });
+    if (!current()) return;
     if (input) input.value = "";
     setAdminsStatus(`เพิ่ม ${d.email} เป็นผู้ดูแลแล้ว — มีผลทันที`, false);
     toast("เพิ่มผู้ดูแลแล้ว", "t-ok");
     await loadAdmins();
   } catch (e) {
+    if (!current()) return;
     setAdminsStatus(e.message, true);
     toast("เพิ่มผู้ดูแลไม่สำเร็จ: " + e.message, "t-err");
   } finally {
-    if (btn) btn.disabled = false;
+    if (current() && btn) btn.disabled = false;
   }
 }
 
 async function removeAdmin(email, btn) {
+  const identity = state.user && state.user.email, gen = state.inspectionIdentityGen || 0;
+  const current = () => identity === (state.user && state.user.email) && gen === (state.inspectionIdentityGen || 0);
   if (!email) return;
   if (!confirm(`ถอดสิทธิ์ผู้ดูแลของ ${email}?`)) return;
   if (btn) btn.disabled = true;
   try {
     await apiDelete(`/api/admin/admins/${encodeURIComponent(email)}`);
+    if (!current()) return;
     toast("ถอดสิทธิ์แล้ว", "t-ok");
     await loadAdmins();
     if (state.user && (state.user.email || "").toLowerCase() === email) {
       await refreshMe();
     }
   } catch (e) {
-    if (btn) btn.disabled = false;
+    if (!current()) return;
+    if (current() && btn) btn.disabled = false;
     toast("ถอดสิทธิ์ไม่สำเร็จ: " + e.message, "t-err");
   }
 }
@@ -3971,6 +4058,8 @@ function renderAdminHistoryPager(page, pages) {
 }
 
 async function loadAdminHistory() {
+  const identity = state.user && state.user.email, gen = state.inspectionIdentityGen || 0;
+  const current = () => identity === (state.user && state.user.email) && gen === (state.inspectionIdentityGen || 0);
   const body = $("admin-history-body");
   if (!body) return;
   const sizes = [20, 50, 100];
@@ -3991,6 +4080,7 @@ async function loadAdminHistory() {
     let path = `/api/admin/submissions?page=${page}&per_page=${per}`;
     if (pid) path += `&problem=${encodeURIComponent(pid)}`;
     const d = await apiGet(path);
+    if (!current()) return;
     if (!d.configured) {
       body.innerHTML = `<span class="dim">ยังไม่เปิด history — ตั้งค่า SUPABASE_URL / SUPABASE_KEY ที่ backend</span>`;
       if (meta) meta.textContent = "";
@@ -4018,6 +4108,7 @@ async function loadAdminHistory() {
     bindViewButtons(body);
     renderAdminHistoryPager(Number(d.page) || 1, pages);
   } catch (e) {
+    if (!current()) return;
     body.classList.remove("dim");
     body.innerHTML = `<span class="dim">โหลดประวัติไม่ได้: ${esc(e.message)}</span>`;
     if (meta) meta.textContent = "";
@@ -4192,12 +4283,15 @@ function contestCardHtml(c) {
 }
 
 async function loadAdminContests() {
+  const identity = state.user && state.user.email, gen = state.inspectionIdentityGen || 0;
+  const current = () => identity === (state.user && state.user.email) && gen === (state.inspectionIdentityGen || 0);
   const box = $("ct-list");
   if (!box) return;
   box.classList.add("dim");
   box.innerHTML = skel(3);
   try {
     const d = await apiGet("/api/contests");
+    if (!current()) return;
     state.contests = d.contests || [];
     state.contestsConfigured = !!d.configured;
     const countEl = $("admin-tab-contest-count");
@@ -4222,26 +4316,33 @@ async function loadAdminContests() {
     });
     box.querySelectorAll("[data-del-contest]").forEach((b) => {
       b.onclick = async () => {
+        if (!current()) return;
         const cid = b.dataset.delContest;
         if (!window.confirm(`ลบคอนเทสต์ ${cid}? การส่งที่ผูกไว้จะยังอยู่ใน Scoreboard`)) return;
         try {
           await apiDelete(`/api/contests/${encodeURIComponent(cid)}`);
+          if (!current()) return;
           toast(`ลบ ${cid} แล้ว`, "t-ok");
           if (state.editingContest === cid) setContestEditorOpen(false);
           await refreshProblems();
+          if (!current()) return;
           loadAdminContests();
         } catch (e) {
+          if (!current()) return;
           toast("ลบไม่สำเร็จ: " + e.message, "t-err");
         }
       };
     });
   } catch (e) {
+    if (!current()) return;
     box.innerHTML = `โหลดไม่ได้: ${esc(e.message)}`;
   }
 }
 
 /* rejudge: queue jobs, then poll every returned job id to completion. */
 $("rejudge-btn").onclick = async () => {
+  const identity = state.user && state.user.email, gen = state.inspectionIdentityGen || 0;
+  const current = () => identity === (state.user && state.user.email) && gen === (state.inspectionIdentityGen || 0);
   const btn = $("rejudge-btn"), st = $("rejudge-status");
   const problem = $("rejudge-problem").value;
   const limit = Math.max(1, Number($("rejudge-limit").value) || 10);
@@ -4253,13 +4354,16 @@ $("rejudge-btn").onclick = async () => {
   st.textContent = `กำลังเข้าคิวตรวจซ้ำ ${problem} (${limit} ล่าสุด)...`;
   try {
     const d = await apiPostJson("/api/admin/rejudge", { problem, limit });
+    if (!current()) return;
     const jobs = d.jobs || [];
     st.textContent = `เข้าคิว ${d.queued} งาน · ข้าม ${d.skipped} — กำลังตรวจ...`;
     for (let i = 0; i < jobs.length; i++) {
       const job = await pollJob(jobs[i], (j) => {
+        if (!current()) return;
         st.textContent =
           `ตรวจซ้ำ ${i + 1}/${jobs.length} — ${jobStateText(j) || "กำลังตรวจ..."}`;
       });
+      if (!current()) return;
       st.textContent = `ตรวจซ้ำ ${i + 1}/${jobs.length} — ` +
         (job.status === "done" ? "เสร็จ" : `error: ${job.error || "unknown"}`);
     }
@@ -4267,9 +4371,10 @@ $("rejudge-btn").onclick = async () => {
       `เสร็จแล้ว — เข้าคิว ${d.queued} · ข้าม ${d.skipped} · ตรวจจนจบ ${jobs.length} งาน`;
     loadOverview();
   } catch (e) {
+    if (!current()) return;
     st.textContent = "ตรวจซ้ำไม่สำเร็จ: " + e.message;
   } finally {
-    btn.disabled = false;
+    if (current()) btn.disabled = false;
   }
 };
 
@@ -4324,6 +4429,8 @@ function renderPlagiarism(d) {
 }
 
 $("plag-btn").onclick = async () => {
+  const identity = state.user && state.user.email, gen = state.inspectionIdentityGen || 0;
+  const current = () => identity === (state.user && state.user.email) && gen === (state.inspectionIdentityGen || 0);
   const box = $("plag-body"), st = $("plag-status");
   const problem = $("plag-problem").value;
   const threshold = Number($("plag-threshold").value) || 0.6;
@@ -4337,8 +4444,10 @@ $("plag-btn").onclick = async () => {
   try {
     const d = await apiGet(
       `/api/admin/plagiarism?problem=${encodeURIComponent(problem)}&threshold=${threshold}&limit=300`);
+    if (!current()) return;
     renderPlagiarism(d);
   } catch (e) {
+    if (!current()) return;
     st.textContent = "สแกนไม่สำเร็จ: " + e.message;
     box.innerHTML = `<span class="dim">สแกนไม่สำเร็จ: ${esc(e.message)}</span>`;
   }
@@ -4373,6 +4482,8 @@ document.querySelectorAll("[data-duration]").forEach((b) => {
 });
 
 $("ct-save").onclick = async () => {
+  const identity = state.user && state.user.email, gen = state.inspectionIdentityGen || 0;
+  const current = () => identity === (state.user && state.user.email) && gen === (state.inspectionIdentityGen || 0);
   const st = $("ct-status");
   const btn = $("ct-save");
   const problems = contestProblemIds();
@@ -4402,11 +4513,13 @@ $("ct-save").onclick = async () => {
   st.textContent = "กำลังบันทึก...";
   try {
     const d = await apiPostJson("/api/contests", payload);
+    if (!current()) return;
     const saved = (d.contest && d.contest.id) || payload.id;
     st.textContent = `บันทึกแล้ว: ${saved}`;
     toast(`บันทึกคอนเทสต์ ${saved} แล้ว`, "t-ok");
     // Visibility can change for the problems in this contest: refresh both lists.
     await refreshProblems();
+    if (!current()) return;
     renderContestProblemPicker();
     setContestProblems(problems);
     // A newly created round stays open for edits, so adding a problem mid-round
@@ -4421,10 +4534,11 @@ $("ct-save").onclick = async () => {
     loadAdminContests();
     if (document.querySelector("#view-contests.active")) renderContests();
   } catch (e) {
+    if (!current()) return;
     // server validation messages are shown verbatim
     st.textContent = "บันทึกไม่สำเร็จ: " + e.message;
   } finally {
-    btn.disabled = false;
+    if (current()) btn.disabled = false;
   }
 };
 

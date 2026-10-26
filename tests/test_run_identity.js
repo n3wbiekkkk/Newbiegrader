@@ -16,7 +16,7 @@ function harness() {
   const c = vm.createContext({
     $: node, state: { user: { email: 'a@example.invalid' }, lang: 'python', current: 'p' },
     FormData, performance, PROBLEMS_CACHE_KEY: 'synthetic', fi: { value: '' },
-    localStorage: { removeItem() {} }, clearLocalWorkspace() {}, setDraftHint() {},
+    localStorage: { removeItem() {} }, clearLocalWorkspace() {}, activateWorkspace() {}, setDraftHint() {},
     setEditorValue: value => { node('editor').value = value; },
     invalidateGetCache() {}, resetSolution() {}, clearSubmissionInspection() {},
     esc: x => String(x),

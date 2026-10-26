@@ -167,6 +167,7 @@ jobs:
       - name: Verify revocable browser sessions and concurrent handoffs
         run: |
           psql -X -v ON_ERROR_STOP=1 -f tests/session_sql.sql
+          psql -X -v ON_ERROR_STOP=1 -f tests/live_roles_submission_time_sql.sql
           python3 tests/session_concurrency.py
 
       - name: Verify concurrent queue claims and crashed-worker lease recovery
