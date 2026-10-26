@@ -73,10 +73,13 @@ class SessionRevocation(unittest.TestCase):
         return TimestampSigner(SECRET).sign(base64.b64encode(json.dumps(payload).encode())).decode()
 
     def pending(self):
+        binding = secrets.token_urlsafe(32)
+        self.client.cookies.set(server._OAUTH_BINDING_COOKIE, binding, path='/api/auth/')
         request = Request({'type': 'http', 'session': {}, 'headers': []})
         sid = server._start_web_session(request, {'email': EMAIL, 'auth_version': 1,
             'provider': 'google', 'picture': ''}, True, pending=True)
-        return sid, server._login_signer.dumps({'sid': sid, 'remember': True})
+        return sid, server._login_signer.dumps({'sid': sid, 'remember': True,
+                                               'browser_hash': server._session_hash(binding)})
 
     def test_cookie_is_opaque_db_only_stores_hash_and_json_never_exposes_token(self):
         response = self.login(remember=True)

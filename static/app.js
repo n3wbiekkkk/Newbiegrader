@@ -780,6 +780,7 @@ function apiGetCached(path, ttlMs, force = false) {
 }
 
 function clearGetCache() {
+  resetPlayground();
   if (typeof resetSolution === "function") resetSolution();
   // Identity invalidation must also remove source already displayed on a
   // shared computer. Ordinary submission completion only expires GET caches.
@@ -2774,6 +2775,14 @@ function verdictHint(r) {
 /* ---------------- playground (Run tab; never recorded) ---------------- */
 $("run-btn").onclick = doRun;
 
+function resetPlayground() {
+  state.runSeq = (state.runSeq || 0) + 1;
+  $("run-result").innerHTML = "";
+  $("run-status").textContent = "";
+  $("run-input").value = "";
+  $("run-btn").disabled = false;
+}
+
 async function doRun() {
   const btn = $("run-btn");
   const status = $("run-status");
@@ -2795,6 +2804,9 @@ async function doRun() {
   if (state.current) fd.append("problem", state.current);
   if (state.file) fd.append("file", state.file, state.file.name);
 
+  const email = state.user.email;
+  const seq = state.runSeq = (state.runSeq || 0) + 1;
+  const current = () => state.runSeq === seq && state.user?.email === email;
   btn.disabled = true;
   status.textContent = `กำลังรัน ${state.current || "โค้ด"} (${state.lang})...`;
   box.classList.add("dim");
@@ -2802,14 +2814,16 @@ async function doRun() {
   const t0 = performance.now();
   try {
     const d = await apiPostForm("/api/run", fd);
+    if (!current()) return;
     renderRunResult(d);
     status.textContent =
       `รันเสร็จใน ${((performance.now() - t0) / 1000).toFixed(2)}s — playground ไม่ถูกบันทึกเป็นประวัติ`;
   } catch (e) {
+    if (!current()) return;
     box.innerHTML = `<span class="dim">รันไม่สำเร็จ: ${esc(e.message)}</span>`;
     status.textContent = "error: " + e.message;
   } finally {
-    btn.disabled = false;
+    if (current()) btn.disabled = false;
   }
 }
 

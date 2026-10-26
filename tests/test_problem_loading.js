@@ -30,6 +30,8 @@ function harness() {
     source.indexOf("/* ---------------- task tabs")), context);
   vm.runInContext(source.slice(source.indexOf("function clearGetCache()"),
     source.indexOf("function apiPostJson")), context);
+  vm.runInContext(source.slice(source.indexOf("function resetPlayground()"),
+    source.indexOf("async function doRun()")), context);
   vm.runInContext(source.slice(source.indexOf("function getProblemDetail("),
     source.indexOf("async function refreshYourScore(")), context);
   return { context, requests, rendered, advance: (ms) => { now += ms; } };

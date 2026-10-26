@@ -40,6 +40,7 @@ class AuthCookies(unittest.TestCase):
         app.get("/api/auth/login")(server.auth_login)
         app.get("/api/auth/callback")(server.auth_callback)
         app.get("/api/auth/finish")(server.auth_finish)
+        self.app = app
         self.client = self.stack.enter_context(TestClient(app, base_url="https://testserver", follow_redirects=False))
         server._sb.table("users").insert({"email": EMAIL, "name": "Synthetic",
             "password_hash": server._hash_password(PASSWORD),
@@ -125,6 +126,70 @@ class AuthCookies(unittest.TestCase):
                 self.assertEqual(response.headers["cache-control"], "no-store")
                 replay = self.client.get("/api/auth/finish", params={k: v[0] for k, v in args.items()})
                 self.assertIn("login=failed", replay.headers["location"])
+
+    def test_handoff_cannot_switch_another_browser_or_revoke_its_family(self):
+        victim_email = "other-browser@example.invalid"
+        server._sb.table("users").insert({"email": victim_email, "name": "Victim",
+            "password_hash": server._hash_password(PASSWORD), "auth_version": 1,
+            "email_verified_at": "2026-10-18T00:00:00Z"}).execute()
+        victim = self.stack.enter_context(TestClient(self.app, base_url="https://testserver",
+                                                     follow_redirects=False))
+        self.assertEqual(victim.post("/api/auth/password", json={
+            "email": victim_email, "password": PASSWORD}).status_code, 200)
+        response = self.client.get("/api/auth/login")
+        state = parse_qs(urlsplit(response.headers["location"]).query)["state"][0]
+        with patch.object(server, "_google_userinfo", return_value={"email": EMAIL,
+                "sub": "synthetic-google-sub", "hd": "example.invalid"}):
+            response = self.client.get("/api/auth/callback", params={"code": "synthetic", "state": state})
+        args = {k: v[0] for k, v in parse_qs(urlsplit(response.headers["location"]).query).items()}
+        refused = victim.get("/api/auth/finish", params=args)
+        self.assertIn("login=failed", refused.headers["location"])
+        self.assertEqual(victim.get("/api/auth/me").json()["user"]["email"], victim_email)
+        # A failed cross-browser attempt must not consume the rightful handoff.
+        accepted = self.client.get("/api/auth/finish", params=args)
+        self.assertNotIn("login=failed", accepted.headers["location"])
+        self.assertEqual(self.client.get("/api/auth/me").json()["user"]["email"], EMAIL)
+
+    def test_missing_wrong_and_legacy_browser_bindings_fail_before_activation(self):
+        from fastapi import Request
+        binding = 'n' * 43
+        correct_hash = server._session_hash(binding)
+        for supplied, recorded in [('', correct_hash), ('x' * 43, correct_hash),
+                                   (binding, None), (binding, []), (binding, 'ก' * 64)]:
+            with self.subTest(supplied=supplied, recorded=recorded):
+                data = {"sid": 's' * 43, "remember": True}
+                if recorded is not None:
+                    data['browser_hash'] = recorded
+                token = server._login_signer.dumps(data)
+                request = Request({"type": "http", "session": {}, "headers": [
+                    (b'cookie', (server._OAUTH_BINDING_COOKIE + '=' + supplied).encode())]})
+                with patch.object(server, '_session_identity') as identity:
+                    response = server.auth_finish(request, token)
+                self.assertIn('login=failed', response.headers['location'])
+                identity.assert_not_called()
+
+    def test_oauth_binding_cookie_is_private_and_only_its_hash_enters_handoff(self):
+        response = self.client.get('/api/auth/login')
+        cookies = SimpleCookie()
+        for header in response.headers.get_list('set-cookie'):
+            cookies.load(header)
+        binding = cookies[server._OAUTH_BINDING_COOKIE]
+        self.assertTrue(binding['secure'])
+        self.assertTrue(binding['httponly'])
+        self.assertEqual(binding['samesite'], 'lax')
+        self.assertEqual(binding['path'], '/api/auth/')
+        self.assertEqual(binding['domain'], '')
+        self.assertEqual(int(binding['max-age']), 600)
+        state = parse_qs(urlsplit(response.headers['location']).query)['state'][0]
+        with patch.object(server, '_google_userinfo', return_value={'email': EMAIL,
+                'sub': 'synthetic-google-sub', 'hd': 'example.invalid'}):
+            response = self.client.get('/api/auth/callback', params={'code': 'synthetic', 'state': state})
+        args = {k: v[0] for k, v in parse_qs(urlsplit(response.headers['location']).query).items()}
+        data = server._login_signer.loads(args['token'])
+        self.assertEqual(data['browser_hash'], server._session_hash(binding.value))
+        self.assertNotIn(binding.value, str(data))
+        self.client.get('/api/auth/finish', params=args)
+        self.assertNotIn(server._OAUTH_BINDING_COOKIE, self.client.cookies)
 
 
 if __name__ == "__main__":

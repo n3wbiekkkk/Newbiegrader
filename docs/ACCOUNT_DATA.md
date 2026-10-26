@@ -108,6 +108,28 @@ Unclassified 503s, network errors and ambiguous responses never replay a POST.
 
 ## Activation gate
 
+### Account write fences (candidate, not a production activation record)
+
+The additional [write-fence patch](../supabase/account_write_fences.sql) must be
+reviewed and applied by the maintainer through SQL Editor before this candidate
+is deployed. The identical block is appended to `supabase/schema.sql`. No live
+database change is implied by its presence in this repository.
+
+Insert/upsert operations on profiles, reports and contest registrations share
+the deletion transaction's identity lock and check that the owner still exists
+and is not blocked for deletion. Actor fields on contests, announcements and
+admin rows, plus deleted admin targets, are fenced too. This prevents an already
+authenticated request from restoring an erased email after deletion succeeds.
+Non-identity updates, anonymous legacy records, future admin invitations and
+the completion of previously admitted jobs keep their existing behavior.
+
+Qualification uses `tests/account_write_fences_sql.sql` and
+`python tests/account_write_fences.py` against the disposable
+`newbiegrader_test` database. The latter forces both lock orderings across six
+identity-bearing sinks. A fake database is not a substitute for this check.
+
+### Existing account-lifecycle rollout
+
 1. Review `supabase/account_lifecycle.sql` and the candidate diff. The maintainer
    applies this append-only, idempotent patch through the Supabase SQL Editor.
    It creates backend-only tables/RPCs and replaces identity/admission functions

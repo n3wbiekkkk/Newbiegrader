@@ -69,9 +69,10 @@ jobs:
       - name: API end-to-end tests
         run: python3 -m unittest discover -s tests -v
 
-      - name: Verify packaged plagiarism checker (no production data)
+      - name: Verify packaged backend and plagiarism checker (no production data)
         run: |
           docker build -t newbiegrader-ci .
+          docker run --rm --network none -e GRADER_RUNNER_CHILD=1 -e SESSION_SECRET=synthetic-image-check newbiegrader-ci python -c 'import server'
           docker run --rm --network none newbiegrader-ci python tools/plagiarism.py
           docker run --rm --network none newbiegrader-ci python -m pip list --format freeze > "$RUNNER_TEMP/image-packages.txt"
           pip-audit --disable-pip --no-deps -r "$RUNNER_TEMP/image-packages.txt"
@@ -149,7 +150,9 @@ jobs:
       - name: Verify account deletion, revocation and audit
         run: |
           psql -X -v ON_ERROR_STOP=1 -f tests/account_lifecycle_sql.sql
+          psql -X -v ON_ERROR_STOP=1 -f tests/account_write_fences_sql.sql
           python3 tests/account_lifecycle_concurrency.py
+          python3 tests/account_write_fences.py
           python3 tests/account_restore_sql.py
 
       - name: Verify server-only database privileges and RLS

@@ -524,11 +524,12 @@ def _cached(key: str, ttl: int, build):
     return val
 
 
-async def _acached(key: str, ttl: int, build):
+async def _acached(key: str, ttl: int, build, *, async_build: bool = False):
     """Share one aggregate read on a cold cache, without blocking the loop.
 
     A cancelled HTTP request must not cancel the shared read. Invalidation
     starts a new generation so an older read cannot repopulate stale stats.
+    Async builders share the same cancellation and invalidation guarantees.
     """
     now = time.monotonic()
     hit = _cache.get(key)
@@ -540,7 +541,7 @@ async def _acached(key: str, ttl: int, build):
     if task is None:
         async def refresh():
             try:
-                val = await asyncio.to_thread(build)  # errors are never cached
+                val = await build() if async_build else await asyncio.to_thread(build)
                 if generation == _cache_generation:
                     _cache[key] = (time.monotonic(), val)
                 return val
@@ -990,7 +991,11 @@ async def _queue_position_hint() -> Optional[int]:
     if QUEUE_MODE != "database":
         return _queue_depth_cached()
     try:
-        return int((await _queue_rpc("diagnostics"))["queued"])
+        # Share overlapping advisory reads only; ttl=0 never reuses a completed
+        # snapshot. Admission/ownership and identity checks remain independent.
+        diagnostics = await _acached("queue_position_hint", 0,
+            lambda: _queue_rpc("diagnostics"), async_build=True)
+        return int(diagnostics["queued"])
     except (HTTPException, KeyError, TypeError, ValueError):
         return None
 
@@ -1735,6 +1740,7 @@ _login_signer = URLSafeTimedSerializer(_session_secret, salt="login-once-v3")
 _remember_signer = URLSafeTimedSerializer(_session_secret, salt="remember-me-v3")
 REMEMBER_MAX_AGE = 365 * 24 * 3600
 _REMEMBER_COOKIE = "ng_remember"
+_OAUTH_BINDING_COOKIE = "ng_oauth_bind"
 _SESSION_KEY = "auth_session"
 
 
@@ -1896,21 +1902,29 @@ def auth_login(request: Request, next: str = "#/", remember: bool = False):
     if not next.startswith("#/"):
         next = "#/"
     state = secrets.token_urlsafe(16)
+    binding = secrets.token_urlsafe(32)
     request.session["oauth_state"] = state
     request.session["oauth_next"] = next
     request.session["oauth_remember"] = remember
+    request.session["oauth_browser_hash"] = _session_hash(binding)
     q = urlencode({
         "client_id": GOOGLE_CLIENT_ID, "redirect_uri": GOOGLE_REDIRECT_URI,
         "response_type": "code", "scope": "openid email profile",
         "state": state, "prompt": "select_account",
     })
-    return RedirectResponse("https://accounts.google.com/o/oauth2/v2/auth?" + q,
-                            status_code=307)
+    response = RedirectResponse("https://accounts.google.com/o/oauth2/v2/auth?" + q,
+                                status_code=307)
+    response.set_cookie(_OAUTH_BINDING_COOKIE, binding, max_age=600,
+                        httponly=True, secure=_cookie_secure(), samesite="lax",
+                        path="/api/auth/")
+    return response
 
 
 @app.get("/api/auth/callback")
 async def auth_callback(request: Request, code: str = "", state: str = "", error: str = ""):
-    if error or not code or not state or state != request.session.get("oauth_state"):
+    browser_hash = request.session.get("oauth_browser_hash")
+    if error or not code or not state or state != request.session.get("oauth_state") \
+            or not isinstance(browser_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", browser_hash):
         return RedirectResponse(FRONTEND_URL + "/#/?login=failed", status_code=307)
     request.session.pop("oauth_state", None)
     try:
@@ -1940,7 +1954,8 @@ async def auth_callback(request: Request, code: str = "", state: str = "", error
     # Hand the session to the frontend origin via one-time token, so the
     # session cookie is set first-party (works even when browsers block
     # third-party cookies). /api/auth/finish is proxied by the frontend host.
-    token = _login_signer.dumps({"sid": sid, "remember": remember})
+    token = _login_signer.dumps({"sid": sid, "remember": remember,
+                                 "browser_hash": browser_hash})
     request.session.clear()
     return RedirectResponse(
         FRONTEND_URL + "/api/auth/finish?" + urlencode({"token": token, "next": next_url}),
@@ -1954,6 +1969,13 @@ def auth_finish(request: Request, token: str = "", next: str = "#/"):
     except Exception:
         return RedirectResponse(FRONTEND_URL + "/#/?login=failed", status_code=307)
     sid = data.get("sid") if isinstance(data, dict) else None
+    browser_hash = data.get("browser_hash") if isinstance(data, dict) else None
+    supplied_hash = _session_hash(request.cookies.get(_OAUTH_BINDING_COOKIE))
+    # Reject before the RPC can activate a transferable handoff or revoke the
+    # receiving browser's sessions. The raw nonce never enters the URL token.
+    if not isinstance(browser_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", browser_hash) or not supplied_hash \
+            or not hmac.compare_digest(browser_hash, supplied_hash):
+        return RedirectResponse(FRONTEND_URL + "/#/?login=failed", status_code=307)
     user = _session_identity(sid, mode="finish", previous=_browser_session_hashes(request))
     if not user:
         return RedirectResponse(FRONTEND_URL + "/#/?login=failed", status_code=307)
@@ -1963,6 +1985,8 @@ def auth_finish(request: Request, token: str = "", next: str = "#/"):
     request.session.update({_SESSION_KEY: sid, "user": user})
     resp = RedirectResponse(FRONTEND_URL + "/#/" + next.lstrip("#/"), status_code=307)
     _set_remember_choice(resp, sid, data.get("remember") is True)
+    resp.delete_cookie(_OAUTH_BINDING_COOKIE, path="/api/auth/", httponly=True,
+                       secure=_cookie_secure(), samesite="lax")
     return resp
 
 

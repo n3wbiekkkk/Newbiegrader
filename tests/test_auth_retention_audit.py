@@ -13,6 +13,7 @@ from fake_supabase import FakeSupabase
 from critical_helpers import test_server
 
 server = test_server()
+BINDING = 'b' * 43
 
 
 class AuthRetentionAudit(unittest.TestCase):
@@ -48,17 +49,20 @@ class AuthRetentionAudit(unittest.TestCase):
         request = Request({"type": "http", "session": {}, "headers": []})
         sid = server._start_web_session(request, {"email": email, "auth_version": 1,
                                                  "provider": "google"}, False, pending=True)
-        return server._login_signer.dumps({"sid": sid, "remember": False})
+        return server._login_signer.dumps({"sid": sid, "remember": False,
+                                           "browser_hash": server._session_hash(BINDING)})
 
     def test_handoff_has_no_process_replay_cache_capacity_cutoff(self):
         db = FakeSupabase()
         with patch.object(server, "_sb", db):
             token = self.make_handoff(db)
             db.rows("web_sessions").extend({"token_hash": f"{i:064x}"} for i in range(10001))
-            request = Request({"type": "http", "session": {}, "headers": []})
+            request = Request({"type": "http", "session": {}, "headers": [
+                (b"cookie", (server._OAUTH_BINDING_COOKIE + '=' + BINDING).encode())]})
             server.auth_finish(request, token, "#/tasks")
             self.assertEqual(request.session["user"]["email"], "synthetic@example.invalid")
-            replay = Request({"type": "http", "session": {}, "headers": []})
+            replay = Request({"type": "http", "session": {}, "headers": [
+                (b"cookie", (server._OAUTH_BINDING_COOKIE + '=' + BINDING).encode())]})
             server.auth_finish(replay, token, "#/tasks")
             self.assertNotIn("user", replay.session)
 
@@ -77,7 +81,8 @@ class AuthRetentionAudit(unittest.TestCase):
         with patch.object(server, "_sb", db):
             token = self.make_handoff(db)
             def finish(_):
-                request = Request({"type": "http", "session": {}, "headers": []})
+                request = Request({"type": "http", "session": {}, "headers": [
+                    (b"cookie", (server._OAUTH_BINDING_COOKIE + '=' + BINDING).encode())]})
                 server.auth_finish(request, token, "#/")
                 return "user" in request.session
             with ThreadPoolExecutor(max_workers=8) as pool:

@@ -8,6 +8,19 @@ sign in again. Ordinary users and administrators use the same session boundary.
 
 ## Request and logout behavior
 
+Google login handoffs are additionally bound to the browser that initiated
+login. The login response sets a host-only, HttpOnly, SameSite=Lax binding cookie
+(Secure outside local HTTP development); only its SHA256 hash enters the signed
+handoff. Finish checks this binding before activating the pending session or
+revoking previous families, then clears the binding cookie. Start and finish
+must use the frontend's same-origin authentication proxy so that this cookie
+is available. Pending handoffs issued by older code fail closed and require a
+fresh login; existing activated sessions and `SESSION_SECRET` are unchanged.
+
+Identity invalidation clears rendered playground output/status/input and fences
+late run responses, including errors and button updates. Ordinary cache expiry
+does not discard a current user's run.
+
 A successful password/email-code login creates a random 256-bit session token.
 Only its SHA256 hash is stored in the server-only `public.web_sessions` table.
 The signed HttpOnly session cookie persists the opaque token, without a `user`

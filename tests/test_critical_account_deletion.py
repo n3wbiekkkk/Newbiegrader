@@ -4,6 +4,14 @@ from fastapi.testclient import TestClient
 
 
 class AccountDeletion(LoginBoundary):
+    def test_write_fence_patch_is_appended_to_canonical_schema(self):
+        from pathlib import Path
+        root = Path(__file__).resolve().parents[1]
+        patch_sql = (root / 'supabase/account_write_fences.sql').read_text()
+        self.assertIn(patch_sql, (root / 'supabase/schema.sql').read_text())
+        self.assertIn('security invoker', patch_sql)
+        self.assertNotIn('security definer', patch_sql)
+
     def setUp(self):
         super().setUp()
         self.stack.enter_context(patch.object(server, 'QUEUE_MODE', 'database'))

@@ -341,7 +341,8 @@ class EmailAuth(unittest.TestCase):
 
     def test_unverified_google_third_party_email_does_not_claim_legacy_history(self):
         self.app.get("/api/auth/callback")(server.auth_callback)
-        self.client.cookies.set("ng_session", signed_cookie({"oauth_state": "synthetic-state"}))
+        self.client.cookies.set("ng_session", signed_cookie({"oauth_state": "synthetic-state",
+            "oauth_browser_hash": server._session_hash('b' * 43)}))
         with patch.object(server, "_google_userinfo", return_value={
                 "email": EMAIL, "sub": "synthetic-sub", "email_verified": True}):
             response = self.client.get("/api/auth/callback", params={

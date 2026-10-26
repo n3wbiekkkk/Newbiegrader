@@ -14,6 +14,7 @@ function cacheHarness() {
   vm.runInContext('const DETAIL_CACHE_TTL=60000;const _detailInflight=new Map();'
     + 'const _sampleInflight=new Map();const _pdfPrefetched=new Set();', c);
   vm.runInContext(slice('const _getCache =', 'function apiPostJson'), c);
+  vm.runInContext(slice('function resetPlayground()', 'async function doRun()'), c);
   vm.runInContext(slice('async function loadHistory(', 'async function viewSubmission('), c);
   return {c,requests,elements};
 }

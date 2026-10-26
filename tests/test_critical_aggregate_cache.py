@@ -87,5 +87,85 @@ class AggregateCache(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await server._acached('stats', 30, lambda: {'subs': 4}), {'subs': 4})
 
 
+class QueueHintSharing(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.stack = ExitStack()
+        self.addCleanup(self.stack.close)
+        for name, value in (('_cache', {}), ('_cache_inflight', {}),
+                            ('_cache_generation', 0), ('QUEUE_MODE', 'database')):
+            self.stack.enter_context(patch.object(server, name, value))
+
+    async def test_64_concurrent_hints_share_read_but_next_request_is_fresh(self):
+        started, release = asyncio.Event(), asyncio.Event()
+        calls = []
+
+        async def diagnostics(name):
+            calls.append(name)
+            started.set()
+            await release.wait()
+            return {'queued': 16 + len(calls)}
+
+        with patch.object(server, '_queue_rpc', side_effect=diagnostics):
+            tasks = [asyncio.create_task(server._queue_position_hint()) for _ in range(64)]
+            await asyncio.wait_for(started.wait(), 1)
+            await asyncio.sleep(0)
+            release.set()
+            self.assertEqual(await asyncio.gather(*tasks), [17] * 64)
+            self.assertEqual(calls, ['diagnostics'])
+            self.assertEqual(await server._queue_position_hint(), 18)
+        self.assertEqual(calls, ['diagnostics', 'diagnostics'])
+        self.assertFalse(server._cache_inflight)
+
+    async def test_shared_outage_returns_unknown_without_replay_and_next_read_recovers(self):
+        started, release = asyncio.Event(), asyncio.Event()
+        calls = []
+
+        async def diagnostics(name):
+            calls.append(name)
+            if len(calls) == 1:
+                started.set()
+                await release.wait()
+                raise server.HTTPException(503, 'synthetic database outage')
+            return {'queued': 9}
+
+        with patch.object(server, '_queue_rpc', side_effect=diagnostics):
+            tasks = [asyncio.create_task(server._queue_position_hint()) for _ in range(8)]
+            await asyncio.wait_for(started.wait(), 1)
+            await asyncio.sleep(0)
+            release.set()
+            self.assertEqual(await asyncio.gather(*tasks), [None] * 8)
+            self.assertEqual(calls, ['diagnostics'])
+            self.assertNotIn('queue_position_hint', server._cache)
+            self.assertEqual(await server._queue_position_hint(), 9)
+        self.assertEqual(len(calls), 2)
+
+    async def test_disconnected_hint_waiter_does_not_cancel_shared_read(self):
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def diagnostics(_name):
+            started.set()
+            await release.wait()
+            return {'queued': 3}
+
+        with patch.object(server, '_queue_rpc', side_effect=diagnostics) as rpc:
+            first = asyncio.create_task(server._queue_position_hint())
+            second = asyncio.create_task(server._queue_position_hint())
+            await asyncio.wait_for(started.wait(), 1)
+            first.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await first
+            release.set()
+            self.assertEqual(await second, 3)
+            self.assertEqual(rpc.call_count, 1)
+        self.assertFalse(server._cache_inflight)
+
+    async def test_local_hint_keeps_local_queue_path(self):
+        with patch.object(server, 'QUEUE_MODE', 'local'), \
+                patch.object(server, '_queue_depth_cached', return_value=4), \
+                patch.object(server, '_queue_rpc') as rpc:
+            self.assertEqual(await server._queue_position_hint(), 4)
+            rpc.assert_not_called()
+
+
 if __name__ == '__main__':
     unittest.main()
