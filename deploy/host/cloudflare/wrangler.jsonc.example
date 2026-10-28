@@ -14,6 +14,8 @@
   "vars": { "API_ENABLED": "0", "ABUSE_PROTECTION": "0", "TURNSTILE_ENABLED": "0" },
   // Keep API_ENABLED=0 until the separate gated transport is verified.
   // Register the service for loopback 127.0.0.1:8081, never a public address.
+  // Optionally add PRIMARY_API for a separately qualified primary host.
+  // PRIVATE_API then remains the warm backup; never share a tunnel token.
   "vpc_services": [
     { "binding": "PRIVATE_API", "service_id": "REPLACE_WITH_PRIVATE_API_VPC_SERVICE_ID" }
   ]

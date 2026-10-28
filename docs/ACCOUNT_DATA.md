@@ -69,6 +69,13 @@ provider deletion before finishing application deletion. Supabase and PostgreSQL
 are separate systems, so this is recoverable sequencing, not a distributed atomic
 transaction. No production user is deleted by the test suite.
 
+`account_deletion.py` owns resuming prepared deletion for both the profile
+handler and the daily recovery command. It resolves a missing provider mapping,
+deletes that identity, and confirms `account_delete_finish` in that order;
+it does not retry an ambiguous reply within the same attempt. Confirmation,
+begin/revocation, dry-run, retention pruning and HTTP responses stay with their
+existing callers. A caller must obtain durable pending work before resuming.
+
 The Settings page exposes account deletion after an exact-email confirmation.
 Admins see the privilege-removal requirement; the backend remains authoritative
 if permissions or active jobs change. Only a confirmed `{"ok":true}` clears the

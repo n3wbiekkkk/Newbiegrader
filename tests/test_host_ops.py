@@ -28,6 +28,23 @@ backup = _load("ng_backup", "deploy/host/newbiegrader-backup.py")
 
 
 class AlertWatchdog(unittest.TestCase):
+    def test_primary_probe_is_anonymous_and_alerts_in_the_application_route(self):
+        url = 'http://100.91.14.10:9187/health'
+        from unittest.mock import MagicMock
+        context = MagicMock()
+        context.__enter__.return_value = SimpleNamespace(status=200,
+            read=lambda size: b'{"ok":true,"count":100}', geturl=lambda: url)
+        with patch.object(alert.urllib.request, 'urlopen', return_value=context) as open_url:
+            alert._primary_probe(url)
+        request = open_url.call_args.args[0]
+        self.assertIsNone(request.get_header('Cookie'))
+        self.assertIsNone(request.get_header('Authorization'))
+        self.assertEqual(alert._check_scope('primary backend'), 'newbiegrader')
+        for invalid in ('http://example.invalid:9187/health', 'http://127.0.0.1:9187/health',
+                        'http://100.91.14.10:9187/api/auth/me'):
+            with self.subTest(url=invalid), self.assertRaises(ValueError):
+                alert._primary_probe(invalid)
+
     def test_public_check_uses_https_without_cookies_or_credentials(self):
         response = SimpleNamespace(status=200, read=lambda size: b'{"user":null}',
             geturl=lambda: 'https://public.example.invalid/api/auth/me')
@@ -141,11 +158,11 @@ class AlertWatchdog(unittest.TestCase):
         payload = {"text": "boom", "line_to": "U123"}
         body, headers = alert._format_for(
             "https://discord.com/api/v10/channels/42/messages", payload, "bot-token")
-        self.assertEqual(body, {"content": "boom"})
+        self.assertEqual(body, {"content": "boom", "allowed_mentions": {"parse": []}})
         self.assertEqual(headers["Authorization"], "Bot bot-token")
         body, headers = alert._format_for(
             "https://discord.com/api/webhooks/1/tok", payload, "")
-        self.assertEqual(body, {"content": "boom"})
+        self.assertEqual(body, {"content": "boom", "allowed_mentions": {"parse": []}})
         self.assertNotIn("Authorization", headers)
         body, headers = alert._format_for("https://hooks.slack.com/services/x", payload, "")
         self.assertEqual(body, {"text": "boom"})
@@ -161,22 +178,135 @@ class AlertWatchdog(unittest.TestCase):
             self.assertIsInstance(age, float)
             self.assertGreater(age, 0)
 
+    def test_discord_cards_frame_failure_and_recovery_with_status_colors(self):
+        for ok, color, title in ((False, 0xE74C3C, "พบปัญหา"),
+                                 (True, 0x2ECC71, "กลับมาปกติแล้ว")):
+            with self.subTest(ok=ok):
+                payload = alert.build_payload([{"name": "judge worker", "ok": ok}],
+                    {"broken": ["judge worker"]} if ok else {}, "Backend")
+                embed = payload["embed"]
+                self.assertEqual(embed["color"], color)
+                self.assertIn(title, embed["title"])
+                self.assertNotIn("**", embed["title"])
+                self.assertIn("Backend", embed["description"])
+                self.assertIn("เวลาไทย", embed["footer"]["text"])
+                for url in ("https://discord.com/api/v10/channels/42/messages",
+                            "https://discord.com/api/webhooks/1/tok"):
+                    body, _ = alert._format_for(url, payload, "synthetic")
+                    self.assertEqual(body["embeds"], [embed])
+                    self.assertNotIn("content", body)
+                    self.assertEqual(body["allowed_mentions"], {"parse": []})
+                body, _ = alert._format_for("https://hooks.slack.com/services/x", payload)
+                self.assertEqual(body, {"text": payload["text"]})
+
     def test_only_a_transition_sends_a_message(self):
         broken = [{"name": "judge worker", "ok": False, "detail": "inactive"}]
         healthy = [{"name": "judge worker", "ok": True, "detail": "active"}]
         state = {"broken": []}
         payload = alert.build_payload(broken, state)
-        self.assertIn("judge worker", payload["text"])
-        self.assertIn("ALERT", payload["text"])
+        self.assertIn("❌ **ตัวตรวจคำตอบ**", payload["text"])
+        self.assertIn("พบปัญหา 1 รายการ", payload["text"])
         self.assertEqual(payload["broken"], ["judge worker"])
         recovered = alert.build_payload(healthy, {"broken": ["judge worker"]})
-        self.assertIn("RECOVERED", recovered["text"])
-        self.assertIn("was failing: judge worker", recovered["text"])
+        self.assertIn("กลับมาปกติแล้ว", recovered["text"])
+        self.assertIn("✅ ตัวตรวจคำตอบ", recovered["text"])
         self.assertNotIn("judge worker", recovered["broken"])
 
     def test_the_host_label_appears_in_the_message(self):
         payload = alert.build_payload([], {"broken": []}, "PC 192.168.100.24")
-        self.assertIn("host=PC 192.168.100.24", payload["text"])
+        self.assertIn("**เครื่อง:** PC 192.168.100.24", payload["text"])
+
+    def test_route_config_requires_two_distinct_discord_channels(self):
+        routes = {scope: {"url": f"https://discord.com/api/v10/channels/{i}/messages"}
+                  for i, scope in enumerate(("newbiegrader", "homeserver"), 1)}
+        self.assertEqual(alert._validate_routes(routes), routes)
+        for invalid in ({}, {"newbiegrader": routes["newbiegrader"]},
+                        {"newbiegrader": routes["newbiegrader"], "homeserver": routes["newbiegrader"]},
+                        {**routes, "homeserver": {"url": "https://discord.com.evil.invalid/api/v10/channels/2/messages"}}):
+            with self.subTest(invalid=invalid), self.assertRaises(SystemExit):
+                alert._validate_routes(invalid)
+
+    def test_route_transitions_recover_independently_and_do_not_repeat(self):
+        secret = {"token": "synthetic", "routes": {
+            "newbiegrader": {"url": "community"}, "homeserver": {"url": "private"}}}
+        checks = [{"name": "judge worker", "ok": False},
+                  {"name": "service Nextcloud", "ok": False}]
+        with patch.object(alert, "_post_json") as post:
+            state, failed = alert.notify_routes(checks, {}, secret)
+            self.assertFalse(failed)
+            self.assertEqual([c.args[0] for c in post.call_args_list], ["community", "private"])
+            self.assertNotIn("Nextcloud", post.call_args_list[0].args[1]["text"])
+            self.assertNotIn("ตัวตรวจคำตอบ", post.call_args_list[1].args[1]["text"])
+            post.reset_mock()
+            state, _ = alert.notify_routes(checks, state, secret)
+            post.assert_not_called()
+            checks[0]["ok"] = True
+            state, _ = alert.notify_routes(checks, state, secret)
+            self.assertEqual(post.call_count, 1)
+            self.assertEqual(post.call_args.args[0], "community")
+            self.assertIn("กลับมาปกติแล้ว", post.call_args.args[1]["text"])
+            self.assertEqual(state["broken"], ["service Nextcloud"])
+
+    def test_failed_route_retries_without_repeating_success_or_leaking_error(self):
+        import contextlib
+        import io
+        secret = {"routes": {"newbiegrader": {"url": "community"}, "homeserver": {"url": "private"}}}
+        checks = [{"name": "judge worker", "ok": False}, {"name": "service Nextcloud", "ok": False}]
+        errors = io.StringIO()
+        with patch.object(alert, "_post_json", side_effect=[None, OSError("PRIVATE_SECRET")]), contextlib.redirect_stderr(errors):
+            state, failed = alert.notify_routes(checks, {}, secret)
+        self.assertTrue(failed)
+        self.assertNotIn("PRIVATE_SECRET", errors.getvalue())
+        with patch.object(alert, "_post_json") as post:
+            state, failed = alert.notify_routes(checks, state, secret)
+            self.assertFalse(failed)
+            self.assertEqual(post.call_count, 1)
+            self.assertEqual(post.call_args.args[0], "private")
+
+    def test_legacy_incident_migration_is_quiet(self):
+        checks = [{"name": "judge worker", "ok": False}, {"name": "service Nextcloud", "ok": False}]
+        with patch.object(alert, "_post_json") as post:
+            state, failed = alert.notify_routes(checks, {"broken": [c["name"] for c in checks]}, {})
+        post.assert_not_called()
+        self.assertFalse(failed)
+        self.assertEqual(state["routes"]["homeserver"]["broken"], ["service Nextcloud"])
+
+    def test_missing_explicit_route_never_falls_back_to_community(self):
+        with patch.object(alert, "_post_json") as post:
+            state, failed = alert.notify_routes([{"name": "unknown hardware check", "ok": False}], {},
+                {"url": "community", "routes": {"newbiegrader": {"url": "community"}}})
+        post.assert_not_called()
+        self.assertTrue(failed)
+        self.assertEqual(state["broken"], [])
+
+    def test_preview_and_check_only_never_write_state_or_send(self):
+        for flag in ("--dry-run", "--check-only"):
+            with self.subTest(flag=flag), patch.object(alert, "collect_checks", return_value=[
+                    {"name": "judge worker", "ok": False, "detail": "inactive"}]), \
+                    patch.object(alert, "_load_state", return_value={}), \
+                    patch.object(alert, "_save_state") as save, \
+                    patch.object(alert, "_read_secret") as read, \
+                    patch.object(alert, "_post_json") as post:
+                self.assertEqual(alert.main([flag]), 1)
+                save.assert_not_called()
+                read.assert_not_called()
+                post.assert_not_called()
+
+    def test_message_is_bounded_and_excludes_raw_diagnostics(self):
+        checks = [{"name": name, "ok": False, "detail": "PRIVATE_SECRET"}
+                  for name in alert.CHECK_MESSAGES]
+        checks.extend({"name": "service " + "x" * 100, "ok": False} for _ in range(40))
+        payload = alert.build_payload(checks, {}, "@everyone\n**host**")
+        self.assertLessEqual(len(payload["text"]), 2000)
+        self.assertNotIn("PRIVATE_SECRET", payload["text"])
+        self.assertNotIn("@everyone", payload["text"])
+        self.assertIn("เวลาไทย", payload["text"])
+        embed = payload["embed"]
+        self.assertLessEqual(len(embed["title"]), 256)
+        self.assertLessEqual(len(embed["description"]), 4096)
+        self.assertLessEqual(sum(len(value) for value in (
+            embed["title"], embed["description"], embed["footer"]["text"])), 6000)
+        self.assertNotIn("PRIVATE_SECRET", json.dumps(embed))
 
     def test_state_file_is_written_private(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -1,0 +1,55 @@
+{
+  "date": "2026-10-27",
+  "issue": "Serving primary reported six observed workers while all ten auxiliary-PC workers were active.",
+  "causes": [
+    "The primary could not read the auxiliary PC metrics endpoint directly.",
+    "The initial relay receiver check ran nginx -t as root, which changed private temp-directory ownership away from the service account and caused upload failures."
+  ],
+  "fix": [
+    "Homeserver relays only four allowlisted numeric PC observations, preserving the original PC timestamp.",
+    "Primary reads that relay through a separate source-restricted exact receiver path.",
+    "Private temp directories belong to www-data with mode 0700; the metrics unit validates nginx configuration as its own service user."
+  ],
+  "observed_workers": 16,
+  "nodes": [
+    {
+      "id": "homeserver",
+      "online": true,
+      "configured_workers": 2,
+      "active_workers": 2,
+      "ready_workers": 2,
+      "checked_at": 1793070536.0900183
+    },
+    {
+      "id": "promma-server",
+      "online": true,
+      "configured_workers": 4,
+      "active_workers": 4,
+      "ready_workers": 4,
+      "checked_at": 1793070542.469045
+    },
+    {
+      "id": "ubuntu-pc",
+      "online": true,
+      "configured_workers": 10,
+      "active_workers": 10,
+      "ready_workers": 10,
+      "checked_at": 1793070527.6710482
+    }
+  ],
+  "validation": {
+    "live_reproduction_failed_before_fix": true,
+    "live_reproduction_passed_after_fix": true,
+    "pc_timestamps_advance_automatically": true,
+    "affected_tests_macos": 15,
+    "affected_tests_linux_python313": 15,
+    "workers_restarted": false,
+    "api_restarted": false,
+    "resource_budgets_changed": false
+  },
+  "source_sha256": {
+    "deploy/host/fleet_peer_push.py": "dd8eec20abdfd7f3d884e9a6ee94246080ab6567d39f6c7b3548ef564356fbae",
+    "deploy/host/newbiegrader-fleet-metrics.service": "2bf3ab10bb250a631f928c06a238eedc26d6a979f0d0b3cc21b8439ce2128d86"
+  },
+  "previous_qualification": "primary-failover-2026-10-27.json"
+}

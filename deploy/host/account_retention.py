@@ -7,7 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-import email_auth
+from account_deletion import AccountDeletion
 import importlib.util
 
 spec = importlib.util.spec_from_file_location("host_backup", Path(__file__).with_name("newbiegrader-backup.py"))
@@ -22,13 +22,8 @@ def maintain(client, settings, *, execute=False):
     finished = failed = 0
     for row in rows:
         try:
-            subject = row.get('auth_subject') or email_auth.find_identity(
-                settings['SUPABASE_URL'], settings['SUPABASE_KEY'], row['email'])
-            if subject:
-                email_auth.delete_identity(settings['SUPABASE_URL'], settings['SUPABASE_KEY'], subject)
-            result = client.rpc('account_delete_finish', {'p_email': row['email']}).execute().data
-            if not result.get('ok'):
-                raise RuntimeError()
+            deletion = AccountDeletion(client, settings['SUPABASE_URL'], settings['SUPABASE_KEY'])
+            deletion.resume(row['email'], row.get('auth_subject'))
             finished += 1
         except Exception:
             failed += 1

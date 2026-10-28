@@ -25,7 +25,7 @@ class CriticalPeerInspection(unittest.TestCase):
         self.email = VIEWER
         self.contests = []
         self.stack.enter_context(patch.object(server, '_sb', self.db))
-        self.stack.enter_context(patch.object(server, 'PROBLEMS', {self.prob.pid: self.prob}))
+        self.stack.enter_context(patch.object(server._catalog, '_problems', {self.prob.pid: self.prob}))
         self.stack.enter_context(patch.object(server, '_is_admin', side_effect=lambda e: e == 'admin@example.invalid'))
         self.stack.enter_context(patch.object(server, '_all_contest_rows', side_effect=lambda: self.contests))
         self.stack.enter_context(patch.object(server, '_contest_pid_cache', {'at': 0, 'all': set(), 'hide': set()}))

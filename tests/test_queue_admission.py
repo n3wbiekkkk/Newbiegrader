@@ -84,9 +84,9 @@ class QueueAdmission(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.fake = FakeSupabase()
         self.patches = [patch.object(server, "_sb", self.fake),
-                        patch.object(server, "PROBLEMS", {"security_canary": synthetic_problem()}),
+                        patch.object(server._catalog, '_problems', {"security_canary": synthetic_problem()}),
                         patch.object(server, "PROBLEM_SOURCE", "local"),
-                        patch.object(server, "_TESTS_HASH_CACHE", {}),
+                        patch.object(server._catalog, '_hashes', {}),
                         patch.object(server, "QUEUE_MODE", "database", create=True),
                         patch.object(server, "GRADER_ROLE", "combined", create=True),
                         patch.object(server, "QUEUE_MAX", 2),

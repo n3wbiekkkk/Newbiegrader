@@ -1,4 +1,5 @@
 """Browsing performance/security regressions; synthetic data, no live services."""
+from critical_helpers import patch_server_state
 from collections import OrderedDict
 from contextlib import ExitStack
 import time
@@ -49,7 +50,7 @@ class ProblemLoading(unittest.TestCase):
             "_PROBLEM_EXTRA": extra, "_problems_refresh_at": time.monotonic(),
             "_contest_pid_cache": {"at": 0.0, "all": set(), "hide": set()},
         }.items():
-            self.stack.enter_context(patch.object(server, name, value))
+            self.stack.enter_context(patch_server_state(server, name, value))
         self.download = self.stack.enter_context(
             patch.object(problem_store, "_download", wraps=problem_store._download))
         app = FastAPI()
@@ -69,7 +70,7 @@ class ProblemLoading(unittest.TestCase):
         self.assertEqual(response.content, PDF)
         self.assertEqual(self.download.call_count, 1)
         self.assertEqual(self.download.call_args.args[2], self.row["statement_pdf_path"])
-        self.assertEqual(len(server.PROBLEMS[self.slug].tests), len(self.problem.samples))
+        self.assertEqual(len(server._catalog._problems[self.slug].tests), len(self.problem.samples))
         self.assertEqual(self.client.get("/api/problems/99/pdf").content, PDF)
         self.assertEqual(self.download.call_count, 1)
 
@@ -90,9 +91,9 @@ class ProblemLoading(unittest.TestCase):
         for policy in ("unpublished", "contest"):
             with self.subTest(policy=policy):
                 if policy == "unpublished":
-                    server.PROBLEMS[self.slug].is_published = False
+                    server._catalog._problems[self.slug].is_published = False
                 else:
-                    server.PROBLEMS[self.slug].is_published = True
+                    server._catalog._problems[self.slug].is_published = True
                     self.fake.tables["contests"] = [{
                         "id": "synthetic-contest", "problems": [self.slug],
                         "hide_from_tasks": True, "starts_at": "2999-01-01T00:00:00+00:00",
@@ -104,8 +105,7 @@ class ProblemLoading(unittest.TestCase):
                 self.download.assert_not_called()
 
     def refresh(self):
-        with patch.object(problem_store, "cache_ttl_s", return_value=0):
-            server._ensure_problems_fresh()
+        self.assertTrue(server._catalog.refresh())
 
     def test_statement_update_invalidates_pdf_without_changing_tests(self):
         first = self.client.get(self.url)
@@ -118,7 +118,7 @@ class ProblemLoading(unittest.TestCase):
         self.assertEqual(response.content, new_pdf)
         self.assertNotEqual(response.headers["etag"], first.headers["etag"])
         self.assertEqual(self.download.call_count, 2)
-        self.assertEqual(server._TESTS_HASH_CACHE[self.slug], self.row["tests_hash"])
+        self.assertEqual(server._catalog._hashes[self.slug], self.row["tests_hash"])
 
     def test_path_change_and_deleted_row_invalidate_pdf_only_cache(self):
         self.client.get(self.url)

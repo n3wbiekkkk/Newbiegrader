@@ -104,6 +104,43 @@ async function emailBotGuard(request, env, path) {
   return { body: JSON.stringify(body) };
 }
 
+// Health probes carry no browser identity and precede the application request.
+// Never retry that request: an origin may have committed a POST before failing.
+async function originReady(binding) {
+  if (typeof binding?.fetch !== 'function') return false;
+  try {
+    const response = await binding.fetch(new Request('http://localhost/api/health', {
+      headers: { 'x-forwarded-proto': 'https', 'cache-control': 'no-cache' },
+      signal: AbortSignal.timeout(1500), redirect: 'manual',
+    }));
+    if (response.status !== 200) { await response.body?.cancel(); return false; }
+    const reader = response.body?.getReader();
+    if (!reader) return false;
+    let text = ''; let size = 0;
+    const decoder = new TextDecoder();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > 2048) { await reader.cancel(); return false; }
+        text += decoder.decode(value, { stream: true });
+      }
+      text += decoder.decode();
+    } finally { reader.releaseLock(); }
+    const value = JSON.parse(text);
+    return value?.ok === true && Number.isInteger(value.count) && value.count > 0;
+  } catch { return false; }
+}
+
+async function selectOrigin(env) {
+  // Preserve the single-origin setup until the optional primary is configured.
+  if (!env.PRIMARY_API) return env.PRIVATE_API;
+  if (await originReady(env.PRIMARY_API)) return env.PRIMARY_API;
+  if (await originReady(env.PRIVATE_API)) return env.PRIVATE_API;
+  return null;
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -146,10 +183,12 @@ export default {
     const verified = await emailBotGuard(request, env, path);
     if (verified.response) return verified.response;
     if (verified.body !== undefined) headers.delete('content-length');
+    const origin = await selectOrigin(env);
+    if (!origin) return new Response('origin unavailable', { status: 503 });
     try {
       // Binding configuration fixes the host/port. Client URLs cannot choose an
       // arbitrary destination. Nginx also enforces actual streamed body size.
-      return await env.PRIVATE_API.fetch(new Request('http://localhost' + url.pathname + url.search, {
+      return await origin.fetch(new Request('http://localhost' + url.pathname + url.search, {
         method: request.method, headers,
         body: ['GET', 'HEAD'].includes(request.method) ? undefined : (verified.body ?? request.body),
         redirect: 'manual',

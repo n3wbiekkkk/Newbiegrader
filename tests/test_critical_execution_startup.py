@@ -18,7 +18,7 @@ class ExecutionStartupTests(unittest.TestCase):
 import importlib.abc, io, json, sys
 class RefuseWeb(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
-        if fullname.split('.')[0] in {'server', 'fastapi', 'supabase', 'email_auth'}:
+        if fullname.split('.')[0] in {'server', 'submission_disclosure', 'fastapi', 'supabase', 'email_auth'}:
             raise AssertionError('web/database import: ' + fullname)
 sys.meta_path.insert(0, RefuseWeb())
 import judge_runner, grader, problem_store

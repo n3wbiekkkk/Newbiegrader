@@ -203,6 +203,10 @@ execution controls; they do not establish the Linux isolation guarantees.
 | --- | --- |
 | `static/`, `functions/` | Browser interface and same-origin API proxy. |
 | `server.py`, `email_auth.py` | API, identity, admission and visibility policy. |
+| `submission_disclosure.py` | Submission disclosure, audience projections and stored feedback. |
+| `account_deletion.py` | Resuming prepared account deletion for web requests and scheduled recovery. |
+| `judge_lifecycle.py` | Owned judging attempts, heartbeat supervision and fenced completion. |
+| `problem_catalog.py` | Catalog snapshots, numeric lookup and coordinated version refresh. |
 | `grader.py`, `judge_execution.py`, `judge_runner.py` | Judging engine and supervised execution. |
 | `worker.py`, `database_client.py` | Dedicated workers and queue transport. |
 | `job_sandbox.py`, `job_resources.py` | Isolation, resource enforcement and cleanup. |

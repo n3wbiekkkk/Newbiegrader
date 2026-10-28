@@ -1,0 +1,31 @@
+[Unit]
+Description=Private Newbiegrader fleet metrics and primary health
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+ExecStartPre=/usr/sbin/nginx -t -c /etc/nginx/newbiegrader-fleet.conf
+ExecStart=/usr/sbin/nginx -c /etc/nginx/newbiegrader-fleet.conf -g "daemon off;"
+Restart=on-failure
+RestartSec=5
+RuntimeDirectory=newbiegrader-fleet
+RuntimeDirectoryMode=0750
+MemoryMax=32M
+MemorySwapMax=0
+CPUQuota=5%
+TasksMax=16
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ReadWritePaths=/var/lib/newbiegrader/fleet-peer-metrics /var/lib/newbiegrader/fleet-nginx
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

@@ -43,7 +43,7 @@ jobs:
           pip-audit -r deploy/host/requirements.lock
 
       - name: Byte-compile Python sources
-        run: python3 -m compileall -q grader.py server.py judge_runner.py judge_execution.py worker.py container_entrypoint.py job_sandbox.py job_resources.py email_auth.py problem_store.py tools deploy/host
+        run: python3 -m compileall -q grader.py server.py submission_disclosure.py account_deletion.py judge_lifecycle.py problem_catalog.py judge_runner.py judge_execution.py worker.py container_entrypoint.py job_sandbox.py job_resources.py email_auth.py problem_store.py tools deploy/host
 
       - name: Syntax check frontend
         run: node --check static/app.js

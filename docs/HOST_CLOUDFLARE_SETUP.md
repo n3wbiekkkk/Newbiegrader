@@ -1,18 +1,26 @@
 # Private Cloudflare transport
 
-Requests follow Pages Function → private Worker service binding → one VPC
-Service → named tunnel → loopback Nginx (8081) → FastAPI (8000). No public origin
-HTTP listener is required. Production uses `newbiegrader-pc-production` and the
-dedicated `newbiegrader-home-api` tunnel on the homeserver. The existing Worker
-and VPC service labels retain their PC names for binding compatibility. A separate gated staging Pages project is used for
-qualification; it is not a production dependency.
+Requests follow Pages Function → private Worker service binding → a selected VPC
+Service → that host's named QUIC tunnel → loopback Nginx (8081) → FastAPI (8000).
+No public origin HTTP listener is required. The production bridge remains
+`newbiegrader-pc-production`; its `PRIMARY_API` binding selects the restored
+primary and `PRIVATE_API` retains the homeserver as a separate warm backup.
 
-As of 2026-10-25, the VPC service selects only the homeserver's own tunnel ID.
-The PC's original tunnel is no longer the API destination: powering the PC back
-on can restore its four database workers without routing public requests to its
-older API release. The homeserver keeps two workers, for an approved six-worker
-target; the actual six-worker fleet still requires live verification. No origin
-listener was opened beyond loopback and the retired AWS route was untouched.
+As of 2026-10-27, the bridge probes primary anonymous `/api/health` before sending
+an application request. Probes carry no browser cookies or authorization, have a
+1.5-second timeout and a 2-KiB response bound, and require a nonempty ready
+catalog. An unhealthy primary selects a healthy backup; both unhealthy returns
+503. A request already forwarded to either origin is never retried on the other
+origin, including POSTs whose result is ambiguous. Subsequent requests recheck
+readiness and return to the primary after recovery. Each probe adds an origin
+round trip; it does not cache browser identity or share in-flight request state.
+
+Both origins must run the qualified compatible release, current signing key,
+cookie configuration and matching protected files against the same durable queue.
+Never bind both hosts to one tunnel token: returning stale connectors could
+otherwise receive traffic. The controlled cutover verified session/history
+continuity, backup-only judging and automatic failback. See the
+[activation record](releases/primary-failover-2026-10-27.json).
 
 The bridge fixes its VPC destination and requires a server-side shared key for
 all API paths except anonymous health. Pages strips incoming proxy/staging keys,
@@ -52,7 +60,7 @@ rate-limit bindings reject excess requests before they reach the PC:
 | `EXECUTION_RATE_LIMIT` | 600 across submit/run POSTs |
 
 These deliberately generous network ceilings accommodate shared classroom IPs.
-The database's stricter account quotas, one-active-job rule and 25-job queue cap
+The database's stricter account quotas, one-active-job rule and 50-job queue cap
 remain authoritative. Rate counts are approximate and local to a Cloudflare
 location; they are not a worldwide admission budget or a guaranteed DDoS limit.
 Use dedicated, stable rate-limit namespace IDs for this project. Missing bindings

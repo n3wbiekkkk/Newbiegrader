@@ -24,6 +24,17 @@ timestamp into the inserted history row. Apply SQL before the matching backend
 under the normal reviewed rollout; the standalone patch is also appended to
 the canonical schema.
 
+`judge_lifecycle.py` owns each judging attempt's private claim snapshot,
+execution/heartbeat supervision and completion. Its database adapter always
+heartbeats and finishes with the captured worker/attempt fence; status polls
+update separate observations and cannot replace it. Its local adapter retains
+the best-effort completion, redacted result, source/payload cleanup and admission
+release behavior. Cancellation waits for isolated execution cleanup before the
+caller releases its host slot. Ambiguous claim and completion replies are never
+replayed within the same attempt. Admission, polling/backoff, role preflight,
+problem preparation and submission-row construction remain in their existing
+modules; the credential-free executor and atomic database RPCs are unchanged.
+
 Roles in database mode:
 
 | Role | Command | Responsibility |

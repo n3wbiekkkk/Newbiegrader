@@ -12,6 +12,7 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 import grader
 from critical_helpers import synthetic_problem, test_server
+from critical_helpers import patch_server_state
 from fake_supabase import FakeSupabase
 
 server = test_server()
@@ -33,10 +34,10 @@ class CriticalPracticeFeedback(unittest.TestCase):
                            'QUEUE_MODE': 'local', 'PROBLEM_SOURCE': 'local',
                            'JUDGE_JOBS': 1, 'MEMORY_CAP_MB': 128, '_jobs': {},
                            '_active_jobs': {}}.items():
-            self.stack.enter_context(patch.object(server, key, value))
+            self.stack.enter_context(patch_server_state(server, key, value))
         self.stack.enter_context(patch.object(server, '_contest_policy_rows', side_effect=lambda **_kwargs: self.contests))
         # Peer detail reads the freshest contest policy from the DB, not the
-        # cached feedback policy used by _effective_reveal.
+        # feedback-policy adapter used by admission disclosure.
         self.stack.enter_context(patch.object(server, '_all_contest_rows', side_effect=lambda: self.contests))
         self.stack.enter_context(patch.dict(os.environ, {'GRADER_REQUIRE_NETNS': '0'}))
         app = FastAPI()
@@ -77,6 +78,7 @@ class CriticalPracticeFeedback(unittest.TestCase):
                     asyncio.run(server._run_job(job))
                 return job, captured['p_result'], captured['p_submission']
             asyncio.run(server._run_job(job))
+        job = server._jobs[job['id']]
         self.assertEqual(job['status'], 'done', job.get('error'))
         return job, self.fake.tables['judge_jobs'][-1]['result'], self.fake.tables['submissions'][-1]
 
@@ -114,28 +116,28 @@ class CriticalPracticeFeedback(unittest.TestCase):
             self.assertFalse({'input','expected','actual','diff','practice_feedback'} & hidden.keys())
 
     def test_critical_omitting_contest_parameter_never_opens_protected_problem(self):
-        self.assertEqual(server._effective_reveal(None, EMAIL, self.prob.pid), server.REVEAL_PRACTICE)
+        self.assertEqual(server._disclosure.admission_reveal(None, EMAIL, self.prob.pid), server.REVEAL_PRACTICE)
         for upcoming in (False, True):
             for samples in (False, True):
                 self.contests[:] = [self.contest(upcoming=upcoming, show_samples=samples)]
                 expected = server.REVEAL_NONE if not upcoming and not samples else server.REVEAL_SAMPLES
-                self.assertEqual(server._effective_reveal(None, EMAIL, self.prob.pid), expected)
-                self.assertNotEqual(server._effective_reveal(self.contests[0], EMAIL, self.prob.pid), server.REVEAL_PRACTICE)
+                self.assertEqual(server._disclosure.admission_reveal(None, EMAIL, self.prob.pid), expected)
+                self.assertNotEqual(server._disclosure.admission_reveal(self.contests[0], EMAIL, self.prob.pid), server.REVEAL_PRACTICE)
 
     def test_critical_feedback_eligibility_bypasses_stale_cross_replica_contest_cache(self):
         with patch.object(server, '_contest_policy_rows', wraps=ORIGINAL_CONTEST_POLICY), \
                 patch.object(server, '_cached_contest_rows', return_value=[]) as cached, \
                 patch.object(server, '_all_contest_rows', return_value=[self.contest()]) as fresh:
-            self.assertEqual(server._effective_reveal(None, EMAIL, self.prob.pid), server.REVEAL_SAMPLES)
+            self.assertEqual(server._disclosure.admission_reveal(None, EMAIL, self.prob.pid), server.REVEAL_SAMPLES)
             fresh.assert_called_once_with()
             cached.assert_not_called()
 
     def test_critical_policy_outage_and_invalid_contest_time_fail_closed(self):
         with patch.object(server, '_contest_policy_rows', side_effect=RuntimeError('synthetic outage')):
-            self.assertEqual(server._effective_reveal(None, EMAIL, self.prob.pid), server.REVEAL_NONE)
+            self.assertEqual(server._disclosure.admission_reveal(None, EMAIL, self.prob.pid), server.REVEAL_NONE)
         for bad in (None, 'invalid', '2026-10-18T00:00:00'):
             self.contests[:] = [self.contest() | {'ends_at': bad}]
-            self.assertEqual(server._effective_reveal(None, EMAIL, self.prob.pid), server.REVEAL_NONE)
+            self.assertEqual(server._disclosure.admission_reveal(None, EMAIL, self.prob.pid), server.REVEAL_NONE)
 
     def test_critical_prior_practice_history_and_job_are_redacted_when_contest_is_scheduled(self):
         job, _, row = self.execute('print("wrong")\n')

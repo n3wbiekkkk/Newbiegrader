@@ -85,11 +85,12 @@ class CriticalBackendFiles(unittest.TestCase):
         path.chmod(0o600);path.write_bytes(b'SYNTHETIC CORRUPTION');path.chmod(0o400)
         with patch.object(server,'GRADER_ROLE','worker'),patch.object(server,'PROBLEM_SOURCE','supabase'), \
                 patch.object(server,'_sb',self.fake),patch.object(server,'_jobs',{}), \
-                patch.object(server,'_finish_job',new_callable=AsyncMock) as finish, \
+                patch.object(server,'QUEUE_MODE','local'), \
                 patch('judge_runner.run_isolated',new_callable=AsyncMock) as run:
             asyncio.run(server._run_job({'id':'synthetic','kind':'submit','problem':self.prob.pid,
                                         'tests_hash':self.row['tests_hash']}))
-        run.assert_not_awaited();self.assertEqual(finish.call_args.kwargs,{'error':'problem store unavailable'})
+            self.assertEqual(server._jobs['synthetic']['error'],'problem store unavailable')
+        run.assert_not_awaited()
 
     def test_critical_symlinks_hardlinks_permissions_and_traversal_rejected(self):
         for name in ['../outside','/absolute','x//y','x/./y','x\\y','x\ny']:
@@ -217,7 +218,7 @@ class CriticalBackendFiles(unittest.TestCase):
         req=Request({'type':'http','session':{}})
         with patch.object(server,'PROBLEM_SOURCE','supabase'),patch.object(server,'_ensure_problems_fresh'), \
                 patch.object(server,'_meta_or_404',return_value=self.prob),patch.object(server,'_visible_to',return_value=True), \
-                patch.object(server,'_live_hidden_pids',return_value=set()),patch.object(server,'_is_admin',return_value=False), \
+                patch.object(server._disclosure,'hidden_sample_problems',return_value=set()),patch.object(server,'_is_admin',return_value=False), \
                 patch.object(problem_store,'fetch_row',side_effect=AssertionError('sample bytes from DB')):
             resp=Response()
             result=server.problem_sample(req,self.prob.pid,self.prob.samples[0],resp);self.assertEqual(result['input'],self.prob.tests[0].input)
@@ -232,7 +233,7 @@ class CriticalBackendFiles(unittest.TestCase):
         meta,_=problem_store.load_meta(self.prob.pid,self.fake)
         self.assertEqual(len(meta.tests),0)
         with patch.object(server,'PROBLEM_SOURCE','supabase'),patch.object(server,'_sb',self.fake), \
-                patch.object(server,'PROBLEMS',{self.prob.pid:meta}):
+                patch.object(server._catalog, '_problems',{self.prob.pid:meta}):
             loaded=server._problem_or_404(self.prob.pid)
         self.assertEqual(grader.tests_hash(loaded),self.row['tests_hash'])
 

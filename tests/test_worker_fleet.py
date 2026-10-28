@@ -1,3 +1,4 @@
+from critical_helpers import patch_server_state
 import copy
 import importlib.util
 import json
@@ -140,7 +141,7 @@ class FleetSnapshotTests(unittest.TestCase):
                                 '_ensure_problems_fresh': lambda: None, '_hidden_pids': lambda: [],
                                 '_contest_problem_sets': lambda: (set(), set()), 'PROBLEMS': {},
                                 'QUEUE_MODE': 'local'}.items():
-                stack.enter_context(patch.object(server, name, value))
+                stack.enter_context(patch_server_state(server, name, value))
             result = asyncio.run(server.admin_overview(request))
             self.assertEqual(result['jobs']['workers'], 12)
             self.snapshot['checked_at'] = 0

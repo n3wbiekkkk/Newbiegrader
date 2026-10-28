@@ -66,10 +66,37 @@ No external module is required for an ordinary Newbiegrader deployment.
 
 | Node | Application responsibility | Worker allocation |
 | --- | --- | --- |
+| promma-server | Primary API, Nginx/tunnel and durable workers | 4 × one CPU / 1 GiB; API separate one CPU / 320 MiB |
 | ubuntu-pc | Native judge workers | 10 × one CPU / 1 GiB, aggregate 10 CPUs / 10 GiB |
-| homeserver | API, Nginx/tunnel, durable workers, retention, backups and watchdog | 2 × one CPU / 1 GiB; API separate one CPU / 320 MiB |
+| homeserver | Warm backup API/tunnel, durable workers, retention, backups and watchdog | 2 × one CPU / 1 GiB; API separate one CPU / 320 MiB |
 
 PC Desktop Mode or an offline PC contributes zero observed ready workers; the
-homeserver API and its two workers continue independently. General monitor and
+primary and homeserver APIs and their six workers continue independently. General monitor and
 cloud services share the PC, but their budgets are maintained separately. This
 allocation is not a sustained simultaneous-user qualification.
+
+## Shared-tailnet observation
+
+The primary's device share permits incoming peer connections but cannot initiate
+connections to the homeserver. The homeserver therefore pushes four numeric node-worker metrics for each
+selected node with `fleet_peer_push.py` after collection. Its own observations
+come from the local metrics file; auxiliary-PC observations are read from the
+fixed private PC metrics URL with `--metrics-url` and relayed to a separate exact
+receiver path. This avoids the primary's blocked direct primary-to-PC observation
+path while preserving the PC's original collection timestamp.
+No hardware, application, queue, identity or other-node fields are sent. The
+primary receiver permits a bounded PUT to one exact path from the selected peer
+Tailscale address. Freshness, integral capacity and configured bounds still apply
+when the observer reads that file; stale pushes cannot keep a peer online.
+
+`newbiegrader-fleet-metrics.service` runs a separate unprivileged Nginx instance
+on the primary's private tailnet address. It serves only aggregate metrics and
+anonymous primary health, with an exact-path peer upload. A missing tailnet
+address restarts this observer listener without preventing the main loopback
+API Nginx from starting. It is not a second general API listener.
+
+Validate the private metrics Nginx config as its actual `www-data` service user.
+The unit runs that preflight before startup. Running `nginx -t` as root without a
+`user` directive can change its private temporary-directory ownership to nginx's
+default account, causing later peer uploads to fail. Keep the temporary directories
+owned by the service account with mode 0700; no executor permission is changed.

@@ -14,7 +14,7 @@ function harness(vars = {}) {
   }
   const crypto = { subtle: { digest: webcrypto.subtle.digest.bind(webcrypto.subtle),
     timingSafeEqual: (a, b) => timingSafeEqual(Buffer.from(a), Buffer.from(b)) } };
-  const context = vm.createContext({ URL, Request: CompatibleRequest, Response, Headers, TextEncoder, crypto });
+  const context = vm.createContext({ URL, Request: CompatibleRequest, Response, Headers, TextEncoder, TextDecoder, AbortSignal, crypto });
   vm.runInContext(source, context);
   const env = { PRIVATE_API: { fetch: async request => {
     calls.push(request);
@@ -90,4 +90,77 @@ test('missing private binding and upstream failure return generic errors', async
   const r = await h.run('https://bridge.invalid/api/health');
   assert.equal(r.status, 502);
   assert.equal(await r.text(), 'origin unavailable');
+});
+
+test('healthy primary receives the request after an anonymous bounded probe', async () => {
+  const calls = [];
+  const primary = { fetch: async request => {
+    calls.push(request);
+    return request.url.endsWith('/api/health') ? Response.json({ ok: true, count: 100 }) : new Response('primary');
+  } };
+  const key = 'x'.repeat(64);
+  const h = harness({ PRIMARY_API: primary, API_ENABLED: '1', BACKEND_PROXY_KEY: key });
+  const response = await h.run('https://bridge.invalid/api/submit', {
+    method: 'POST', body: 'one submission', headers: { cookie: 'private-cookie', 'x-newbiegrader-proxy-key': key },
+  });
+  assert.equal(await response.text(), 'primary');
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].headers.get('cookie'), null);
+  assert.equal(calls[0].headers.get('x-newbiegrader-proxy-key'), null);
+  assert.equal(calls[1].headers.get('cookie'), 'private-cookie');
+  assert.equal(await calls[1].text(), 'one submission');
+  assert.equal(h.calls.length, 0);
+});
+
+test('unhealthy primary selects a healthy backup before forwarding the POST once', async () => {
+  for (const health of [() => { throw new Error('offline'); }, () => new Response('', { status: 503 }),
+    () => Response.json({ ok: true, count: 0 }), () => new Response('x'.repeat(2049)),
+    () => new Response('invalid json')]) {
+    const calls = [];
+    const key = 'x'.repeat(64);
+    const h = harness({ PRIMARY_API: { fetch: health }, API_ENABLED: '1', BACKEND_PROXY_KEY: key,
+      PRIVATE_API: { fetch: async request => {
+        calls.push(request);
+        return request.url.endsWith('/api/health') ? Response.json({ ok: true, count: 100 }) : new Response('backup');
+      } } });
+    const response = await h.run('https://bridge.invalid/api/submit', {
+      method: 'POST', body: 'one submission', headers: { 'x-newbiegrader-proxy-key': key },
+    });
+    assert.equal(await response.text(), 'backup');
+    assert.equal(calls.filter(r => r.method === 'POST').length, 1);
+  }
+});
+
+test('a failed forwarded POST is never replayed at backup and probes recover on the next request', async () => {
+  const calls = [];
+  let healthy = true;
+  const key = 'x'.repeat(64);
+  const h = harness({ API_ENABLED: '1', BACKEND_PROXY_KEY: key, PRIMARY_API: { fetch: async request => {
+    calls.push(request);
+    if (request.url.endsWith('/api/health')) return Response.json({ ok: healthy, count: 100 });
+    throw new Error('ambiguous committed POST');
+  } }, PRIVATE_API: { fetch: async request => {
+    calls.push(request);
+    return request.url.endsWith('/api/health') ? Response.json({ ok: true, count: 100 }) : new Response('backup');
+  } } });
+  const init = () => ({ method: 'POST', body: 'one submission', headers: { 'x-newbiegrader-proxy-key': key } });
+  assert.equal((await h.run('https://bridge.invalid/api/submit', init())).status, 502);
+  assert.equal(calls.filter(r => r.method === 'POST').length, 1);
+  healthy = false;
+  assert.equal(await (await h.run('https://bridge.invalid/api/submit', init())).text(), 'backup');
+  assert.equal(calls.filter(r => r.method === 'POST').length, 2);
+  healthy = true;
+  assert.equal((await h.run('https://bridge.invalid/api/submit', init())).status, 502);
+  assert.equal(calls.filter(r => r.method === 'POST').length, 3);
+});
+
+test('both unavailable origins return 503 without forwarding application requests', async () => {
+  const calls = [];
+  const unavailable = { fetch: async request => { calls.push(request); return new Response('', { status: 503 }); } };
+  const key = 'x'.repeat(64);
+  const h = harness({ API_ENABLED: '1', BACKEND_PROXY_KEY: key, PRIMARY_API: unavailable, PRIVATE_API: unavailable });
+  assert.equal((await h.run('https://bridge.invalid/api/submit', {
+    method: 'POST', body: 'one submission', headers: { 'x-newbiegrader-proxy-key': key },
+  })).status, 503);
+  assert.equal(calls.filter(r => r.method === 'POST').length, 0);
 });

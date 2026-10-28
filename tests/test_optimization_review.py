@@ -1,4 +1,5 @@
 """Synthetic DeepSeek review: query budgets, parity and fail-closed reads."""
+from critical_helpers import patch_server_state
 from contextlib import ExitStack
 import copy
 import datetime as dt
@@ -21,7 +22,7 @@ class OptimizationReview(unittest.TestCase):
         for key, value in {'_sb': self.fake, 'PROBLEMS': {self.prob.pid: self.prob},
                            '_reg_table_ok': {'value': True},
                            '_reg_count_cache': {'at': 0., 'counts': {}}}.items():
-            self.stack.enter_context(patch.object(server, key, value))
+            self.stack.enter_context(patch_server_state(server, key, value))
         self.table = self.stack.enter_context(patch.object(self.fake, 'table', wraps=self.fake.table))
 
     def contest(self, cid):
@@ -163,7 +164,7 @@ class OptimizationReview(unittest.TestCase):
 
     def test_browser_metadata_cache_varies_by_cookie_and_authorization(self):
         request=Request({'type':'http','session':{}})
-        with patch.object(server,'_ensure_problems_fresh'),patch.object(server,'_TESTS_HASH_CACHE',{}):
+        with patch.object(server,'_ensure_problems_fresh'),patch.object(server._catalog, '_hashes',{}):
             for endpoint in (server.health,server.list_problems,server.version):
                 with self.subTest(endpoint=endpoint.__name__):
                     response=Response()

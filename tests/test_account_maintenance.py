@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import Mock, patch
 from types import SimpleNamespace
 from deploy.host import account_retention
+import account_deletion
 
 from deploy.host.prune_operator_backups import expired_archives, reviewed_archives
 import hashlib
@@ -107,6 +108,26 @@ class BackupRetention(unittest.TestCase):
         self.assertEqual(json.loads(calls[-1].data), {'prefixes': [old]})
         self.assertEqual(calls[-1].get_header('Content-type'), 'application/json')
 
+    def test_host_backup_retention_stays_inside_its_namespace(self):
+        old = '20000101T000000Z-backup.tar.age'
+        calls = []
+        def open_(request, **kwargs):
+            calls.append(request)
+            return io.BytesIO(json.dumps([{'name': old}, {'name': 'hosts'},
+                {'name': '../other/' + old}]).encode() if request.get_method() == 'POST' else b'{}')
+        with patch.object(backup.urllib.request, 'urlopen', side_effect=open_):
+            self.assertEqual(backup.prune('https://synthetic.invalid', 'synthetic-secret',
+                'synthetic-bucket', 14, prefix='hosts/promma-server/'), ['hosts/promma-server/' + old])
+        self.assertEqual(json.loads(calls[0].data)['prefix'], 'hosts/promma-server/')
+        self.assertEqual(json.loads(calls[-1].data), {'prefixes': ['hosts/promma-server/' + old]})
+
+    def test_backup_namespace_rejects_traversal_and_ambiguous_paths(self):
+        self.assertEqual(backup.object_prefix(''), '')
+        self.assertEqual(backup.object_prefix('hosts/promma-server'), 'hosts/promma-server/')
+        for value in ('../other', '/root', 'hosts//other', 'hosts/../other', 'a?b', 'a\\b'):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                backup.object_prefix(value)
+
     def test_remote_prune_errors_are_visible_to_backup_monitoring(self):
         with patch.object(backup.urllib.request, 'urlopen', side_effect=OSError('synthetic')):
             with self.assertRaises(OSError):
@@ -139,7 +160,7 @@ class AccountDeletionRecovery(unittest.TestCase):
 
     def test_default_dry_run_never_deletes_or_prunes(self):
         client = self.client()
-        with patch.object(account_retention.email_auth, 'delete_identity') as provider:
+        with patch.object(account_deletion.email_auth, 'delete_identity') as provider:
             result = account_retention.maintain(client, {})
         self.assertEqual(result, {'execute': False, 'pending_deletions': 1})
         provider.assert_not_called()
@@ -149,7 +170,7 @@ class AccountDeletionRecovery(unittest.TestCase):
         client = self.client()
         sequence = []
         client.rpc.side_effect = lambda name, params: sequence.append(name) or client.rpc.return_value
-        with patch.object(account_retention.email_auth, 'delete_identity',
+        with patch.object(account_deletion.email_auth, 'delete_identity',
                 side_effect=lambda *args: sequence.append('provider')):
             result = account_retention.maintain(client,
                 {'SUPABASE_URL': 'https://synthetic.invalid', 'SUPABASE_KEY': 'synthetic'}, execute=True)
@@ -160,7 +181,7 @@ class AccountDeletionRecovery(unittest.TestCase):
     def test_provider_failure_keeps_pending_work_and_reports_failure(self):
         client = self.client()
         client.rpc.return_value.execute.side_effect = [SimpleNamespace(data={'jobs': 0, 'submissions': 0})]
-        with patch.object(account_retention.email_auth, 'delete_identity', side_effect=RuntimeError('private sentinel')):
+        with patch.object(account_deletion.email_auth, 'delete_identity', side_effect=RuntimeError('private sentinel')):
             result = account_retention.maintain(client,
                 {'SUPABASE_URL': 'https://synthetic.invalid', 'SUPABASE_KEY': 'synthetic'}, execute=True)
         self.assertEqual(result['failed'], 1)

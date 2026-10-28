@@ -24,8 +24,8 @@ class SubmissionIntegrity(unittest.TestCase):
 
     def test_persisted_hash_comes_from_the_executed_suite(self):
         prob = synthetic_problem()
-        with patch.object(server, "PROBLEMS", {prob.pid: prob}), \
-                patch.object(server, "_TESTS_HASH_CACHE", {prob.pid: "stale-cached-hash"}):
+        with patch.object(server._catalog, '_problems', {prob.pid: prob}), \
+                patch.object(server._catalog, '_hashes', {prob.pid: "stale-cached-hash"}):
             row = server._submission_row({"problem": prob.pid, "tests_hash": "admission-hash"},
                                          {"tests_hash": "executed-suite-hash", "results": []})
         self.assertEqual(row["tests_hash"], "executed-suite-hash")

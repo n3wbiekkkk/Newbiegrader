@@ -18,7 +18,6 @@ import hmac
 import ipaddress
 import json
 import logging
-import math
 import os
 import re
 import secrets
@@ -61,12 +60,66 @@ sys.path.insert(0, str(ROOT))
 
 import grader  # noqa: E402  (CLI grader module, import-safe: guarded by __main__)
 import problem_store  # noqa: E402  (local|supabase problem repository, storage only)
+from problem_catalog import ProblemCatalog  # noqa: E402
 import email_auth  # noqa: E402
+from account_deletion import AccountDeletion, DeletionIncomplete  # noqa: E402
+from judge_lifecycle import Completion, DatabaseJobs, JobLifecycle, LocalJobs  # noqa: E402
 import judge_execution  # noqa: E402
 from judge_execution import (  # noqa: E402
     REVEAL_ALL, REVEAL_SAMPLES, REVEAL_NONE, REVEAL_PRACTICE,
     DETAIL_HEAD, RUN_OUTPUT_MAX, _plain_text, _redact_results, _sanitize_compile_error,
 )
+
+from submission_disclosure import (  # noqa: E402
+    ContestUnavailable, DisclosureDenied, SubmissionDisclosure,
+    contest_times_valid as _contest_times_valid,
+    public_display_name as _public_display_name,
+)
+
+
+class _DisclosureSource:
+    """Current backend facts; disclosure decisions belong to the module."""
+    def contests(self):
+        return _contest_policy_rows(fresh=True)
+
+    def peer_contests(self):
+        return _all_contest_rows()
+
+    def contest(self, cid):
+        try:
+            return _contest_or_404(cid)
+        except HTTPException as exc:
+            raise ContestUnavailable from exc
+
+    def publication(self, pid):
+        prob = _catalog.problems.get(pid)
+        if prob is None:
+            return None
+        if PROBLEM_SOURCE == "supabase":
+            if _sb is None:
+                raise RuntimeError("publication storage unavailable")
+            rows = (_sb.table("problems").select("slug,is_published,hidden")
+                    .eq("slug", pid).limit(1).execute()).data or []
+            if not rows:
+                return None
+            return {"is_published": _parse_bool(rows[0].get("is_published"), False),
+                    "hidden": _parse_bool(rows[0].get("hidden"), False)}
+        return {"is_published": bool(getattr(prob, "is_published", True)),
+                "hidden": bool(getattr(prob, "hidden", False))}
+
+    def sample_names(self, pid):
+        prob = _catalog.problems.get(pid)
+        return grader.sample_names(prob) if prob else set()
+
+    def resolve_pid(self, token):
+        return _resolve_pid(token)
+
+    def is_admin(self, email):
+        return _is_admin(email)
+
+
+_disclosure = SubmissionDisclosure(_DisclosureSource())
+
 
 class AuthQueryLogFilter(logging.Filter):
     """Uvicorn logs a raw request target, including OAuth bearer query values."""
@@ -83,7 +136,7 @@ logging.getLogger("uvicorn.access").addFilter(AuthQueryLogFilter())
 
 STATIC_DIR = ROOT / "static"
 
-BUILD_SOURCE_FILES = ("grader.py", "server.py", "judge_runner.py", "judge_execution.py", "job_resources.py", "problem_store.py", "backend_problem_files.py", "worker_fleet.py",
+BUILD_SOURCE_FILES = ("grader.py", "server.py", "judge_runner.py", "judge_execution.py", "submission_disclosure.py", "account_deletion.py", "judge_lifecycle.py", "problem_catalog.py", "job_resources.py", "problem_store.py", "backend_problem_files.py", "worker_fleet.py",
                       "container_entrypoint.py", "worker.py", "job_sandbox.py", "email_auth.py", "database_client.py")
 
 
@@ -1022,16 +1075,7 @@ async def _load_job(jid: str) -> Optional[dict]:
     if not rows:
         return None
     row = dict(rows[0])
-    # A status poll may refresh progress and the terminal result, never the
-    # ownership: if this process is running the job, the identity it claimed with
-    # is what the completion fence must use. Refreshing worker_id/attempt here
-    # would let a worker whose lease already expired finish the job under the new
-    # owner's identity.
-    running = _jobs.get(jid) or {}
-    if running.get("status") == "running" and running.get("worker_id"):
-        for key in ("worker_id", "attempt", "started_at"):
-            if running.get(key) is not None:
-                row[key] = running[key]
+    # Polls update observations only; JobLifecycle holds its own claim snapshot.
     if row.get("status") == "done" and isinstance(row.get("result"), dict):
         job = _remember_job(row)
         job["result"] = row["result"]
@@ -1131,51 +1175,14 @@ async def _recover_jobs() -> None:
               file=sys.stderr)
 
 
-async def _finish_job(jid: str, *, result: Optional[dict] = None, stored: Optional[dict] = None,
-                      error: str = "", submission: Optional[dict] = None) -> None:
-    job = _jobs.get(jid) or {"id": jid}
-    if job.get("kind") != "playground":
-        if result is not None:
-            result = _result_with_reveal(job, result, job.get("reveal") or REVEAL_SAMPLES)
-        if stored is not None or result is not None:
-            stored = _stored_result(job, stored if stored is not None else result)
+def _job_lifecycle() -> JobLifecycle:
+    from judge_runner import run_isolated
     if QUEUE_MODE == "database":
-        response = await _queue_rpc("finish", p_id=jid, p_worker=job.get("worker_id"),
-                                    p_attempt=job.get("attempt"), p_error=error,
-                                    p_result=stored if stored is not None else result,
-                                    p_submission=submission)
-        if response.get("applied"):
-            _bust_cache()
-        _jobs.pop(jid, None)
-        return
-    job["status"] = "error" if error else "done"
-    job["error"] = error
-    if result is not None:
-        # Local mode keeps the same redacted variant the database queue stores.
-        # The requester-privileged view (REVEAL_ALL on admin rejudges) must not
-        # live in a record the submission owner can poll; job_status re-applies
-        # the job's policy per request.
-        job["result"] = result if job.get("kind") == "playground" else (
-            stored if stored is not None else result)
-    job["finished_at"] = _iso_now()
-    job.setdefault("created_monotonic", time.monotonic())
-    # The submission row already owns the validated source. Polling terminal
-    # jobs needs only the result, not another retained source/input copy.
-    job.pop("source", None)
-    job.pop("payload", None)
-    _jobs[jid] = job
-    email = job.get("user_email") or ""
-    if email in _active_jobs:
-        _active_jobs[email].discard(jid)
-        if not _active_jobs[email]:
-            _active_jobs.pop(email, None)
-    await _update_job_db(jid, {"status": job["status"], "error": error,
-                               "finished_at": job["finished_at"],
-                               "result": stored if stored is not None else result,
-                               # The row already owns the source. Do not keep
-                               # a second copy in the status record.
-                               "source": ""})
-    _prune_jobs()
+        backend = DatabaseJobs(_queue_rpc, _jobs, _bust_cache,
+            heartbeat_seconds=HEARTBEAT_SECONDS, lease_seconds=LEASE_SECONDS)
+    else:
+        backend = LocalJobs(_jobs, _active_jobs, _update_job_db, _prune_jobs, _iso_now)
+    return JobLifecycle(backend, _disclosure, run_isolated)
 
 
 async def _judge_worker(idx: int) -> None:
@@ -1201,10 +1208,15 @@ async def _judge_worker(idx: int) -> None:
             except Exception as e:
                 print(f"[web] worker unavailable: {e}", file=sys.stderr)
                 poll_delay = min(30.0, max(1.0, poll_delay * 2))
+            finally:
+                # The lifecycle owns a copy; do not retain the original source
+                # or playground input while an idle worker waits for more work.
+                job = None
             await asyncio.sleep(poll_delay)
             continue
         # A queue token is a wakeup; choose student work before a rejudge.
         await _queue().get()
+        job = None
         try:
             async with _host_slot():
                 with _admission_lock:
@@ -1220,18 +1232,25 @@ async def _judge_worker(idx: int) -> None:
         except Exception:
             traceback.print_exc()
             if job:
-                await _finish_job(job["id"], error="worker crashed")
+                await _job_lifecycle().complete(job, Completion(error="worker crashed"))
         finally:
+            job = None
             _queue().task_done()
 
 
 async def _run_job(job: dict) -> None:
     if GRADER_ROLE == "api":
         raise RuntimeError("API role cannot execute judge jobs")
+    await _job_lifecycle().run(job, _prepare_and_judge)
+
+
+async def _prepare_and_judge(job: dict, execute) -> Completion:
+    if GRADER_ROLE == "api":
+        raise RuntimeError("API role cannot execute judge jobs")
     jid = job["id"]
-    _jobs[jid] = job
+    _jobs[jid] = dict(job)
     playground = job.get("kind") == "playground"
-    prob = PROBLEMS.get(job.get("problem", ""))
+    prob = _catalog.problems.get(job.get("problem", ""))
     if not playground and PROBLEM_SOURCE == "supabase":
         # Revalidate each job, even if this worker already holds a full suite.
         # Keep the executed suite consistent with the admitted test hash.
@@ -1240,28 +1259,21 @@ async def _run_job(job: dict) -> None:
             prob = await asyncio.to_thread(problem_store.load_problem_supabase, slug, _sb)
             actual_hash = grader.tests_hash(prob)
             if job.get("tests_hash") and job["tests_hash"] != actual_hash:
-                await _finish_job(jid, error="problem version changed; resubmit required")
-                return
-            if problem_store.backend_problem_files.backend() != "local":
-                PROBLEMS[prob.pid] = prob
-            _TESTS_HASH_CACHE[prob.pid] = actual_hash
+                return Completion(error="problem version changed; resubmit required")
+            _catalog.record_judged(prob, actual_hash)
         except problem_store.ProblemNotFound:
-            await _finish_job(jid, error="unknown problem")
-            return
+            return Completion(error="unknown problem")
         except Exception:
-            await _finish_job(jid, error="problem store unavailable")
-            return
+            return Completion(error="problem store unavailable")
     if prob is None and not playground:
-        await _finish_job(jid, error=f"unknown problem: {job.get('problem')}")
-        return
+        return Completion(error=f"unknown problem: {job.get('problem')}")
     if prob is not None and not getattr(prob, "is_published", True):
         # Unpublished after enqueue: refuse to judge (explicit, not silent).
-        await _finish_job(jid, error=f"unknown problem: {job.get('problem')}")
-        return
+        return Completion(error=f"unknown problem: {job.get('problem')}")
     ext = str(LANGS.get(job.get("language", ""), {}).get("ext") or ".py")
     job["status"] = "running"
     job["started_at"] = _iso_now()
-    _jobs[jid] = job
+    _jobs[jid] = dict(job)
     if QUEUE_MODE == "local":
         await _update_job_db(jid, {"status": "running", "started_at": job["started_at"]})
     reveal = job.get("reveal") or REVEAL_SAMPLES
@@ -1278,37 +1290,20 @@ async def _run_job(job: dict) -> None:
         if PROBLEM_SOURCE == "supabase" and prob is not None:
             payload["problem_data"] = problem_store.serialize_problem(prob)
     try:
-        from judge_runner import run_isolated
-        execution = asyncio.create_task(run_isolated(
+        result = await execute(
             "playground" if playground else "submission", payload,
-            (payload.get("time_limit", 2) + RUN_BUDGET) if playground else OVERALL_TIMEOUT))
-        heartbeat = asyncio.create_task(_heartbeat_job(job)) if QUEUE_MODE == "database" else None
-        try:
-            if heartbeat:
-                done, _ = await asyncio.wait((execution, heartbeat), return_when=asyncio.FIRST_COMPLETED)
-                if heartbeat in done:
-                    await heartbeat  # raises on lost lease or database failure
-            result = await execution
-        finally:
-            execution.cancel()
-            if heartbeat:
-                heartbeat.cancel()
-            await asyncio.gather(execution, *([heartbeat] if heartbeat else []), return_exceptions=True)
+            (payload.get("time_limit", 2) + RUN_BUDGET) if playground else OVERALL_TIMEOUT)
     except asyncio.TimeoutError:
-        await _finish_job(jid, error="judging timed out (server overloaded?)")
-        return
+        return Completion(error="judging timed out (server overloaded?)")
     except Exception:
         traceback.print_exc()
         # Never echo exception text to the client: it can contain paths/env.
-        await _finish_job(jid, error="internal judging error")
-        return
+        return Completion(error="internal judging error")
     if "error" in result:
-        await _finish_job(jid, error=str(result["error"]))
-        return
+        return Completion(error=str(result["error"]))
     if playground:
-        await _finish_job(jid, result=result, stored=result)
-        return
-    stored = _stored_result(job, result)
+        return Completion(result=result, stored=result)
+    stored = _disclosure.stored_result(job, result)
     sid = None
     row = _submission_row(job, result, stored)
     if QUEUE_MODE == "local" and _sb is not None:
@@ -1317,40 +1312,14 @@ async def _run_job(job: dict) -> None:
     result["job_id"] = jid
     result["name"] = job.get("name", "")
     stored.update(id=sid, job_id=jid, name=job.get("name", ""))
-    await _finish_job(jid, result=result, stored=stored,
+    return Completion(result=result, stored=stored,
                       submission=row if QUEUE_MODE == "database" else None)
-
-
-async def _heartbeat_job(job: dict) -> None:
-    while True:
-        await asyncio.sleep(HEARTBEAT_SECONDS)
-        valid = await _queue_rpc("heartbeat", p_id=job["id"], p_worker=job["worker_id"],
-                                p_attempt=job["attempt"], p_lease_seconds=LEASE_SECONDS)
-        if not valid:
-            raise RuntimeError("judge ownership lost")
-
-
-def _result_with_reveal(job: dict, result: dict, reveal: str) -> dict:
-    if job.get("contest_id") and reveal == REVEAL_PRACTICE:
-        reveal = REVEAL_SAMPLES
-    prob = PROBLEMS.get(job.get("problem", ""))
-    samples = grader.sample_names(prob) if prob else set()
-    raw = [{**r, "public": r.get("test") in samples and not r.get("hidden", False)}
-           for r in result.get("results", [])]
-    return {**result, "results": _redact_results(raw, reveal)}
-
-
-def _stored_result(job: dict, result: dict) -> dict:
-    reveal = REVEAL_NONE if job.get("reveal") == REVEAL_NONE else REVEAL_SAMPLES
-    if job.get("reveal") == REVEAL_PRACTICE and not job.get("contest_id"):
-        reveal = REVEAL_PRACTICE
-    return _result_with_reveal(job, result, reveal)
 
 
 def _submission_row(job: dict, result: dict, stored: Optional[dict] = None) -> dict:
     """Persist only feedback permitted by the server-selected job policy."""
-    prob = PROBLEMS.get(job.get("problem", ""))
-    results = _stored_result(job, stored if stored is not None else result).get("results", [])
+    prob = _catalog.problems.get(job.get("problem", ""))
+    results = _disclosure.stored_result(job, stored if stored is not None else result).get("results", [])
     row = {
         "problem": job.get("problem", ""), "language": job.get("language", ""),
         "filename": job.get("filename"), "name": job.get("name", ""),
@@ -1375,25 +1344,6 @@ def _submission_row(job: dict, result: dict, stored: Optional[dict] = None) -> d
 
 
 # ---- contest policy (B7) ----
-def _contest_times_valid(contest: Optional[dict]) -> bool:
-    """True only for timezone-aware, ordered contest bounds.
-
-    _contest_window's legacy fallback treats malformed dates as ended for
-    display purposes.  Feedback authorities must never reuse that fallback:
-    an invalid bound is an unavailable policy, not permission to show samples.
-    """
-    if not isinstance(contest, dict):
-        return False
-    try:
-        start = dt.datetime.fromisoformat(
-            str(contest.get("starts_at")).replace("Z", "+00:00"))
-        end = dt.datetime.fromisoformat(
-            str(contest.get("ends_at")).replace("Z", "+00:00"))
-    except (TypeError, ValueError, OverflowError):
-        return False
-    return start.tzinfo is not None and end.tzinfo is not None and end > start
-
-
 def _contest_window(contest: dict) -> str:
     """'upcoming' | 'running' | 'ended' (UTC now vs the contest window)."""
     now = dt.datetime.now(dt.timezone.utc)
@@ -1436,100 +1386,6 @@ def _parse_bool(value: object, default: bool = True) -> bool:
     if s in ("0", "false", "no", "n", "off"):
         return False
     return default
-
-
-def _reveal_for(contest: Optional[dict], email: str) -> str:
-    if _is_admin(email):
-        return REVEAL_ALL
-    if contest is not None and not _contest_times_valid(contest):
-        return REVEAL_NONE
-    if contest and _contest_window(contest) == "running" and contest.get("show_samples") is False:
-        return REVEAL_NONE
-    return REVEAL_SAMPLES
-
-
-def _live_hidden_pids(exclude_cid: str = "") -> set:
-    """Problems inside a *running* contest with show_samples=false.
-
-    Submissions for these problems must not reveal samples even as practice
-    (contest='' path), and /sample/* must refuse to serve them.
-    """
-    hidden: set = set()
-    if _sb is None:
-        return hidden
-    try:
-        # Sample bytes are a live disclosure boundary: never let the 20s
-        # visibility cache keep serving them after another process turns
-        # show_samples off. Policy failures still raise (fail closed).
-        for row in _contest_policy_rows(fresh=True):
-            if exclude_cid and row.get("id") == exclude_cid:
-                continue
-            # A malformed contest bound is not proof samples are public.
-            # Hide its listed problems until the policy can be trusted.
-            if not _contest_times_valid(row):
-                for x in (row.get("problems") or []):
-                    try:
-                        hidden.add(_resolve_pid(str(x)))
-                    except Exception:
-                        pass
-                continue
-            if _contest_window(row) != "running":
-                continue
-            if row.get("show_samples") is False:
-                for x in (row.get("problems") or []):
-                    try:
-                        hidden.add(_resolve_pid(str(x)))
-                    except Exception:
-                        pass
-    except HTTPException:
-        raise
-    return hidden
-
-
-def _effective_reveal(contest: Optional[dict], email: str, pid: str) -> str:
-    """Practice failures are open only outside any upcoming/running contest.
-
-    Omitting contest= must never grant extra feedback for a protected problem.
-    Unknown policy/times fail closed, including reads of prior practice history.
-    """
-    if contest is not None:
-        return _reveal_for(contest, email)
-    protected = False
-    try:
-        for row in _contest_policy_rows(fresh=True):
-            if pid not in {_resolve_pid(str(x)) for x in (row.get("problems") or [])}:
-                continue
-            # _contest_window's legacy invalid-date fallback is not a basis
-            # for declassifying fixtures. Require valid, timezone-aware dates.
-            if not _contest_times_valid(row):
-                return REVEAL_NONE
-            window = _contest_window(row)
-            if window != "ended":
-                protected = True
-                if window == "running" and row.get("show_samples") is False:
-                    return REVEAL_NONE
-    except Exception:
-        return REVEAL_NONE
-    return REVEAL_SAMPLES if protected else REVEAL_PRACTICE
-
-
-def _live_reveal(contest_id: object, owner: str, pid: str) -> str:
-    """Owner-facing feedback policy for a stored row, evaluated now.
-
-    Contest rows use their own row so an admin owner keeps the same ALL view
-    the submit/rejudge path used; everyone else follows the live window.
-    Practice rows follow the contest-aware practice policy. Unknown contests
-    and policy failures fail closed to REVEAL_NONE.
-    """
-    if not contest_id:
-        return _effective_reveal(None, owner, pid)
-    try:
-        for row in _contest_policy_rows(fresh=True):
-            if str(row.get("id")) == str(contest_id):
-                return _reveal_for(row, owner)
-    except Exception:
-        return REVEAL_NONE
-    return REVEAL_NONE
 
 
 # ---- contest registration (Codeforces style) ----
@@ -2572,16 +2428,9 @@ async def delete_profile(request: Request):
     # All browser families are already revoked. Never claim success before both
     # the external provider and the atomic application-data deletion finish.
     try:
-        subject = prepared.get("auth_subject")
-        if not subject:
-            subject = await asyncio.to_thread(email_auth.find_identity, _sb_url, _sb_key, email)
-        if subject:
-            await asyncio.to_thread(email_auth.delete_identity, _sb_url, _sb_key,
-                                    subject)
-        done = await asyncio.to_thread(_auth_rpc, "account_delete_finish", {"p_email": email})
-        if not done.get("ok"):
-            raise RuntimeError()
-    except Exception:
+        deletion = AccountDeletion(_sb, _sb_url, _sb_key)
+        await asyncio.to_thread(deletion.resume, email, prepared.get("auth_subject"))
+    except DeletionIncomplete:
         raise HTTPException(503, "บัญชีถูกระงับการเข้าสู่ระบบแล้ว แต่การลบยังไม่ครบ กรุณาติดต่อผู้ดูแล") from None
     request.session.clear()
     _PROFILE_NAME_CACHE.pop(email, None)
@@ -2613,229 +2462,29 @@ def account_audit(request: Request):
         events.append(event)
     return {"events": events}
 
-# Preload problems at startup (fail fast on broken tests, skip with warning).
-# Source is explicit via GRADER_PROBLEM_SOURCE (local|supabase); supabase mode
-# never falls back to local files. Supabase rows are cached with TTL (see
-# _ensure_problems_fresh) versioned by tests_hash — hidden test bytes stay
-# cached, only changed problems re-download.
-PROBLEMS: Dict[str, grader.Problem] = {}
+# Catalog owns snapshot/index/version coordination, not current authorization.
+_catalog = ProblemCatalog(lambda: PROBLEM_SOURCE, lambda: _sb)
+_catalog.preload()
 
-
-def _load_local_problems() -> Dict[str, grader.Problem]:
-    out: Dict[str, grader.Problem] = {}
-    if grader.PROBLEMS_DIR.is_dir():
-        for _pdir in sorted(grader.PROBLEMS_DIR.iterdir()):
-            if not _pdir.is_dir():
-                continue
-            try:
-                _p = grader.load_problem(_pdir.name)
-                out[_p.pid] = _p
-            except SystemExit as e:
-                print(f"[web] skip problem {_pdir.name}: {e}", file=sys.stderr)
-    return out
-
-
-def _rebuild_problem_indexes() -> None:
-    PROBLEMS_BY_NO.clear()
-    for _pid, _p in sorted(PROBLEMS.items()):
-        if _p.no > 0:
-            if _p.no in PROBLEMS_BY_NO:
-                print(f"[web] WARNING: problems {PROBLEMS_BY_NO[_p.no]} and {_pid} share "
-                      f"number {_p.no}; the first one wins "
-                      "(fix with tools/number_problems.py)", file=sys.stderr)
-            else:
-                PROBLEMS_BY_NO[_p.no] = _pid
-    # tests_hash คำนวณแบบ lazy เมื่อเข้าถึงจริง (ดู _tests_hash())
-    # ในโหมด supabase ปัญหาที่โหลดตอน boot ยังมีแค่ตัวอย่างสาธารณะ
-    # จึงคำนวณ hash ตอนนี้ไม่ได้ — ต้องรอโหลดเต็มก่อน
-    if PROBLEM_SOURCE != "supabase":
-        _TESTS_HASH_CACHE.clear()
-        for _pid in PROBLEMS:
-            _TESTS_HASH_CACHE[_pid] = grader.tests_hash(PROBLEMS[_pid])
-
-
-# numeric id -> pid (a problem may also be addressed as #19 in URLs and the CLI)
-PROBLEMS_BY_NO: Dict[int, str] = {}
-# tests_hash คำนวณแบบ lazy เมื่อเข้าถึงจริง (ดู _tests_hash())
-# ในโหมด supabase เติมจากแถวเมตาดาต้าตอน boot (ไม่ต้องดาวน์โหลดไฟล์เทสต์)
-_TESTS_HASH_CACHE: Dict[str, str] = {}
-# Supabase row extras: {slug: {"tests": total count, "has_pdf": bool}}.
-# Lets list/detail/version/contest serve correct counts with zero Storage
-# downloads (one SELECT per boot/refresh, not per request).
-_PROBLEM_EXTRA: Dict[str, dict] = {}
-_problems_refresh_at: float = time.monotonic()
-_problem_refresh_lock = threading.Lock()
-
-# Display names are not security-sensitive and change rarely; one query per
-# submit is avoidable. Bounded so a long-lived process cannot grow without
-# limit. Cleared on profile update.
 _PROFILE_NAME_CACHE: Dict[str, tuple] = {}
 _PROFILE_NAME_TTL = 60.0
 _PROFILE_NAME_MAX = 2048
 
-if PROBLEM_SOURCE == "supabase":
-    if _sb is None:
-        print("[web] GRADER_PROBLEM_SOURCE=supabase but SUPABASE_URL/KEY missing: "
-              "problem store unavailable (no local fallback)", file=sys.stderr)
-    else:
-        try:
-            # โหลดเฉพาะเมตาดาต้า (ตัวอย่างสาธารณะ) ตอน boot — ไม่ดาวน์โหลด
-            # เทสต์ลบทั้งหมด (~พันไฟล์) เพื่อให้เซิร์ฟเวอร์เริ่มต้นได้ไว
-            # เทสต์ลับจะโหลดแบบ lazy ตอนมีการส่งงานจริง (ดู _problem_or_404 / _run_job)
-            _snap_meta, _snap_hashes, _snap_extra = problem_store.load_snapshot(client=_sb)
-            PROBLEMS.update(_snap_meta)
-            # เติม tests_hash จากแถวเมตาดาต้าโดยตรง (ไม่ต้องคำนวณจากไฟล์เทสต์)
-            _TESTS_HASH_CACHE.clear()
-            _TESTS_HASH_CACHE.update(_snap_hashes)
-            _PROBLEM_EXTRA.clear()
-            _PROBLEM_EXTRA.update(_snap_extra)
-        except problem_store.ProblemUnavailable as e:
-            print(f"[web] supabase problem preload failed: {e} "
-                  "(no local fallback)", file=sys.stderr)
-        except Exception as e:
-            print(f"[web] supabase problem preload failed: {e} "
-                  "(no local fallback)", file=sys.stderr)
-else:
-    if PROBLEM_SOURCE != "local":
-        print(f"[web] warning: unknown GRADER_PROBLEM_SOURCE={PROBLEM_SOURCE!r}, "
-              "using local", file=sys.stderr)
-    PROBLEMS.update(_load_local_problems())
-
-
-_problems_refresh_at: float = time.monotonic()
-_rebuild_problem_indexes()
-
 
 def _tests_hash(pid: str) -> str:
-    """Cached grader.tests_hash (same value, no per-request SHA256 over tests).
-
-    ในโหมด supabase ปัญหาอาจยังโหลดแค่ตัวอย่างสาธารณะ (metadata-only)
-    ตอน boot — ถ้าเจอปัญหาที่ยังโหลดไม่ครบ ให้โหลดเต็มก่อนคำนวณ hash
-    เพื่อไม่ให้ hash ที่เก็บไว้ตรงกับเทสต์ชุดที่ไม่ครบ
-    """
-    hit = _TESTS_HASH_CACHE.get(pid)
-    if hit is not None:
-        return hit
-    prob = PROBLEMS.get(pid)
-    if prob is None:
-        return ""
-    if PROBLEM_SOURCE == "supabase" and len(prob.tests) == len(prob.samples):
-        # Metadata-only: tests มีแต่ตัวอย่างสาธารณะ — ต้องโหลดเต็มก่อน
-        try:
-            full_prob = problem_store.get_problem(pid, source="supabase", client=_sb)
-            PROBLEMS[pid] = full_prob
-            if full_prob.no > 0 and full_prob.no not in PROBLEMS_BY_NO:
-                PROBLEMS_BY_NO[full_prob.no] = full_prob.pid
-            prob = full_prob
-        except Exception:
-            return ""
-    hashed = grader.tests_hash(prob)
-    _TESTS_HASH_CACHE[pid] = hashed
-    return hashed
-
-
-def _apply_problem_snapshot(meta: dict, hashmap: dict, extra: dict) -> None:
-    """Install a refreshed catalog without blanking unchanged statements.
-
-    The periodic refresh selects the lean metadata columns (no statement_md).
-    Carrying the old description forward for problems whose version did not
-    change keeps detail responses stable; changed problems fetch it lazily.
-    Updating the dicts in place avoids an empty-catalog window for concurrent
-    request threads.
-    """
-    for slug, prob in meta.items():
-        old = PROBLEMS.get(slug)
-        if old is None or prob.description:
-            continue
-        old_hash = _TESTS_HASH_CACHE.get(slug)
-        new_hash = hashmap.get(slug)
-        old_updated = (_PROBLEM_EXTRA.get(slug) or {}).get("updated_at")
-        new_updated = (extra.get(slug) or {}).get("updated_at")
-        if old_hash == new_hash and str(old_updated or "") == str(new_updated or ""):
-            prob.description = old.description
-    for slug in list(PROBLEMS):
-        if slug not in meta:
-            PROBLEMS.pop(slug, None)
-    PROBLEMS.update(meta)
-    _TESTS_HASH_CACHE.clear()
-    _TESTS_HASH_CACHE.update(hashmap)
-    _PROBLEM_EXTRA.clear()
-    _PROBLEM_EXTRA.update(extra)
-    _rebuild_problem_indexes()
-
-
-def _refresh_problems_background() -> None:
-    """Refresh the catalog off the request path; stale data stays readable."""
-    global _problems_refresh_at
-    try:
-        meta, hashmap, extra = problem_store.load_snapshot(client=_sb, lean=True)
-        dropped = problem_store.invalidate_stale(hashmap, extra)
-        if dropped:
-            print(f"[web] problem versions changed, dropped cache: {sorted(dropped)}",
-                  file=sys.stderr)
-        _apply_problem_snapshot(meta, hashmap, extra)
-    except Exception as e:
-        print(f"[web] problem refresh failed, keeping {len(PROBLEMS)} cached: {e}",
-              file=sys.stderr)
-    finally:
-        # Set the timestamp even on failure: do not hammer a failing database.
-        _problems_refresh_at = time.monotonic()
-        _problem_refresh_lock.release()
+    return _catalog.tests_hash(pid)
 
 
 def _ensure_problems_fresh() -> None:
-    """TTL refresh for supabase mode (metadata-only, versioned by tests_hash).
-
-    Local mode: PROBLEMS are boot-loaded from disk (restart after edits).
-    Supabase mode: re-list ROWS only (no Storage downloads); drop cached full
-    problems whose hash changed so the next access lazy-reloads them. A refresh
-    costs one small SELECT, never ~1700 file downloads — safe on the tiny
-    prod box. Failures keep the stale cache and log; callers surface an empty
-    store as an explicit 500, never silent fallback.
-
-    The refresh runs in a daemon thread so the request that notices the TTL
-    expiry is served from the current snapshot instead of blocking on a
-    Supabase round trip. Only one refresh can be in flight.
-    """
-    global _problems_refresh_at
-    if PROBLEM_SOURCE != "supabase":
-        return
-    ttl = problem_store.cache_ttl_s()
-    if ttl > 0 and time.monotonic() - _problems_refresh_at < ttl:
-        return
-    if _sb is None:
-        return
-    if not _problem_refresh_lock.acquire(blocking=False):
-        return
-    # Claim the TTL before the thread starts so another request does not spawn
-    # a duplicate refresh while this one is connecting to Supabase.
-    _problems_refresh_at = time.monotonic()
-    try:
-        threading.Thread(target=_refresh_problems_background,
-                         name="problem-refresh", daemon=True).start()
-    except Exception as e:
-        _problem_refresh_lock.release()
-        print(f"[web] cannot start problem refresh: {e}", file=sys.stderr)
+    _catalog.ensure_fresh()
 
 
 def _problem_total(pid: str, p: grader.Problem) -> int:
-    """True test count (supabase rows carry it; local Problems know their tests)."""
-    if PROBLEM_SOURCE == "supabase":
-        hit = (_PROBLEM_EXTRA.get(pid) or {}).get("tests") or 0
-        if hit:
-            return int(hit)
-    return len(p.tests)
+    return _catalog.total(pid, p)
 
 
 def _problem_description(p: grader.Problem) -> str:
-    """Statement markdown, fetched lazily when a lean refresh omitted it."""
-    if p.description or PROBLEM_SOURCE != "supabase" or _sb is None:
-        return p.description
-    try:
-        p.description = problem_store.load_statement_md(p.pid, client=_sb)
-    except Exception as e:
-        print(f"[web] statement unavailable for {p.pid}: {e}", file=sys.stderr)
-    return p.description
+    return _catalog.description(p)
 
 
 def _browse_cache_control(pid: str, email: str, ttl: int) -> str:
@@ -2846,83 +2495,28 @@ def _browse_cache_control(pid: str, email: str, ttl: int) -> str:
 
 
 def _meta_or_404(pid: str) -> grader.Problem:
-    """Metadata-only resolve: never downloads hidden tests (browsing path).
-
-    Judging paths must keep using _problem_or_404 (full tests required).
-    """
-    slug = _resolve_pid(pid)
-    p = PROBLEMS.get(slug)
-    if p is not None:
-        return p
-    if PROBLEM_SOURCE != "supabase":
-        raise HTTPException(status_code=404, detail=f"unknown problem: {pid}")
-    if _sb is None:
-        raise HTTPException(status_code=500, detail="problem store unavailable")
+    """Metadata-only lookup. Current visibility remains a separate check."""
     try:
-        meta, _row = problem_store.load_meta(slug, client=_sb)
+        return _catalog.metadata(pid)
     except problem_store.ProblemNotFound:
         raise HTTPException(status_code=404, detail=f"unknown problem: {pid}")
-    except problem_store.ProblemUnavailable as e:
-        print(f"[web] problem meta {slug} unavailable: {e}", file=sys.stderr)
+    except problem_store.ProblemUnavailable as exc:
+        print(f"[web] problem meta {pid} unavailable: {exc}", file=sys.stderr)
         raise HTTPException(status_code=500, detail="problem store unavailable")
-    PROBLEMS[meta.pid] = meta
-    if meta.no > 0 and meta.no not in PROBLEMS_BY_NO:
-        PROBLEMS_BY_NO[meta.no] = meta.pid
-    return meta
 
 
 def _resolve_pid(token: str) -> str:
-    """Accept either the slug (`hanoi`) or its number (`19`) — students share
-    links like /#/task/19 and the CLI shows numbers."""
-    token = (token or "").strip()
-    if token in PROBLEMS:
-        return token
-    if token.isdigit():
-        pid = PROBLEMS_BY_NO.get(int(token), "")
-        if pid:
-            return pid
-    return token
+    return _catalog.resolve(token)
 
 
 def _problem_or_404(pid: str) -> grader.Problem:
-    slug = _resolve_pid(pid)
-    p = PROBLEMS.get(slug)
-    if p is not None:
-        if PROBLEM_SOURCE == "supabase" and len(p.tests) <= len(p.samples):
-            # โหลดเมตาดาต้าแค่ตัวอย่างตอน boot — ตอนเข้าถึงจริงต้องโหลด
-            # เทสต์ลับเต็มก่อนตัดสิน (fail closed ถ้าโหลดไม่ได้)
-            try:
-                full_p = problem_store.get_problem(slug, source="supabase", client=_sb)
-                PROBLEMS[slug] = full_p
-                p = full_p
-            except problem_store.ProblemNotFound:
-                raise HTTPException(status_code=404, detail=f"unknown problem: {pid}")
-            except problem_store.ProblemUnavailable as e:
-                print(f"[web] problem {slug} unavailable: {e}", file=sys.stderr)
-                raise HTTPException(status_code=500, detail="problem store unavailable")
-        return p
-    if PROBLEM_SOURCE == "supabase":
-        # Cache miss: fetch exactly this problem (row + Storage, version-checked).
-        # Missing assets / storage / DB errors are explicit 500s, never an
-        # empty suite and never Accepted without judging.
-        if _sb is None:
-            raise HTTPException(status_code=500, detail="problem store unavailable")
-        try:
-            prob = problem_store.get_problem(slug, source="supabase", client=_sb)
-        except problem_store.ProblemNotFound:
-            raise HTTPException(status_code=404, detail=f"unknown problem: {pid}")
-        except problem_store.ProblemUnavailable as e:
-            print(f"[web] problem {slug} unavailable: {e}", file=sys.stderr)
-            raise HTTPException(status_code=500, detail="problem store unavailable")
-        PROBLEMS[prob.pid] = prob
-        if prob.no > 0 and prob.no not in PROBLEMS_BY_NO:
-            PROBLEMS_BY_NO[prob.no] = prob.pid
-        _TESTS_HASH_CACHE[prob.pid] = grader.tests_hash(prob)
-        return prob
-        # (numeric miss falls through to 404 below)
-    if PROBLEM_SOURCE == "supabase" and not PROBLEMS:
+    try:
+        return _catalog.problem(pid)
+    except problem_store.ProblemNotFound:
+        raise HTTPException(status_code=404, detail=f"unknown problem: {pid}")
+    except problem_store.ProblemUnavailable as exc:
+        print(f"[web] problem {pid} unavailable: {exc}", file=sys.stderr)
         raise HTTPException(status_code=500, detail="problem store unavailable")
-    raise HTTPException(status_code=404, detail=f"unknown problem: {pid}")
 
 
 # ---- problem visibility (contest-only sets) ----
@@ -2993,7 +2587,7 @@ def _contest_policy_rows(*, fresh: bool = False) -> List[dict]:
 def _hidden_pids() -> set:
     listed, hidden_by_contest = _contest_problem_sets()
     return hidden_by_contest | {
-        pid for pid, p in PROBLEMS.items()
+        pid for pid, p in _catalog.problems.items()
         if p.hidden or not getattr(p, "is_published", True)
     }
 
@@ -3001,7 +2595,7 @@ def _hidden_pids() -> set:
 def _visible_to(pid: str, email: str) -> bool:
     """Public Task entry, or reachable because the problem belongs to a contest."""
     pid = _resolve_pid(pid)
-    prob = PROBLEMS.get(pid)
+    prob = _catalog.problems.get(pid)
     if prob is None:
         return False
     if _is_admin(email):
@@ -3060,7 +2654,7 @@ def _host_limits() -> dict:
             "queue_mode": QUEUE_MODE, "role": GRADER_ROLE,
             "problem_source": PROBLEM_SOURCE,
         "problem_file_storage": problem_store.backend_problem_files.backend(),
-            "problems_count": len(PROBLEMS),
+            "problems_count": len(_catalog.problems),
             "reserve_memory_mb": _capacity["reserve_mb"],
             "memory_per_job_mb": _capacity["per_job_mb"],
             # memory policy: peak-RSS threshold = declared x allowance, enforced
@@ -3099,10 +2693,10 @@ def health(request: Request, response: Response) -> dict:
     _ensure_problems_fresh()
     email = (request.session.get("user") or {}).get("email", "")
     if _is_admin(email):
-        ids = sorted(PROBLEMS.keys())
+        ids = sorted(_catalog.problems.keys())
     else:
         hidden = _hidden_pids()
-        ids = sorted(pid for pid in PROBLEMS if pid not in hidden)
+        ids = sorted(pid for pid in _catalog.problems if pid not in hidden)
     body = {"ok": True, "count": len(ids)}
     if email:
         body["problems"] = ids
@@ -3136,8 +2730,8 @@ def _listed_problems(email: str, sort: str = "") -> list:
     admin = _is_admin(email)
     hidden = _hidden_pids()
     listed, contest_hidden = _contest_problem_sets()
-    ranked = grader.sort_problems(PROBLEMS.values()) if not sort_by_difficulty else sorted(
-        PROBLEMS.values(), key=lambda p: (order.get((p.difficulty or "").lower(), 99),
+    ranked = grader.sort_problems(_catalog.problems.values()) if not sort_by_difficulty else sorted(
+        _catalog.problems.values(), key=lambda p: (order.get((p.difficulty or "").lower(), 99),
                                            p.no if p.no > 0 else 0, p.pid))
     out = []
     for p in ranked:
@@ -3149,7 +2743,7 @@ def _listed_problems(email: str, sort: str = "") -> list:
             "memory_limit": p.memory_limit, "checker": p.checker,
             "difficulty": p.difficulty, "tags": p.tags,
             "tests": _problem_total(p.pid, p), "samples": len(p.samples),
-            "has_pdf": bool((_PROBLEM_EXTRA.get(p.pid) or {}).get("has_pdf", False))
+            "has_pdf": _catalog.has_pdf(p.pid)
             if PROBLEM_SOURCE == "supabase"
             else (grader.PROBLEMS_DIR / p.pid / "statement.pdf").is_file(),
         }
@@ -3193,7 +2787,7 @@ def problem_detail(request: Request, pid: str, response: Response) -> dict:
             raise HTTPException(status_code=404, detail=f"unknown problem: {pid}")
         total = _problem_total(meta.pid, meta)
         samples = list(meta.samples)
-        has_pdf = bool((_PROBLEM_EXTRA.get(meta.pid) or {}).get("has_pdf", False))
+        has_pdf = _catalog.has_pdf(meta.pid)
         listed, contest_hidden = _contest_problem_sets()
         body = {"id": meta.pid, "no": meta.no, "title": meta.title,
                 "time_limit": meta.time_limit,
@@ -3245,7 +2839,7 @@ def problem_sample(request: Request, pid: str, name: str, response: Response) ->
             raise HTTPException(status_code=404,
                                 detail="not a public sample (hidden tests are not served)")
         # Live contest with show_samples=false reveals nothing, even via samples.
-        if not _is_admin(email) and meta.pid in _live_hidden_pids():
+        if not _is_admin(email) and meta.pid in _disclosure.hidden_sample_problems():
             raise HTTPException(status_code=404,
                                 detail="not a public sample (hidden tests are not served)")
         if problem_store.backend_problem_files.backend() == "local":
@@ -3279,7 +2873,7 @@ def problem_sample(request: Request, pid: str, name: str, response: Response) ->
         raise HTTPException(status_code=404,
                             detail="not a public sample (hidden tests are not served)")
     # Live contest with show_samples=false reveals nothing, even via samples.
-    if not _is_admin(email) and p.pid in _live_hidden_pids():
+    if not _is_admin(email) and p.pid in _disclosure.hidden_sample_problems():
         raise HTTPException(status_code=404,
                             detail="not a public sample (hidden tests are not served)")
     for tc in p.tests:
@@ -3339,7 +2933,7 @@ def _authorized_solution(request: Request, pid: str) -> tuple:
         raise HTTPException(status_code=404, detail="unknown problem")
     # Official solutions disclose the algorithm: use the same fresh, fail-closed
     # contest/publication policy as peer source, including for administrators.
-    reason = _peer_problem_policy(p.pid)
+    reason = _disclosure.problem_access_reason(p.pid)
     if reason:
         code = {"contest": 403, "hidden": 404}.get(reason, 503)
         raise HTTPException(status_code=code, detail={
@@ -3455,9 +3049,9 @@ async def submit(
     # round trips serially on the submit path.
     display, reveal = await asyncio.gather(
         asyncio.to_thread(_profile_display_name, email, user.get("name") or email),
-        asyncio.to_thread(_effective_reveal, contest_obj, email, prob.pid),
+        asyncio.to_thread(_disclosure.admission_reveal, contest_obj, email, prob.pid),
     )
-    tests_hash = (_TESTS_HASH_CACHE.get(prob.pid) if PROBLEM_SOURCE == "supabase"
+    tests_hash = (_catalog.cached_hash(prob.pid) if PROBLEM_SOURCE == "supabase"
                   else _tests_hash(prob.pid))
     if not tests_hash:
         raise HTTPException(status_code=503, detail="problem version unavailable")
@@ -3489,21 +3083,11 @@ async def job_status(request: Request, jid: str) -> dict:
     if job.get("user_email") != user["email"] and not _is_admin(user["email"]):
         # Same 404 as unknown: don't confirm other users' job ids exist.
         raise HTTPException(status_code=404, detail="unknown job")
+    # Local workers can advance the shared dict while disclosure reads policy
+    # on a thread. Observe status and result from the same request snapshot.
+    job = dict(job)
     status = job.get("status", "queued")
-    result = job.get("result") if status == "done" else None
-    if result is not None and not isinstance(result, dict):
-        # Legacy/corrupt JSON could bypass the field-level redactor. Return no
-        # verdict payload rather than passing an unknown structure to a client.
-        result = None
-    if isinstance(result, dict) and job.get("kind") != "playground":
-        # Re-evaluate the owner-facing live policy: the job's reveal is a
-        # creation-time snapshot and may predate a contest switching to hidden.
-        # Use the job owner, never the requester, so an admin poll cannot
-        # declassify another user's submission.
-        reveal = await asyncio.to_thread(
-            _live_reveal, job.get("contest_id"), job.get("user_email", ""),
-            job.get("problem", ""))
-        result = _result_with_reveal(job, result, reveal)
+    result = await asyncio.to_thread(_disclosure.job_result, job)
     return {
         "id": jid, "status": status, "problem": job.get("problem", ""),
         "kind": job.get("kind", "submit"), "error": job.get("error", "") or "",
@@ -3517,7 +3101,7 @@ async def job_status(request: Request, jid: str) -> dict:
 @app.get("/api/version")
 def version(request: Request, response: Response) -> dict:
     """Which judging semantics + test set a verdict comes from."""
-    # Hashes are precomputed at boot (_TESTS_HASH_CACHE); this stays O(n) dict
+    # Catalog hashes are precomputed at boot; this stays O(n) dict
     # build with no SHA256. Per-user body: private cache only, never shared.
     response.headers["Cache-Control"] = "private, max-age=20"
     response.headers["Vary"] = "Cookie, Authorization"
@@ -3527,7 +3111,7 @@ def version(request: Request, response: Response) -> dict:
     hidden = _hidden_pids()
     tests = {pid: {"hash": _tests_hash(pid), "tests": _problem_total(pid, p),
                    "samples": list(p.samples)}
-             for pid, p in sorted(PROBLEMS.items())
+             for pid, p in sorted(_catalog.problems.items())
              if admin or pid not in hidden}
     body = {
         "version": grader.GRADER_VERSION,
@@ -3540,7 +3124,7 @@ def version(request: Request, response: Response) -> dict:
     }
     if admin:
         body["hidden_problems"] = sorted(hidden)
-        body["problems_total"] = len(PROBLEMS)
+        body["problems_total"] = len(_catalog.problems)
     return body
 
 
@@ -3599,132 +3183,6 @@ async def run_custom(
     raise HTTPException(status_code=504, detail="run timed out waiting for judge")
 
 
-_CASE_VERDICTS = frozenset({"AC", "WA", "TLE", "MLE", "OLE", "CE", "RE"})
-_COMPLETED_SUBMISSION_VERDICTS = _CASE_VERDICTS | {"REJECTED"}
-_HISTORY_PUBLIC_FIELDS = (
-    "id", "created_at", "problem", "language", "name", "filename", "verdict",
-    "accepted", "passed", "total", "score", "counts", "contest_id",
-)
-
-
-def _completed_peer_submission(row: dict) -> bool:
-    # submissions stores completed judge results, unlike judge_jobs. Explicit
-    # non-completed status/kind evidence in imported rows must still fail closed.
-    return (row.get("kind", "submit") in {"submit", "rejudge"}
-            and row.get("status", "done") == "done"
-            and row.get("verdict") in _COMPLETED_SUBMISSION_VERDICTS)
-
-
-def _peer_problem_policy(pid: str, contest_id: Optional[str] = None) -> str:
-    """Fresh visibility and contest decision; empty string means unprotected."""
-    prob = PROBLEMS.get(pid)
-    if prob is None:
-        return "hidden"
-    hidden_problem = bool(getattr(prob, "hidden", False))
-    if PROBLEM_SOURCE == "supabase":
-        # Peer source is a disclosure decision. Do not trust the TTL catalog
-        # for publication state: a problem can be unpublished or hidden while a
-        # history-only replica still has the old Problem object.
-        if _sb is None:
-            return "unavailable"
-        try:
-            res = (_sb.table("problems").select("slug,is_published,hidden")
-                   .eq("slug", pid).limit(1).execute())
-            fresh_rows = res.data or []
-        except Exception:
-            return "unavailable"
-        if not fresh_rows:
-            return "hidden"
-        fresh = fresh_rows[0]
-        if not _parse_bool(fresh.get("is_published"), False):
-            return "hidden"
-        hidden_problem = _parse_bool(fresh.get("hidden"), False)
-    elif not getattr(prob, "is_published", True):
-        return "hidden"
-    try:
-        # Do not use the TTL cache or the legacy missing-table=empty fallback:
-        # unavailable contest policy cannot authorize new peer source access.
-        rows = _all_contest_rows()
-        if not isinstance(rows, list):
-            return "unavailable"
-        related = []
-        now = dt.datetime.now(dt.timezone.utc)
-        for row in rows:
-            if not isinstance(row, dict) or not isinstance(row.get("problems"), list):
-                return "unavailable"
-            if pid not in {_resolve_pid(str(token)) for token in row["problems"]}:
-                continue
-            try:
-                start = dt.datetime.fromisoformat(str(row.get("starts_at")).replace("Z", "+00:00"))
-                end = dt.datetime.fromisoformat(str(row.get("ends_at")).replace("Z", "+00:00"))
-                if start.utcoffset() is None or end.utcoffset() is None or end <= start:
-                    return "contest"
-            except (TypeError, ValueError, OverflowError):
-                return "contest"
-            if now <= end:
-                return "contest"  # Both upcoming and running contests protect it.
-            related.append(row)
-        if contest_id and not any(row.get("id") == contest_id for row in related):
-            return "contest"  # Missing/deleted target contest policy is unknown.
-        # Every related contest is now known to have ended, so it grants the
-        # same problem visibility as the existing started-contest policy.
-        if hidden_problem and not related:
-            return "hidden"
-        return ""
-    except Exception:
-        return "unavailable"
-
-
-def _peer_inspection_access(email: str, pid: str, contest_id: Optional[str] = None) -> dict:
-    """Source access for learning: any signed-in student, no attempt gate.
-
-    The completed-row check and the narrower peer serializer stay in the
-    detail route. Hidden/unpublished problems and problems in upcoming or
-    running contests remain protected by the fresh policy check.
-    """
-    if _is_admin(email):
-        return {"allowed": True, "reason": ""}
-    if not email:
-        return {"allowed": False, "reason": "login"}
-    reason = _peer_problem_policy(pid, contest_id)
-    return {"allowed": not reason, "reason": reason}
-
-
-def _public_history_row(row: dict) -> dict:
-    """Allowlist even when a storage adapter returns more than SELECT asked for."""
-    public = {key: row[key] for key in _HISTORY_PUBLIC_FIELDS if key in row
-              and (row[key] is None or isinstance(row[key], (str, int, float, bool)))}
-    counts = row.get("counts")
-    public["counts"] = {key: value for key, value in counts.items()
-                        if key in _CASE_VERDICTS and type(value) is int and value >= 0} \
-        if isinstance(counts, dict) else {}
-    # Old profiles/submissions sometimes fell back to the authentication email.
-    public["name"] = _public_display_name(row.get("name"))
-    return public
-
-
-def _public_display_name(name: object) -> str:
-    return name if isinstance(name, str) and name.strip() and "@" not in name else "นักเรียน"
-
-
-def _peer_submission_detail(row: dict) -> dict:
-    public = _public_history_row(row)
-    public["code"] = row.get("code") if isinstance(row.get("code"), str) else ""
-    public["peer_inspection"] = True
-    public["results"] = []
-    for test in row.get("results", []) if isinstance(row.get("results"), list) else []:
-        if not isinstance(test, dict):
-            continue
-        verdict = test.get("verdict")
-        safe = {"verdict": verdict if isinstance(verdict, str) and verdict in _CASE_VERDICTS else "UNKNOWN",
-                "hidden": True}
-        for key in ("wall_s", "cpu_s", "peak_mb"):
-            value = test.get(key)
-            safe[key] = value if type(value) in (int, float) and math.isfinite(value) and value >= 0 else None
-        public["results"].append(safe)
-    return public
-
-
 @app.get("/api/history")
 async def history(request: Request, problem: Optional[str] = None, limit: int = 20,
                   mine: bool = False) -> dict:
@@ -3741,7 +3199,7 @@ async def history(request: Request, problem: Optional[str] = None, limit: int = 
 
     def _fetch():
         q = _sb.table("submissions").select(
-            ",".join(_HISTORY_PUBLIC_FIELDS)).order("created_at", desc=True).limit(limit)
+            _disclosure.history_columns).order("created_at", desc=True).limit(limit)
         if wanted_problem:
             q = q.eq("problem", wanted_problem)
         if mine:
@@ -3766,9 +3224,9 @@ async def history(request: Request, problem: Optional[str] = None, limit: int = 
         rows = [r for r in rows if ((r.get("problem") or "") not in hidden
                 or (visible_problem and r.get("problem") == wanted_problem))
                 and not _contest_result_frozen(contests.get(r.get("contest_id")), r)]
-    payload = {"configured": True, "submissions": [_public_history_row(row) for row in rows]}
+    payload = {"configured": True, "submissions": [_disclosure.public_history(row) for row in rows]}
     if wanted_problem and not mine:
-        payload["peer_access"] = await asyncio.to_thread(_peer_inspection_access, email, wanted_problem)
+        payload["peer_access"] = await asyncio.to_thread(_disclosure.peer_access, email, wanted_problem)
     return payload
 
 
@@ -3789,30 +3247,10 @@ async def history_detail(request: Request, sid: str) -> dict:
     if not rows:
         raise HTTPException(status_code=404, detail="submission not found")
     row = dict(rows[0])
-    owner = row.get("user_email") or ""
-    # Owners/admins retain their existing feedback. Peers receive a narrower,
-    # explicitly serialized source/results view after fresh authorization.
-    # A non-owner admin is authorized to inspect the row, but must still use
-    # the submission owner's feedback policy below; admin access is not a
-    # reason to declassify a live hidden contest or an old practice row.
-    if owner != email and not _is_admin(email):
-        access = await asyncio.to_thread(_peer_inspection_access, email,
-                                         row.get("problem", ""), row.get("contest_id"))
-        if not access["allowed"] or not _completed_peer_submission(row):
-            reason = access["reason"] or "incomplete submission"
-            raise HTTPException(status_code=503 if reason == "unavailable" else 403,
-                                detail="peer inspection locked: " + reason)
-        return _peer_submission_detail(row)
-    row.pop("user_email", None)  # never expose login emails publicly
-    # Re-evaluate the live owner-facing policy: stored rows can predate the
-    # current contest window (or an old rejudge), so trusting their bytes would
-    # serve samples during a show_samples=false contest. Use the submission
-    # owner, not the viewer, so an admin looking at someone else's row cannot
-    # declassify it.
-    reveal = await asyncio.to_thread(
-        _live_reveal, row.get("contest_id"), owner, row.get("problem", ""))
-    row["results"] = _result_with_reveal(row, {"results": row.get("results", [])}, reveal)["results"]
-    return row
+    try:
+        return await asyncio.to_thread(_disclosure.history_detail, row, email)
+    except DisclosureDenied as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
 @app.post("/api/report")
@@ -3824,7 +3262,7 @@ async def create_report(request: Request) -> dict:
         raise HTTPException(status_code=404, detail="report not configured")
     body = await _json_object(request)
     problem = _resolve_pid(str(body.get("problem", "")).strip())
-    if problem not in PROBLEMS:
+    if problem not in _catalog.problems:
         raise HTTPException(status_code=400, detail="unknown problem")
     kind = str(body.get("kind", "")).strip()
     if kind not in REPORT_KINDS:
@@ -4111,14 +3549,14 @@ async def admin_overview(request: Request) -> dict:
                   for status in ("queued", "running")}
     queued = int(counts.get("queued", 0) or 0)
     return {
-        "problems": len(PROBLEMS),
-        "problems_public": len(PROBLEMS) - len(hidden),
+        "problems": len(_catalog.problems),
+        "problems_public": len(_catalog.problems) - len(hidden),
         "problems_contest_only": [
-            {"id": pid, "title": PROBLEMS[pid].title,
-             "config_hidden": PROBLEMS[pid].hidden,
+            {"id": pid, "title": _catalog.problems[pid].title,
+             "config_hidden": _catalog.problems[pid].hidden,
              "contest_hidden": pid in contest_hidden,
              "in_contest": pid in listed}
-            for pid in hidden if pid in PROBLEMS
+            for pid in hidden if pid in _catalog.problems
         ],
         "users": n_users,
         "submissions": len(subs),
@@ -4141,7 +3579,7 @@ async def admin_overview(request: Request) -> dict:
                      "verdict", "accepted", "score", "counts")}
                    for r in subs[:10]],
         "system": {"uptime_s": int(time.monotonic() - _boot_time),
-                   "problems_loaded": sorted(PROBLEMS.keys()), **_host_limits()},
+                   "problems_loaded": sorted(_catalog.problems.keys()), **_host_limits()},
     }
 
 
@@ -4151,7 +3589,7 @@ async def stats() -> dict:
         return {"configured": False, "stats": {}}
     await asyncio.to_thread(_ensure_problems_fresh)
     hidden = await asyncio.to_thread(_hidden_pids)
-    visible = set(PROBLEMS) - hidden
+    visible = set(_catalog.problems) - hidden
     result = await _acached("stats", CACHE_TTL["stats"], _build_stats)
     # Cached aggregates are internal; reapply current visibility on every read.
     return {**result, "stats": {pid: row for pid, row in result["stats"].items()
@@ -4228,7 +3666,7 @@ def _contest_public(row: dict, email: str = "", counts: Dict[str, int] | None = 
     if show_problems:
         for raw in row.get("problems") or []:
             pid = _resolve_pid(str(raw))
-            prob = PROBLEMS.get(pid)
+            prob = _catalog.problems.get(pid)
             if admin or (prob is not None and getattr(prob, "is_published", True)):
                 problems.append(pid)
     registered = (cid in registered_ids if registered_ids is not None else
@@ -4330,7 +3768,7 @@ async def upsert_contest(request: Request) -> dict:
     if ends <= starts:
         raise HTTPException(status_code=400, detail="ends_at must be after starts_at")
     problems = [_resolve_pid(str(p)) for p in (body.get("problems") or [])]
-    unknown = [p for p in problems if p not in PROBLEMS]
+    unknown = [p for p in problems if p not in _catalog.problems]
     if not problems or unknown:
         raise HTTPException(status_code=400,
                             detail=f"problems must be a non-empty list of problem ids (unknown: {unknown})")
@@ -4501,7 +3939,7 @@ def contest_detail(request: Request, cid: str) -> dict:
     # mid-round (upsert with more problems) takes effect immediately.
     show_details = admin or started
     for pid in listed:
-        p = PROBLEMS.get(pid)
+        p = _catalog.problems.get(pid)
         if p is None:
             continue
         if not show_details:
@@ -4713,31 +4151,13 @@ async def admin_rejudge(request: Request) -> dict:
         raise _db_err(e)
     queued: List[str] = []
     skipped: List[str] = []
-    # Cache contests once: rejudged rows keep their original contest's policy,
-    # so a live show_samples=false contest stays REVEAL_NONE.
-    _contest_cache: Dict[str, Optional[dict]] = {}
-    _practice_reveal: Dict[str, str] = {}
-    def _reveal_for_row(cid: object, owner: str, pid: str) -> str:
-        if not cid:
-            # Practice feedback follows the same live policy as submit: hidden
-            # during any running show_samples=false contest, PRACTICE otherwise.
-            if pid not in _practice_reveal:
-                _practice_reveal[pid] = _effective_reveal(None, owner, pid)
-            return _practice_reveal[pid]
-        ckey = str(cid)
-        if ckey not in _contest_cache:
-            try:
-                _contest_cache[ckey] = _contest_or_404(ckey)
-            except HTTPException:
-                # Unknown/unavailable contest: fail closed, never samples.
-                _contest_cache[ckey] = None
-        contest = _contest_cache[ckey]
-        return _reveal_for(contest, owner) if contest is not None else REVEAL_NONE
+    # Preserve request-local snapshots without exposing disclosure bookkeeping.
+    reveal_for_row = _disclosure.rejudge_policy()
     for row in res.data or []:
         pid = row.get("problem", "")
         lang = row.get("language", "")
         code = row.get("code") or ""
-        if not code.strip() or pid not in PROBLEMS or lang not in LANGS:
+        if not code.strip() or pid not in _catalog.problems or lang not in LANGS:
             skipped.append(str(row.get("id")))
             continue
         try:
@@ -4749,7 +4169,7 @@ async def admin_rejudge(request: Request) -> dict:
                 "target_id": row.get("id"),
                 # Owner-facing storage policy, never the requester's: an admin
                 # rejudge must not declassify a live show_samples=false contest.
-                "reveal": await asyncio.to_thread(_reveal_for_row,
+                "reveal": await asyncio.to_thread(reveal_for_row,
                     row.get("contest_id"), row.get("user_email") or "", pid),
                 "tests_hash": _tests_hash(pid),
                 "grader_version": grader.GRADER_VERSION,
@@ -4787,7 +4207,7 @@ def admin_plagiarism(request: Request, problem: str = "",
     if not _is_admin(user.get("email", "")):
         raise HTTPException(status_code=403, detail="admin only")
     problem = _resolve_pid(problem)
-    if problem not in PROBLEMS:
+    if problem not in _catalog.problems:
         raise HTTPException(status_code=400, detail="unknown problem")
     if _sb is None:
         raise HTTPException(status_code=404, detail="history not configured")

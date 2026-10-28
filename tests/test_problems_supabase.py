@@ -92,21 +92,21 @@ class SupabaseProblems(unittest.TestCase):
         cls._saved = {
             "PROBLEM_SOURCE": server.PROBLEM_SOURCE,
             "sb": server._sb,
-            "PROBLEMS": dict(server.PROBLEMS),
-            "BY_NO": dict(server.PROBLEMS_BY_NO),
-            "HASH": dict(server._TESTS_HASH_CACHE),
+            "PROBLEMS": dict(server._catalog._problems),
+            "BY_NO": dict(server._catalog._numbers),
+            "HASH": dict(server._catalog._hashes),
         }
 
     @classmethod
     def tearDownClass(cls):
         server.PROBLEM_SOURCE = cls._saved["PROBLEM_SOURCE"]
         server._sb = cls._saved["sb"]
-        server.PROBLEMS.clear()
-        server.PROBLEMS.update(cls._saved["PROBLEMS"])
-        server.PROBLEMS_BY_NO.clear()
-        server.PROBLEMS_BY_NO.update(cls._saved["BY_NO"])
-        server._TESTS_HASH_CACHE.clear()
-        server._TESTS_HASH_CACHE.update(cls._saved["HASH"])
+        server._catalog._problems.clear()
+        server._catalog._problems.update(cls._saved["PROBLEMS"])
+        server._catalog._numbers.clear()
+        server._catalog._numbers.update(cls._saved["BY_NO"])
+        server._catalog._hashes.clear()
+        server._catalog._hashes.update(cls._saved["HASH"])
         problem_store.invalidate_cache()
         cls._ctx.__exit__(None, None, None)
 
@@ -126,29 +126,29 @@ class SupabaseProblems(unittest.TestCase):
         # Supabase mode with the fake backend; PROBLEMS cache mirrors the store.
         server.PROBLEM_SOURCE = "supabase"
         server._sb = self.fake
-        server.PROBLEMS.clear()
+        server._catalog._problems.clear()
         for slug in SEED_SLUGS:
             prob = problem_store.load_problem_supabase(slug, client=self.fake)
-            server.PROBLEMS[slug] = prob
-        server.PROBLEMS_BY_NO.clear()
-        for pid, p in server.PROBLEMS.items():
+            server._catalog._problems[slug] = prob
+        server._catalog._numbers.clear()
+        for pid, p in server._catalog._problems.items():
             if p.no > 0:
-                server.PROBLEMS_BY_NO[p.no] = pid
-        server._TESTS_HASH_CACHE.clear()
-        for pid, p in server.PROBLEMS.items():
-            server._TESTS_HASH_CACHE[pid] = grader.tests_hash(p)
+                server._catalog._numbers[p.no] = pid
+        server._catalog._hashes.clear()
+        for pid, p in server._catalog._problems.items():
+            server._catalog._hashes[pid] = grader.tests_hash(p)
         self.fake.tables["contests"] = []
         self.fake.tables["contest_registrations"] = []
 
     def tearDown(self):
         server.PROBLEM_SOURCE = type(self)._saved["PROBLEM_SOURCE"]
         server._sb = type(self)._saved["sb"]
-        server.PROBLEMS.clear()
-        server.PROBLEMS.update(type(self)._saved["PROBLEMS"])
-        server.PROBLEMS_BY_NO.clear()
-        server.PROBLEMS_BY_NO.update(type(self)._saved["BY_NO"])
-        server._TESTS_HASH_CACHE.clear()
-        server._TESTS_HASH_CACHE.update(type(self)._saved["HASH"])
+        server._catalog._problems.clear()
+        server._catalog._problems.update(type(self)._saved["PROBLEMS"])
+        server._catalog._numbers.clear()
+        server._catalog._numbers.update(type(self)._saved["BY_NO"])
+        server._catalog._hashes.clear()
+        server._catalog._hashes.update(type(self)._saved["HASH"])
         problem_store.invalidate_cache()
 
     # ---------- helpers ----------
@@ -364,8 +364,8 @@ class SupabaseProblems(unittest.TestCase):
         for r in rows:
             if r.get("slug") == slug:
                 r["is_published"] = False
-        server.PROBLEMS[slug] = problem_store.deserialize_problem(
-            {**problem_store.serialize_problem(server.PROBLEMS[slug]),
+        server._catalog._problems[slug] = problem_store.deserialize_problem(
+            {**problem_store.serialize_problem(server._catalog._problems[slug]),
              "is_published": False})
         self.login(STUDENT)
         self.assertEqual(self.client.get(f"/api/problems/{slug}").status_code, 404)
@@ -477,12 +477,12 @@ class SupabaseProblems(unittest.TestCase):
         # Simulate a real supabase boot: metadata-only PROBLEMS + extras,
         # then wipe ALL Storage objects — browsing must still work.
         meta, hashes, extra = problem_store.load_snapshot(client=self.fake)
-        server.PROBLEMS.clear()
-        server.PROBLEMS.update(meta)
-        server._PROBLEM_EXTRA.clear()
-        server._PROBLEM_EXTRA.update(extra)
-        server._TESTS_HASH_CACHE.clear()
-        server._TESTS_HASH_CACHE.update(hashes)
+        server._catalog._problems.clear()
+        server._catalog._problems.update(meta)
+        server._catalog._extra.clear()
+        server._catalog._extra.update(extra)
+        server._catalog._hashes.clear()
+        server._catalog._hashes.update(hashes)
         problem_store.invalidate_cache()
         self.fake.buckets.clear()
         self.login(STUDENT)

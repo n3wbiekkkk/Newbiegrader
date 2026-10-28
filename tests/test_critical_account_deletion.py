@@ -72,11 +72,62 @@ class AccountDeletion(LoginBoundary):
         self.assertEqual(self.client.get('/api/profile').status_code,401)
         self.assertFalse(self.db.rows('account_audit'))
 
+    def test_finish_outage_leaves_revoked_work_that_the_shared_module_can_resume(self):
+        subject = '00000000-0000-0000-0000-000000000001'
+        self.db.rows('users')[0]['email_auth_subject'] = subject
+        self.login()
+        rpc = self.db.rpc
+
+        def unavailable_finish(name, params):
+            if name == 'account_delete_finish':
+                raise OSError('private finish sentinel')
+            return rpc(name, params)
+
+        with patch.object(self.db, 'rpc', side_effect=unavailable_finish), \
+                patch.object(server.email_auth, 'delete_identity'):
+            response = self.delete()
+        self.assertEqual(response.status_code, 503)
+        self.assertNotIn('private finish sentinel', response.text)
+        self.assertEqual(self.client.get('/api/profile').status_code, 401)
+        self.assertTrue(self.db.rows('users'))
+        self.assertFalse(self.db.rows('account_audit'))
+        pending = self.db.rows('account_deletion_work')[0]
+        deletion = server.AccountDeletion(self.db, 'https://synthetic.invalid', 'synthetic')
+        with patch.object(server.email_auth, 'delete_identity'):
+            deletion.resume(pending['email'], pending['auth_subject'])
+            deletion.resume(pending['email'], pending['auth_subject'])
+        self.assertFalse(self.db.rows('users'))
+        self.assertFalse(self.db.rows('account_deletion_work'))
+        self.assertEqual(len(self.db.rows('account_audit')), 1)
+
     def test_live_job_requires_waiting_without_revoking_account(self):
         self.login()
         self.db.rows('judge_jobs').append({'user_email':EMAIL,'status':'running'})
         self.assertEqual(self.delete().status_code,409)
         self.assertEqual(self.client.get('/api/profile').status_code,200)
+
+    def test_lost_finish_reply_is_unconfirmed_and_recovery_does_not_duplicate_audit(self):
+        subject = '00000000-0000-0000-0000-000000000001'
+        self.db.rows('users')[0]['email_auth_subject'] = subject
+        self.login()
+        rpc = self.db.rpc
+
+        def lose_finish_reply(name, params):
+            if name == 'account_delete_finish':
+                rpc(name, params).execute()
+                raise OSError('finish committed but reply lost')
+            return rpc(name, params)
+
+        with patch.object(self.db, 'rpc', side_effect=lose_finish_reply), \
+                patch.object(server.email_auth, 'delete_identity'):
+            response = self.delete()
+        self.assertEqual(response.status_code, 503)
+        self.assertFalse(self.db.rows('users'))
+        self.assertFalse(self.db.rows('account_deletion_work'))
+        self.assertEqual(len(self.db.rows('account_audit')), 1)
+        with patch.object(server.email_auth, 'delete_identity'):
+            server.AccountDeletion(self.db, 'https://synthetic.invalid', 'synthetic').resume(EMAIL, subject)
+        self.assertEqual(len(self.db.rows('account_audit')), 1)
 
     def test_must_confirm_exact_account_email(self):
         self.login()

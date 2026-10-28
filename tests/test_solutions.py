@@ -8,6 +8,7 @@ from unittest.mock import patch
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from critical_helpers import synthetic_problem, test_server
+from critical_helpers import patch_server_state
 import backend_problem_files as files
 import problem_store
 
@@ -25,7 +26,7 @@ class SolutionAccess(unittest.TestCase):
         for key, value in {'PROBLEMS': {self.prob.pid: self.prob},
                            'PROBLEMS_BY_NO': {99: self.prob.pid},
                            'PROBLEM_SOURCE': 'local'}.items():
-            self.stack.enter_context(patch.object(server, key, value))
+            self.stack.enter_context(patch_server_state(server, key, value))
         self.stack.enter_context(patch.object(server, '_ensure_problems_fresh'))
         self.stack.enter_context(patch.object(server, '_visible_to', return_value=True))
         self.stack.enter_context(patch.object(server, '_all_contest_rows', side_effect=lambda: self.contests))

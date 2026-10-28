@@ -25,7 +25,7 @@ class AuditRegressions(unittest.TestCase):
         self.db = FakeSupabase()
         self.problem = synthetic_problem()
         self.stack.enter_context(patch.object(server, '_sb', self.db))
-        self.stack.enter_context(patch.object(server, 'PROBLEMS', {self.problem.pid: self.problem}))
+        self.stack.enter_context(patch.object(server._catalog, '_problems', {self.problem.pid: self.problem}))
         self.stack.enter_context(patch.object(server, '_ensure_problems_fresh'))
         self.stack.enter_context(patch.object(server, 'ADMIN_EMAILS', set()))
         self.db.rows('users').append({'email': EMAIL, 'name': 'Synthetic',

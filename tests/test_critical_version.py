@@ -27,7 +27,7 @@ class CriticalVersion(unittest.TestCase):
 
     def test_critical_version_returns_the_boot_source_fingerprint(self):
         request = Request({"type": "http", "session": {}})
-        with patch.object(server, "PROBLEMS", {}), \
+        with patch.object(server._catalog, '_problems', {}), \
                 patch.object(server, "_ensure_problems_fresh"), \
                 patch.object(server, "_hidden_pids", return_value=set()), \
                 patch.object(server, "_source_fingerprint", side_effect=AssertionError("must use boot hash")):
@@ -39,6 +39,29 @@ class CriticalVersion(unittest.TestCase):
             digest.update(b"\0")
         self.assertEqual(body["build_sha256"], digest.hexdigest())
         self.assertRegex(body["build_sha256"], r"^[0-9a-f]{64}$")
+
+    def test_critical_disclosure_code_is_included_in_release_fingerprint(self):
+        self.assertIn("submission_disclosure.py", server.BUILD_SOURCE_FILES)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for name in server.BUILD_SOURCE_FILES:
+                (root / name).write_text("# synthetic source\n")
+            before = server._source_fingerprint(root)
+            (root / "submission_disclosure.py").write_text("# changed disclosure semantics\n")
+            self.assertNotEqual(server._source_fingerprint(root), before)
+
+    def test_critical_owned_workflows_are_packaged_and_fingerprinted(self):
+        for module in ("account_deletion.py", "judge_lifecycle.py", "problem_catalog.py"):
+            with self.subTest(module=module):
+                self.assertIn(module, server.BUILD_SOURCE_FILES)
+                self.assertIn(module, (server.ROOT / "Dockerfile").read_text())
+                with tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    for name in server.BUILD_SOURCE_FILES:
+                        (root / name).write_text("# synthetic source\n")
+                    before = server._source_fingerprint(root)
+                    (root / module).write_text("# changed workflow semantics\n")
+                    self.assertNotEqual(server._source_fingerprint(root), before)
 
 
 if __name__ == "__main__":

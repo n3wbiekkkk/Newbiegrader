@@ -49,7 +49,7 @@ class PerformanceQuickWins(unittest.TestCase):
                 patch.object(server, "_contest_problem_sets", return_value=(set(), set())), \
                 patch.object(server, "_tests_hash", return_value="hash"), \
                 patch.object(server, "_problem_total", return_value=3), \
-                patch.object(server, "_PROBLEM_EXTRA",
+                patch.object(server._catalog, '_extra',
                              {self.prob.pid: {"has_pdf": True}}):
             body = server.problem_detail(request, self.prob.pid, response)
         self.assertTrue(body["has_pdf"])
@@ -93,12 +93,12 @@ class PerformanceQuickWins(unittest.TestCase):
 
         with patch.object(server, "PROBLEM_SOURCE", "supabase"), \
                 patch.object(server, "_sb", object()), \
-                patch.object(server, "_problem_refresh_lock", lock), \
-                patch.object(server, "_problems_refresh_at", 0.0), \
+                patch.object(server._catalog, '_refresh_lock', lock), \
+                patch.object(server._catalog, '_refreshed_at', 0.0), \
                 patch.object(problem_store, "cache_ttl_s", return_value=0.0), \
                 patch.object(problem_store, "load_snapshot", side_effect=slow_load), \
                 patch.object(problem_store, "invalidate_stale", return_value=[]), \
-                patch.object(server, "_apply_problem_snapshot"):
+                patch.object(server._catalog, "_install"):
             start = time.monotonic()
             server._ensure_problems_fresh()
             elapsed = time.monotonic() - start

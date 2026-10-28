@@ -1,4 +1,5 @@
 """Fifty distinct HTTP sessions; fake DB admission, no throughput claim."""
+from critical_helpers import patch_server_state
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
@@ -39,7 +40,7 @@ class FiftyAdmissions(unittest.TestCase):
             for name, value in {'_sb': db, 'QUEUE_MODE': 'database', 'QUEUE_MAX': 50,
                 'PROBLEMS': {problem.pid: problem}, '_login_tries': {}, '_account_tries': {},
                 '_PROFILE_NAME_CACHE': {}, '_contest_pid_cache': {'at': 0, 'all': set(), 'hide': set()}}.items():
-                stack.enter_context(patch.object(server, name, value))
+                stack.enter_context(patch_server_state(server, name, value))
             stack.enter_context(patch.object(server, '_ensure_problems_fresh'))
             for i in range(51):
                 email = f'burst-{i}@example.invalid'

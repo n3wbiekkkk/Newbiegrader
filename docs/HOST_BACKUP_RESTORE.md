@@ -116,3 +116,19 @@ accounts before reopening, and restore no sessions. If deletion state is missing
 stop restoration for operator resolution. Follow
 [the offline erasure reconciliation gate](RESTORE_ERASURE.md), including a fresh
 independent deletion snapshot, count review and removal of every old session.
+
+## Primary and warm-backup namespaces
+
+As of 2026-10-27, the primary runs the reviewed backup helper with
+`--object-prefix hosts/promma-server`; homeserver backups retain their existing
+root namespace. The optional prefix consists of simple slash-separated lowercase
+host labels. Listing and pruning stay inside that prefix and delete only recognized
+timestamped archive basenames. One host's retention cannot delete the other's
+archives. Both use the existing off-host age identity's recipient. Current primary
+configuration, append-only identities and a scheduled table export were copied
+off-host and authenticated by decryption after cutover. New fleet receiver/observer
+configuration is included; protected file bytes still use a separate archive.
+
+A warm standby uses the same current key and live database as the primary;
+this is distinct from disaster restoration of an archived database. The latter
+still requires empty sessions and a fresh key as described above.

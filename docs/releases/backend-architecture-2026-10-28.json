@@ -1,0 +1,119 @@
+{
+  "date": "2026-10-28",
+  "release": "architecture-20261028-1bf56506a130",
+  "base_revision": "ac14105834a9dbde22974c2a90b9765fe29d9fd2",
+  "source_tree": "2628cf8511f0f374057a59332c77746b99f8f3c2",
+  "build_sha256": "1bf56506a13088f1cf6d73f12b95083bb4a6d8c1cedbfa0ee88ef2862fa20c76",
+  "archive_sha256": "acd0fdde670671b64bd4fb0b4869c41b2c6fa0b69c8fc1b153d98779ee950fef",
+  "grader_version": "2.0.8",
+  "python_version": "3.13.17",
+  "changes": [
+    "Shared Account deletion resume for web and scheduled recovery",
+    "Private judging-attempt ownership with supervised heartbeat and fenced completion",
+    "Problem catalog snapshots, numeric lookup and coordinated version refresh"
+  ],
+  "qualification": {
+    "linux_full_tests": 722,
+    "linux_critical_tests": 402,
+    "linux_failures": 0,
+    "linux_errors": 0,
+    "linux_skips": 0,
+    "frontend_tests": 222,
+    "image_build": "passed",
+    "dependency_audits": "no known vulnerabilities",
+    "problem_validation": {
+      "problems": 100,
+      "reference_solutions": "all AC"
+    },
+    "plagiarism_self_tests": 4,
+    "native_canary_tests": 94,
+    "native_canary_skips": 0,
+    "distinct_native_worker_preflights": 16,
+    "concurrent_primary_allocations": 4,
+    "concurrent_primary_tests": 48,
+    "concurrent_primary_all_overlapped": true,
+    "public_https_checks": 21,
+    "authenticated_smoke": {
+      "release": "architecture-20261028-1bf56506a130",
+      "runs": [
+        {
+          "language": "python",
+          "verdict": "OK",
+          "seconds": 1.5
+        },
+        {
+          "language": "c",
+          "verdict": "OK",
+          "seconds": 1.553
+        },
+        {
+          "language": "cpp",
+          "verdict": "OK",
+          "seconds": 1.567
+        }
+      ],
+      "submissions": [
+        {
+          "language": "python",
+          "accepted": true,
+          "history_linked": true,
+          "admission_timestamp_matches_job": true,
+          "seconds": 6.456
+        },
+        {
+          "language": "c",
+          "accepted": true,
+          "history_linked": true,
+          "admission_timestamp_matches_job": true,
+          "seconds": 6.245
+        },
+        {
+          "language": "cpp",
+          "accepted": true,
+          "history_linked": true,
+          "admission_timestamp_matches_job": true,
+          "seconds": 6.689
+        }
+      ],
+      "provider_identities_created": 0,
+      "emails_sent": 0,
+      "wrong_browser_handoff_rejected_without_consumption": true,
+      "deployed_fingerprint_matches": true,
+      "bound_handoff_and_current_identity": true,
+      "success": true,
+      "temporary_data_cleaned": true,
+      "deleted_session_rejected": true,
+      "completed_at": "2026-10-28T05:07:29.790581+00:00"
+    }
+  },
+  "activation": {
+    "primary_workers": 4,
+    "homeserver_workers": 2,
+    "auxiliary_pc_workers": 10,
+    "all_three_fingerprints_match": true,
+    "both_api_admission_restored": true,
+    "queue_and_live_leases_drained": true,
+    "session_secrets_preserved_and_equal": true,
+    "uid_ledger_prefixes_preserved": true,
+    "resource_budgets_preserved": true,
+    "protected_files": {
+      "problems": 100,
+      "cases": 1814,
+      "pdfs": 100,
+      "hashes_equal": true,
+      "cloud_fallback_requests": 0
+    },
+    "encrypted_backups_authenticated_off_host": 5,
+    "protected_backup_publisher_locks_held": true,
+    "watchdog_checks_healthy": 12,
+    "watchdog_timer_restored": true,
+    "discord_routes_and_presence_preserved": true,
+    "database_ddl_applied": false
+  },
+  "limits": [
+    "No fresh Google-provider, email-delivery, Turnstile, reboot, sustained-load or full disaster-recovery rehearsal was performed.",
+    "No new SQL qualification was run: schema and SQL are unchanged; existing atomic RPCs were retained.",
+    "Encrypted archive authentication is not a complete hosted database/Auth/Storage restoration.",
+    "An initial smoke invocation used the wrong SameSite expectation; the final check used the preserved none setting. The authenticated smoke was updated to expect this release fingerprint."
+  ]
+}

@@ -10,6 +10,7 @@ import unittest
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.testclient import TestClient
 from critical_helpers import synthetic_problem, test_server
+from critical_helpers import patch_server_state
 from fake_supabase import FakeSupabase
 
 server = test_server()
@@ -29,12 +30,12 @@ class ContestPolicyAudit(unittest.TestCase):
         for key, value in {"_sb": self.fake, "PROBLEMS": {self.prob.pid: self.prob},
                            "_reg_table_ok": {"value": True},
                            "_contest_pid_cache": {"at": 0., "all": set(), "hide": set()}}.items():
-            self.stack.enter_context(patch.object(server, key, value))
+            self.stack.enter_context(patch_server_state(server, key, value))
 
     def test_policy_outage_does_not_open_problem_or_sample_access(self):
         with patch.object(server, "_cached_contest_rows", side_effect=RuntimeError("synthetic outage")), \
                 patch.object(server, "_all_contest_rows", side_effect=RuntimeError("synthetic outage")):
-            for lookup in (lambda: server._visible_to(self.prob.pid, ""), server._live_hidden_pids):
+            for lookup in (lambda: server._visible_to(self.prob.pid, ""), server._disclosure.hidden_sample_problems):
                 with self.subTest(lookup=lookup):
                     with self.assertRaises(HTTPException) as exc:
                         lookup()
@@ -145,11 +146,11 @@ class ContestPolicyAudit(unittest.TestCase):
             contest = dict(self.contest, **bad)
             with self.subTest(bounds=bad), patch.object(
                     server, "_all_contest_rows", return_value=[contest]):
-                self.assertEqual(server._live_reveal(contest["id"], owner, self.prob.pid),
+                self.assertEqual(server._disclosure.rejudge_policy()(contest["id"], owner, self.prob.pid),
                                  server.REVEAL_NONE)
-                self.assertEqual(server._reveal_for(contest, owner), server.REVEAL_NONE)
+                self.assertEqual(server._disclosure.admission_reveal(contest, owner, self.prob.pid), server.REVEAL_NONE)
                 self.assertTrue(server._contest_result_frozen(contest, row))
-                self.assertIn(self.prob.pid, server._live_hidden_pids())
+                self.assertIn(self.prob.pid, server._disclosure.hidden_sample_problems())
 
     def test_admin_rejudge_keeps_the_submission_owner_feedback_policy(self):
         """A rejudge stores the submission's policy, never the admin's view.
@@ -175,8 +176,8 @@ class ContestPolicyAudit(unittest.TestCase):
         self.assertEqual(job["reveal"], server.REVEAL_NONE)
 
         row = server._submission_row(job, self.result_with_samples_and_hidden())
-        read_back = server._result_with_reveal(row, {"results": row["results"]},
-                                               server.REVEAL_SAMPLES)
+        read_back = server._disclosure.job_result({
+            **row, "status": "done", "result": {"results": row["results"]}})
         self.assertNotIn("SAMPLE-IN", json.dumps(read_back))
         self.assertNotIn("HIDDEN-IN", json.dumps(read_back))
         self.assertTrue(all(item.get("hidden") for item in read_back["results"]))
@@ -264,8 +265,8 @@ class ContestPolicyAudit(unittest.TestCase):
     def test_admin_owner_keeps_admin_feedback_policy_on_contest_reads(self):
         """Contest rows use the submission owner's policy.
 
-        _reveal_for grants admins REVEAL_ALL. The generic contest-free
-        _effective_reveal does not, so re-checking a contest row without its
+        Contest admission grants admins REVEAL_ALL. Contest-free Practice
+        admission does not, so re-checking a contest row without its
         row would silently strip the admin owner's own feedback. Use the
         owner's contest row, never the viewer's identity.
         """
@@ -371,9 +372,9 @@ class ContestPolicyAudit(unittest.TestCase):
         with patch.object(server, "QUEUE_MODE", "local"):
             server._jobs[jid] = dict(job)
             self.addCleanup(server._jobs.pop, jid, None)
-            stored = server._stored_result(job, self.result_with_samples_and_hidden())
-            asyncio.run(server._finish_job(jid, result=self.result_with_samples_and_hidden(),
-                                           stored=stored))
+            stored = server._disclosure.stored_result(job, self.result_with_samples_and_hidden())
+            asyncio.run(server._job_lifecycle().complete(job, server.Completion(result=self.result_with_samples_and_hidden(),
+                                           stored=stored)))
             polled = asyncio.run(server.job_status(self.request_with(owner, {}), jid))
         self.assertNotIn("HIDDEN-IN", json.dumps(server._jobs[jid]["result"]))
         self.assertNotIn("HIDDEN-IN", json.dumps(polled["result"]))

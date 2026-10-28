@@ -1,0 +1,168 @@
+{
+  "date": "2026-10-27",
+  "backend_release": "disclosure-20261026-89b92d53b936",
+  "backend_build_sha256": "89b92d53b936bae1c0351910fb72c173c861517d5c10ca5ade20d5bec50e2868",
+  "baseline_qualification": "submission-disclosure-2026-10-26.json",
+  "primary": {
+    "node": "promma-server",
+    "workers": 4,
+    "worker_cpu_quota": 1,
+    "worker_memory_mib": 1024,
+    "aggregate_cpu_quota": 4,
+    "aggregate_memory_mib": 4096
+  },
+  "backup": {
+    "node": "homeserver",
+    "workers": 2,
+    "warm_api": true,
+    "separate_tunnel": true
+  },
+  "auxiliary": {
+    "node": "ubuntu-pc",
+    "configured_workers": 10,
+    "verified_ready_workers": 0,
+    "readiness": "unavailable"
+  },
+  "transport": {
+    "primary_binding": "PRIMARY_API",
+    "backup_binding": "PRIVATE_API",
+    "probe_timeout_ms": 1500,
+    "probe_body_limit_bytes": 2048,
+    "selection_before_application_request": true,
+    "forwarded_request_replayed": false,
+    "automatic_failback": true,
+    "public_worker_routes": false,
+    "preview_urls": false,
+    "secret_bindings_preserved": true
+  },
+  "protected_files": {
+    "problems": 100,
+    "cases": 1814,
+    "statement_pdfs": 100,
+    "bytes_and_hashes_equal": true,
+    "cloud_fallback_requests": 0
+  },
+  "validation": {
+    "node_tests_passed": 222,
+    "operations_tests_macos_passed": 56,
+    "operations_tests_linux_python313_passed": 56,
+    "native_canary_tests": 22,
+    "native_canary_skips": 0,
+    "real_worker_preflights": 4,
+    "public_https_checks_passed": 21,
+    "authenticated_smoke": {
+      "release": "disclosure-20261026-89b92d53b936",
+      "runs": [
+        {
+          "language": "python",
+          "verdict": "OK",
+          "seconds": 1.245
+        },
+        {
+          "language": "c",
+          "verdict": "OK",
+          "seconds": 1.197
+        },
+        {
+          "language": "cpp",
+          "verdict": "OK",
+          "seconds": 2.16
+        }
+      ],
+      "submissions": [
+        {
+          "language": "python",
+          "accepted": true,
+          "history_linked": true,
+          "admission_timestamp_matches_job": true,
+          "seconds": 4.429
+        },
+        {
+          "language": "c",
+          "accepted": true,
+          "history_linked": true,
+          "admission_timestamp_matches_job": true,
+          "seconds": 5.865
+        },
+        {
+          "language": "cpp",
+          "accepted": true,
+          "history_linked": true,
+          "admission_timestamp_matches_job": true,
+          "seconds": 4.367
+        }
+      ],
+      "provider_identities_created": 0,
+      "emails_sent": 0,
+      "wrong_browser_handoff_rejected_without_consumption": true,
+      "deployed_fingerprint_matches": true,
+      "bound_handoff_and_current_identity": true,
+      "primary_to_backup_session_preserved": true,
+      "backup_local_workers": 2,
+      "backup_to_primary_session_and_history_preserved": true,
+      "automatic_failback_verified": true,
+      "success": true,
+      "temporary_data_cleaned": true,
+      "deleted_session_rejected": true,
+      "completed_at": "2026-10-27T02:17:50.738735+00:00"
+    },
+    "actual_reboot": {
+      "passed": true,
+      "boot_id_changed": true,
+      "automatically_active_units": 9,
+      "workers_active": 4,
+      "sampled_backup_responses_http200": 6
+    },
+    "concurrent_native_qualification": {
+      "concurrent_allocations": 4,
+      "tests": 48,
+      "skips": 0,
+      "all_four_overlapped": true,
+      "per_unit_memory_mb": 1024,
+      "per_unit_cpu_quota": 1,
+      "aggregate_memory_mb": 4096,
+      "aggregate_cpu_quota": 4,
+      "success": true
+    }
+  },
+  "monitoring": {
+    "owner": "homeserver",
+    "primary_outage_has_own_check": true,
+    "application_alert_route": "newbiegrader",
+    "personal_alert_route_preserved": true,
+    "check_only_validation": true,
+    "messages_sent_by_validation": 0,
+    "numeric_peer_observation_only": true,
+    "healthy_checks": 12
+  },
+  "backup_policy": {
+    "primary_object_prefix": "hosts/promma-server/",
+    "homeserver_existing_root_namespace_preserved": true,
+    "retention_isolated_by_prefix": true,
+    "encrypted_archives_authenticated_off_host": true,
+    "existing_age_recipient_preserved": true,
+    "web_sessions_excluded": true,
+    "both_scheduled_helpers_verified": true,
+    "final_configuration_archives_both_hosts_authenticated_off_host": true
+  },
+  "ssh": {
+    "ordinary_ssh_verified": true,
+    "tailscale_ssh_enabled": false,
+    "reason": "tailnet SSH policy rejected the connection; timed rollback restored ordinary SSH"
+  },
+  "operations_source_sha256": {
+    "deploy/host/cloudflare/worker.js": "ecd17be3c8a4ff31f74fc35f2b02f3473f93e40dc1f8578cc6face3511944f9e",
+    "deploy/host/newbiegrader-alert.py": "c0e8c0117520aabafab76e2cee92860272db9e51172e5fb0292c24d54aab8a42",
+    "deploy/host/newbiegrader-backup.py": "e5d66dfc4fd145fd9b9444e69e764d908b9ddfe01a82c3c83599e530568df04e",
+    "deploy/host/fleet_peer_push.py": "f8d1688a9c87915fb99a3742a991f75d2bb4c64fe65f5d354908c08268b474a0",
+    "deploy/host/newbiegrader-fleet-metrics.service": "cecb65133e6354e68f903fea59197da633cb153c7b1fac98226a44ea6e54da70"
+  },
+  "limits": [
+    "Controlled failover drained admitted jobs; power loss during an in-flight job was not tested.",
+    "Six observed workers are not a sustained simultaneous-user capacity qualification.",
+    "Future code and problem publications must qualify both serving nodes; synchronization is not automatic.",
+    "Cloudflare and Supabase remain shared dependencies.",
+    "The full Linux backend suite belongs to the linked unchanged-source baseline; this cutover reran the affected operations suite and native checks.",
+    "Source changes remain in the local working tree; no commit or push was made."
+  ]
+}

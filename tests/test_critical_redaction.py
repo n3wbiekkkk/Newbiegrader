@@ -1,4 +1,5 @@
 """Synthetic F3 regressions across engine, queue, API, and persistence."""
+from critical_helpers import patch_server_state
 import asyncio
 import contextlib
 import copy
@@ -39,7 +40,7 @@ class CriticalRedaction(unittest.TestCase):
             "JUDGE_JOBS": 1, "MEMORY_CAP_MB": 128, "_sb": self.fake,
             "_jobs": {}, "_active_jobs": {}, "_TESTS_HASH_CACHE": {},
         }.items():
-            self.stack.enter_context(patch.object(server, name, value))
+            self.stack.enter_context(patch_server_state(server, name, value))
         self.stack.enter_context(patch.dict(os.environ, {"GRADER_REQUIRE_NETNS": "0"}))
         original_env = judge_runner._runner_env
         self.stack.enter_context(patch.object(judge_runner, "_runner_env", side_effect=lambda:
@@ -281,7 +282,7 @@ class CriticalRedaction(unittest.TestCase):
         self.assert_no_canary(server._submission_row(job, raw, stored=raw))
         server._jobs[job["id"]] = job
         self.fake.tables["judge_jobs"] = [copy.deepcopy(job)]
-        asyncio.run(server._finish_job(job["id"], result=raw, stored=raw))
+        asyncio.run(server._job_lifecycle().complete(job, server.Completion(result=raw, stored=raw)))
         self.assert_no_canary(server._jobs[job["id"]]["result"])
         self.assert_no_canary(self.fake.tables["judge_jobs"][0]["result"])
 

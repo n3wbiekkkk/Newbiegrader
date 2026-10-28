@@ -117,7 +117,7 @@ For the production topology, see [`docs/PRODUCTION_ARCHITECTURE.md`](docs/PRODUC
 Tests live in `tests/`. The Python suite uses `unittest` (no `pytest` dependency is installed), and the frontend tests use the Node.js test runner. These are the same commands CI runs; [`.github/workflows/ci.yml`](.github/workflows/ci.yml) is the exact source of truth if they ever differ:
 
 ```bash
-python -m compileall -q grader.py server.py judge_runner.py judge_execution.py worker.py container_entrypoint.py job_sandbox.py job_resources.py email_auth.py problem_store.py tools deploy/host
+python -m compileall -q grader.py server.py submission_disclosure.py account_deletion.py judge_lifecycle.py problem_catalog.py judge_runner.py judge_execution.py worker.py container_entrypoint.py job_sandbox.py job_resources.py email_auth.py problem_store.py tools deploy/host
 node --check static/app.js
 node tools/check_frontend.js
 node tools/check_styles.js
@@ -152,7 +152,8 @@ in the pull request.
 | Path | Responsibility |
 |------|----------------|
 | `grader.py` | The single judging engine. Python standard library only. |
-| `server.py` | FastAPI application: authentication, admission, job queue, quota and visibility policy, result redaction. |
+| `server.py` | FastAPI application: authentication, admission, job queue, quota, visibility and transport adapters. |
+| `submission_disclosure.py` | Submission disclosure policy, audience projections and stored feedback; facts supplied by an adapter. |
 | `judge_execution.py`, `judge_runner.py`, `worker.py` | Supervised, bounded execution and the dedicated worker role. |
 | `job_sandbox.py`, `job_resources.py` | Sandbox and per-job resource handling. |
 | `problem_store.py`, `backend_problem_files.py` | Problem metadata and backend file storage. |

@@ -16,6 +16,16 @@ PDF samples and the direct `/sample/{name}` endpoint are unchanged.
 
 ## Implementation contract
 
+`submission_disclosure.py` owns policy selection and projection for admission,
+Job and History reads, peer/public views and stored feedback. Its backend adapter
+supplies fresh Contest, publication, identity and sample facts; the module does
+not import the web application or database client. Execution continues to use
+the existing credential-free `judge_execution._redact_results` implementation.
+Stored feedback follows the admission snapshot; owner-facing reads evaluate the
+current policy using the submission owner, including when the viewer is an admin.
+The module interface is exercised directly with a fixture adapter in
+`tests/test_submission_disclosure.py`, alongside the existing route regressions.
+
 - `REVEAL_PRACTICE = "practice-failures"` is selected by the server, never by a
   client-supplied reveal flag. Existing `judge_jobs.reveal` is text and accepts it;
   no production schema change is necessary.

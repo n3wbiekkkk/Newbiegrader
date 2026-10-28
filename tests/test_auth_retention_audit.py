@@ -71,7 +71,7 @@ class AuthRetentionAudit(unittest.TestCase):
                               "source": "synthetic-source", "payload": {"input": "synthetic-input"}}}
         with patch.object(server, "_jobs", jobs), patch.object(server, "_sb", None), \
                 patch.object(server, "QUEUE_MODE", "local"), patch.object(server, "_active_jobs", {}):
-            asyncio.run(server._finish_job("synthetic", result={"verdict": "OK"}))
+            asyncio.run(server._job_lifecycle().complete(jobs["synthetic"], server.Completion(result={"verdict": "OK"})))
             self.assertNotIn("source", jobs["synthetic"])
             self.assertNotIn("payload", jobs["synthetic"])
             self.assertEqual(jobs["synthetic"]["result"]["verdict"], "OK")

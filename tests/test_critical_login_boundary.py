@@ -1,4 +1,5 @@
 """Real HTTP/session boundary for the public landing and member-only pages."""
+from critical_helpers import patch_server_state
 from contextlib import ExitStack
 import copy
 import unittest
@@ -27,7 +28,7 @@ class LoginBoundary(unittest.TestCase):
         for name, value in {"_sb": self.db, "PROBLEMS": {self.problem.pid: self.problem},
             "_cache": {}, "_login_tries": {}, "_account_tries": {},
             "_contest_pid_cache": {"at": 0, "all": set(), "hide": set()}}.items():
-            self.stack.enter_context(patch.object(server, name, value))
+            self.stack.enter_context(patch_server_state(server, name, value))
         self.stack.enter_context(patch.object(server, "_ensure_problems_fresh"))
         self.client = TestClient(server.app, base_url="https://testserver")
         self.addCleanup(self.client.close)
@@ -77,7 +78,7 @@ class LoginBoundary(unittest.TestCase):
         hidden.pid = "PRIVATE_HIDDEN_CANARY"
         hidden.hidden = True
         problems[hidden.pid] = hidden
-        with patch.object(server, "PROBLEMS", problems):
+        with patch.object(server._catalog, '_problems', problems):
             response = self.client.get("/api/home")
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()

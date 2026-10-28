@@ -1,0 +1,51 @@
+{
+  "date": "2026-10-26",
+  "release": "disclosure-20261026-89b92d53b936",
+  "base_revision": "ac14105834a9dbde22974c2a90b9765fe29d9fd2",
+  "build_sha256": "89b92d53b936bae1c0351910fb72c173c861517d5c10ca5ade20d5bec50e2868",
+  "grader_version": "2.0.8",
+  "python_version": "3.13.17",
+  "change": "Centralize Submission disclosure policy and projections while retaining the shared credential-free redactor and existing behavior.",
+  "qualification": {
+    "linux_full_tests": 689,
+    "linux_critical_tests": 399,
+    "linux_failures": 0,
+    "linux_errors": 0,
+    "linux_skips": 0,
+    "frontend_tests": 218,
+    "image_build": "passed",
+    "native_homeserver_canaries": 22,
+    "native_pc_canaries": 12,
+    "native_worker_preflights": 12,
+    "public_https_checks": 21,
+    "languages": ["python", "c", "cpp"],
+    "all_language_playgrounds": "OK",
+    "all_language_submissions": "AC",
+    "history_links_and_admission_timestamps": "verified",
+    "temporary_smoke_data": "cleaned",
+    "provider_identities_created": 0,
+    "emails_sent": 0
+  },
+  "activation": {
+    "admission_paused_and_queue_drained": true,
+    "live_leases_drained": true,
+    "encrypted_off_host_backups_authenticated": 3,
+    "protected_file_parity": {"problems": 100, "cases": 1814, "pdfs": 100},
+    "homeserver_workers": 2,
+    "pc_workers": 10,
+    "both_host_fingerprints_match": true,
+    "session_secret_preserved": true,
+    "uid_ledgers_preserved": true,
+    "resource_budgets_preserved": true,
+    "discord_routes_and_presence_preserved": true,
+    "watchdog_checks_passing": 11,
+    "admission_reopened": true,
+    "frontend_changed": false,
+    "database_ddl_applied": false
+  },
+  "limits": [
+    "No new disposable SQL qualification was required or run: this release changes no schema or SQL.",
+    "No fresh Google-provider, email-delivery, Turnstile, reboot, sustained-load or disaster-recovery rehearsal was performed.",
+    "Backup authentication verifies encrypted archive readability, not a complete hosted database/Auth/Storage restore."
+  ]
+}

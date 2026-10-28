@@ -1,0 +1,65 @@
+# Replace both private tailnet addresses before installation.
+# Validate with runuser -u www-data -- nginx -t -c /etc/nginx/newbiegrader-fleet.conf.
+worker_processes 1;
+pid /run/newbiegrader-fleet/nginx.pid;
+error_log stderr warn;
+events { worker_connections 32; }
+http {
+  access_log off;
+  client_body_temp_path /var/lib/newbiegrader/fleet-nginx/client;
+  proxy_temp_path /var/lib/newbiegrader/fleet-nginx/proxy;
+  fastcgi_temp_path /var/lib/newbiegrader/fleet-nginx/fastcgi;
+  uwsgi_temp_path /var/lib/newbiegrader/fleet-nginx/uwsgi;
+  scgi_temp_path /var/lib/newbiegrader/fleet-nginx/scgi;
+# Numeric worker health only; reachable on the private tailnet address.
+server {
+  listen REPLACE_PRIMARY_TAILNET_IP:9187;
+  server_name _;
+  access_log off;
+  location = /metrics {
+    limit_except GET { deny all; }
+    alias /var/lib/newbiegrader/fleet-metrics/newbiegrader.prom;
+    default_type text/plain;
+    add_header Cache-Control no-store;
+  }
+  location = /homeserver.prom {
+    allow REPLACE_HOME_PEER_TAILNET_IP;
+    allow REPLACE_PRIMARY_TAILNET_IP;
+    deny all;
+    limit_except GET PUT { deny all; }
+    root /var/lib/newbiegrader/fleet-peer-metrics;
+    dav_methods PUT;
+    dav_access user:rw group:r all:r;
+    client_max_body_size 4k;
+    default_type text/plain;
+    add_header Cache-Control no-store;
+  }
+  location = /ubuntu-pc.prom {
+    allow REPLACE_HOME_PEER_TAILNET_IP;
+    allow REPLACE_PRIMARY_TAILNET_IP;
+    deny all;
+    limit_except GET PUT { deny all; }
+    root /var/lib/newbiegrader/fleet-peer-metrics;
+    dav_methods PUT;
+    dav_access user:rw group:r all:r;
+    client_max_body_size 4k;
+    default_type text/plain;
+    add_header Cache-Control no-store;
+  }
+  location = /health {
+    allow REPLACE_HOME_PEER_TAILNET_IP;
+    allow REPLACE_PRIMARY_TAILNET_IP;
+    deny all;
+    limit_except GET { deny all; }
+    proxy_set_header Cookie "";
+    proxy_set_header Authorization "";
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_pass http://127.0.0.1:8000/api/health;
+    proxy_connect_timeout 2s;
+    proxy_read_timeout 3s;
+    add_header Cache-Control no-store;
+  }
+  location / { return 404; }
+}
+
+}

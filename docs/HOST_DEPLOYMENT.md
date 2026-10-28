@@ -1,6 +1,7 @@
 # Native backend deployment
 
-For the current ten-PC / two-homeserver topology and mode-aware PC startup,
+For the current four-primary / two-homeserver / ten-auxiliary-worker topology
+and mode-aware auxiliary-PC startup,
 see [worker fleet and monitoring](WORKER_FLEET.md). Four-instance allocations
 and commands below describe the original PC qualification template; select
 the actual per-node units and budgets from the current fleet configuration.
@@ -80,7 +81,9 @@ worker slots; this changes neither its own cgroup budget nor judging semantics.
    worker gate, enable exactly instances 1–4, open admission and verify real
    Python/C/C++ jobs and linked history over production HTTPS.
 8. Verify reboot recovery, encrypted off-host recovery and the backup/watchdog
-   configuration. Schedule operations on the active host only.
+   configuration. Keep one account-retention/watchdog/presence owner. Give each
+   scheduled host backup its own object namespace so pruning stays within that
+   host. The homeserver remains the current retention/watchdog/presence owner.
 
 All execution protections remain mandatory: per-job cgroups, private numeric
 UIDs, capability drop, seccomp endpoint denial, Landlock filesystem rules,
@@ -107,6 +110,48 @@ The optional HTTPS origin adds an anonymous `/api/auth/me` check through the
 entire public transport. It must return an uncached 200 JSON object with
 `user: null`; redirects, invalid TLS, oversized replies and unexpected identities
 fail the check. Journal checks remain enabled with their original one-hour window.
+
+### Discord alert messages and routing
+
+The watchdog sends Discord alerts as framed embed cards with a red side bar for
+failures and a green side bar for recovery. Cards show Thai status symbols, the affected service,
+likely impact, a suggested check and a UTC+7 timestamp. Recovery messages name
+the recovered checks. Discord mentions are disabled and raw diagnostic details
+remain in the host journal. Cards stay within Discord's
+[embed limits](https://docs.discord.com/developers/resources/message#embed-object).
+Plain-text fallbacks for other destinations remain bounded to 2,000 characters.
+
+The private root-owned `/etc/newbiegrader/alert-webhook` JSON can include
+`routes` in addition to its existing `url`, `token` and `label` fields:
+
+```json
+{
+  "url": "https://discord.com/api/v10/channels/111/messages",
+  "token": "REPLACE_ON_HOST_ONLY",
+  "label": "Backend / homeserver",
+  "routes": {
+    "newbiegrader": {"url": "https://discord.com/api/v10/channels/111/messages"},
+    "homeserver": {"url": "https://discord.com/api/v10/channels/222/messages"}
+  }
+}
+```
+
+Replace the example channel IDs on the host. Both routes must be present and
+distinct. API, worker, queue, tunnel, public HTTPS, application disk, application
+backup and account-maintenance checks belong to `newbiegrader` (the community's
+existing `#bot` channel). Optional private services such as Nextcloud and unknown
+host checks belong to `homeserver` (the other server's `#bot` channel).
+The bot token remains in this private file and is shared by both destinations;
+the bot must have View Channel and Send Messages permissions in each channel.
+Without `routes`, legacy configurations continue to use their existing endpoint.
+
+Notification state is acknowledged separately for each destination. An unchanged
+incident is quiet; a failed delivery retries without repeating a successful
+delivery to the other channel. Legacy incidents migrate without being repeated.
+`--check-only` and `--dry-run` neither send messages nor change notification state.
+Validate configuration and permissions with read-only Discord requests and use
+check-only mode before activating a monitoring-only change. Preserve the existing
+presence service, timer interval, application services and worker allocations.
 
 ## Worker database transport
 

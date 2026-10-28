@@ -123,7 +123,7 @@ class ApiE2E(unittest.TestCase):
         server.SUBMIT_QUOTA = type(self)._defaults["SUBMIT_QUOTA"]
         server.ACCOUNT_MAX_TRIES = type(self)._defaults["ACCOUNT_MAX_TRIES"]
         server.LOGIN_MAX_TRIES = type(self)._defaults["LOGIN_MAX_TRIES"]
-        for p in server.PROBLEMS.values():
+        for p in server._catalog._problems.values():
             p.hidden = False
 
     def login(self, email: str, name: str = "Tester") -> None:
@@ -174,7 +174,7 @@ class ApiE2E(unittest.TestCase):
         body = r.json()
         self.assertEqual(body["version"], grader.GRADER_VERSION)
         thai = body["tests"]["thai_time"]
-        self.assertEqual(thai["hash"], grader.tests_hash(server.PROBLEMS["thai_time"]))
+        self.assertEqual(thai["hash"], grader.tests_hash(server._catalog._problems["thai_time"]))
         self.assertEqual(thai["samples"], ["01", "02", "03"])
         self.assertGreater(thai["tests"], len(thai["samples"]))
 
@@ -258,7 +258,7 @@ class ApiE2E(unittest.TestCase):
         rows = self.stored(job_id=job["id"])
         self.assertEqual(len(rows), 1)
         row = rows[0]
-        self.assertEqual(row["tests_hash"], grader.tests_hash(server.PROBLEMS["thai_time"]))
+        self.assertEqual(row["tests_hash"], grader.tests_hash(server._catalog._problems["thai_time"]))
         self.assertEqual(row["grader_version"], grader.GRADER_VERSION)
         self.assertEqual(row["kind"], "submit")
         for item in row["results"]:
@@ -887,7 +887,7 @@ class ApiE2E(unittest.TestCase):
         self.assertNotIn("hanoi", self.client.get("/api/version").json()["tests"])
         # ...but the contest page still opens it (that is the only way in)
         self.assertEqual(self.client.get("/api/problems/hanoi").status_code, 200)
-        sample = server.PROBLEMS["hanoi"].samples[0]
+        sample = server._catalog._problems["hanoi"].samples[0]
         self.assertEqual(
             self.client.get(f"/api/problems/hanoi/sample/{sample}").status_code, 200)
         contest = self.client.get("/api/contests/cup-only").json()
@@ -921,14 +921,14 @@ class ApiE2E(unittest.TestCase):
         self.client.delete("/api/contests/cup-open", headers=BROWSER)
 
     def test_config_hidden_problem_is_private(self):
-        prob = server.PROBLEMS["mirror_pair"]
+        prob = server._catalog._problems["mirror_pair"]
         original = prob.hidden
         prob.hidden = True
         try:
             self.login(STUDENT_A)
             ids = [p["id"] for p in self.client.get("/api/problems").json()["problems"]]
             self.assertNotIn("mirror_pair", ids)
-            mp_sample = server.PROBLEMS["mirror_pair"].samples[0]
+            mp_sample = server._catalog._problems["mirror_pair"].samples[0]
             for path in ("/api/problems/mirror_pair",
                          f"/api/problems/mirror_pair/sample/{mp_sample}",
                          "/api/problems/mirror_pair/pdf"):
@@ -967,7 +967,7 @@ class ApiE2E(unittest.TestCase):
         # The repo numbering is an invariant (tools/number_problems.py keeps it):
         # public 1..P with no gaps, contest-only 1001.. with no gaps, and any
         # problem can be addressed by its number.
-        all_nos = sorted(p.no for p in server.PROBLEMS.values())
+        all_nos = sorted(p.no for p in server._catalog._problems.values())
         public = [n for n in all_nos if n < 1000]
         hidden_block = [n for n in all_nos if n >= 1000]
         self.assertEqual(public, list(range(1, len(public) + 1)), public)
@@ -980,16 +980,16 @@ class ApiE2E(unittest.TestCase):
         self.assertTrue(all(n > 0 for n in nums), "every listed problem needs a number")
         self.assertEqual(nums, sorted(nums), "the list is ordered by number")
         hidden = server._hidden_pids()
-        hidden_nos = {server.PROBLEMS[pid].no for pid in hidden}
+        hidden_nos = {server._catalog._problems[pid].no for pid in hidden}
         self.assertTrue(hidden_nos.isdisjoint(set(nums)), "hidden problems stay out of the list")
         self.assertEqual({p["id"] for p in probs},
-                         {pid for pid in server.PROBLEMS if pid not in hidden})
+                         {pid for pid in server._catalog._problems if pid not in hidden})
 
-        pid = server.PROBLEMS_BY_NO[19]
+        pid = server._catalog._numbers[19]
         detail = self.client.get("/api/problems/19").json()
         self.assertEqual(detail["id"], pid)
         self.assertEqual(detail["no"], 19)
-        sample = server.PROBLEMS[pid].samples[0]
+        sample = server._catalog._problems[pid].samples[0]
         self.assertEqual(self.client.get(f"/api/problems/19/sample/{sample}").status_code, 200)
         self.assertEqual(self.client.get("/api/problems/19/pdf").status_code,
                          200 if (ROOT / "problems" / pid / "statement.pdf").is_file() else 404)
@@ -1237,7 +1237,7 @@ class ApiE2E(unittest.TestCase):
         h = self.client.get("/api/health").json()
         self.assertTrue(h["ok"])
         # Guests receive only status/count; the catalog requires login.
-        visible = [pid for pid in server.PROBLEMS
+        visible = [pid for pid in server._catalog._problems
                    if pid not in server._hidden_pids()]
         self.assertNotIn("problems", h)
         self.assertEqual(h["count"], len(visible))

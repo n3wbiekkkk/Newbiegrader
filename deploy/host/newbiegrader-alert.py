@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import ipaddress
 import os
 import re
 import shutil
@@ -75,8 +76,30 @@ def _read_secret(path: Path) -> dict:
             raise SystemExit("Alert webhook file has no url")
         return {"url": url, "to": str(data.get("to") or "").strip(),
                 "token": str(data.get("token") or "").strip(),
-                "label": str(data.get("label") or "").strip()}
+                "label": str(data.get("label") or "").strip(),
+                "routes": _validate_routes(data.get("routes"))}
     return {"url": raw, "to": "", "token": "", "label": ""}
+
+
+def _validate_routes(routes) -> dict:
+    if routes is None:
+        return {}
+    if not isinstance(routes, dict) or set(routes) != {"newbiegrader", "homeserver"}:
+        raise SystemExit("Alert routes must define newbiegrader and homeserver")
+    clean = {}
+    for scope, route in routes.items():
+        if not isinstance(route, dict) or not isinstance(route.get("url"), str):
+            raise SystemExit("Invalid alert route")
+        url = route["url"]
+        parsed = urllib.parse.urlsplit(url)
+        if (parsed.scheme != "https" or parsed.hostname != "discord.com" or parsed.port not in (None, 443)
+                or parsed.username or parsed.password or parsed.query or parsed.fragment
+                or not re.fullmatch(r"/api/v10/channels/[0-9]+/messages", parsed.path)):
+            raise SystemExit("Alert routes must use Discord channel message endpoints")
+        clean[scope] = {"url": url}
+    if clean["newbiegrader"]["url"] == clean["homeserver"]["url"]:
+        raise SystemExit("Alert routes must use separate channels")
+    return clean
 
 
 def _secret_label(path: Path) -> str:
@@ -139,12 +162,17 @@ def _format_for(url: str, payload: dict, token: str = "") -> tuple[dict, dict]:
     text = payload.get("text", "")
     lowered = url.lower()
     if "discord.com/api" in lowered or "discordapp.com/api" in lowered:
+        body = {"allowed_mentions": {"parse": []}}
+        if payload.get("embed"):
+            body["embeds"] = [payload["embed"]]
+        else:
+            body["content"] = text
         if "/channels/" in lowered:
             # Discord bot: POST to a channel with the bot token.
             headers = {"Authorization": f"Bot {token}"} if token else {}
-            return {"content": text}, headers
+            return body, headers
         # Discord channel webhook: the token is already part of the URL.
-        return {"content": text}, {}
+        return body, {}
     if "hooks.slack.com" in lowered:
         return {"text": text}, {}
     if "api.line.me" in lowered:
@@ -276,6 +304,24 @@ def _extra_health_checks(raw: str) -> list[dict]:
                  "detail": "private service health integration unavailable"}]
 
 
+def _primary_probe(url: str) -> None:
+    """An optional root-configured tailnet probe detects masked primary outages."""
+    parts = urllib.parse.urlsplit(url)
+    address = ipaddress.ip_address(parts.hostname or '')
+    if parts.scheme != 'http' or address not in ipaddress.ip_network('100.64.0.0/10') or parts.port != 9187 \
+            or parts.path != '/health' or parts.query or parts.fragment or parts.username or parts.password:
+        raise ValueError('invalid primary health destination')
+    request = urllib.request.Request(url, headers={'Accept': 'application/json',
+        'User-Agent': 'Newbiegrader-primary-watchdog/1', 'Cache-Control': 'no-cache'})
+    with urllib.request.urlopen(request, timeout=5) as response:
+        raw = response.read(2049)
+        if response.status != 200 or response.geturl() != url or len(raw) > 2048:
+            raise ValueError('primary health unavailable')
+        value = json.loads(raw)
+    if value.get('ok') is not True or type(value.get('count')) is not int or value['count'] <= 0:
+        raise ValueError('primary not ready')
+
+
 def collect_checks() -> list[dict]:
     """Every check returns {name, ok, detail}. No check may raise."""
     checks: list[dict] = []
@@ -359,30 +405,130 @@ def collect_checks() -> list[dict]:
         except Exception as exc:
             add("public HTTPS", False, type(exc).__name__ + ": public transport unavailable")
 
+    primary = os.environ.get("NEWBIEGRADER_PRIMARY_HEALTH_URL", "")
+    if primary:
+        try:
+            _primary_probe(primary)
+            add("primary backend", True, "primary API ready")
+        except Exception:
+            add("primary backend", False, "primary API unavailable; verify backup operation")
     checks.extend(_extra_health_checks(os.environ.get("NEWBIEGRADER_EXTRA_HEALTH_URLS", "")))
     return checks
 
 
-def build_payload(checks: list[dict], state: dict, label: str = "") -> dict:
+# Only application-owned checks go to the learner community. Other services
+# and unknown future host checks stay in the private homeserver destination.
+CHECK_MESSAGES = {
+    "primary backend": ("เครื่องหลัก Newbiegrader", "เว็บไซต์อาจกำลังใช้ homeserver สำรอง",
+                        "ตรวจไฟ เครือข่าย API และ tunnel ของเครื่องหลัก"),
+    "api health": ("ระบบเว็บ", "เว็บอาจใช้งานไม่ได้หรือรายการโจทย์ไม่ครบ", "ตรวจ API และรายการโจทย์"),
+    "api role and queue": ("การตั้งค่าตรวจคำตอบ", "ระบบรับงานอาจทำงานไม่ถูกต้อง", "ตรวจ role และคิวฐานข้อมูลของ API"),
+    "judge worker": ("ตัวตรวจคำตอบ", "คำตอบที่ส่งมาอาจรอคิวนานขึ้น", "ตรวจ worker ที่หยุดทำงาน"),
+    "cloudflare tunnel": ("การเชื่อมต่อเว็บไซต์", "ผู้ใช้อาจเข้าเว็บไม่ได้", "ตรวจบริการ tunnel และเครือข่าย"),
+    "durable queue": ("คิวตรวจคำตอบ", "อาจรับงานหรือดึงงานตรวจไม่ได้", "ตรวจการเชื่อมต่อฐานข้อมูล"),
+    "disk space": ("พื้นที่เก็บข้อมูล Newbiegrader", "พื้นที่สำหรับงานตรวจและสำรองข้อมูลเหลือน้อย", "ตรวจพื้นที่ดิสก์ของ Newbiegrader"),
+    "backup freshness": ("สำรองข้อมูล Newbiegrader", "ยังยืนยันสำเนาสำรองล่าสุดไม่ได้", "ตรวจงาน backup และเวลาที่สำเร็จล่าสุด"),
+    "account retention": ("งานดูแลข้อมูลบัญชี", "งานล้างข้อมูลตามกำหนดยังไม่สำเร็จ", "ตรวจ timer และผลการทำงาน retention"),
+    "journal errors": ("ข้อผิดพลาดระบบตรวจ", "พบข้อผิดพลาดในบันทึกช่วง 1 ชั่วโมงล่าสุด", "ตรวจ log ของ API และ worker"),
+    "public HTTPS": ("เว็บไซต์จากภายนอก", "เส้นทางเข้าเว็บไซต์อาจขัดข้อง", "ตรวจ Pages, tunnel และ API"),
+}
+
+
+def _check_scope(name: str) -> str:
+    return "newbiegrader" if name in CHECK_MESSAGES else "homeserver"
+
+
+def _display(value: str, limit: int = 80) -> str:
+    # Keep a label on one line and prevent labels from introducing Markdown.
+    return re.sub(r"[\\`*_~<>@]", "", " ".join(str(value).split()))[:limit]
+
+
+def _check_message(name: str) -> tuple[str, str, str]:
+    if name in CHECK_MESSAGES:
+        return CHECK_MESSAGES[name]
+    if name.startswith("service "):
+        return (_display(name[8:]), "บริการยังไม่พร้อมใช้งานผ่าน HTTPS",
+                "ตรวจบริการ โหมดเครื่อง และการเชื่อมต่อ Tailscale")
+    if name == "optional health configuration":
+        return ("การตั้งค่าตรวจบริการส่วนตัว", "ยังตรวจสถานะบริการส่วนตัวไม่ได้",
+                "ตรวจ configuration และโมดูล private service health")
+    return (_display(name), "พบสถานะผิดปกติ", "ตรวจสถานะบริการและบันทึกของเครื่อง")
+
+
+def build_payload(checks: list[dict], state: dict, label: str = "",
+                  scope: str = "newbiegrader") -> dict:
     broken = [c for c in checks if not c["ok"]]
     previous = state.get("broken", [])
-    if broken:
-        lines = [f"Newbiegrader ALERT — {len(broken)} check(s) failing"]
-        for check in broken:
-            lines.append(f"• {check['name']}: {check['detail']}")
-    else:
-        lines = ["Newbiegrader RECOVERED — every check is passing again"]
-        if previous:
-            lines.append(f"was failing: {', '.join(previous)}")
     where = label or socket.gethostname()
-    lines.append(f"host={where} at {dt.datetime.now(dt.timezone.utc).isoformat()}")
+    title = "Newbiegrader" if scope == "newbiegrader" else "ระบบส่วนตัว / Homeserver"
+    status = f"🔴 **{title} · พบปัญหา {len(broken)} รายการ**" if broken else f"🟢 **{title} · กลับมาปกติแล้ว**"
+    lines = [status, f"🖥️ **เครื่อง:** {_display(where)}", ""]
+    names = [c["name"] for c in broken] if broken else previous
+    for name in names:
+        heading, impact, action = _check_message(name)
+        block = ([f"❌ **{heading}**", f"ผลกระทบ: {impact}", f"แนะนำ: {action}", ""]
+                 if broken else [f"✅ {heading}"])
+        # Discord content has a 2,000-character limit. Reserve room for footer.
+        if len("\n".join(lines + block)) > 1750:
+            lines.append("… ดูรายการเพิ่มเติมในบันทึก watchdog ของเครื่อง")
+            break
+        lines.extend(block)
+    if not broken:
+        lines.extend(["", "รายการตรวจในหมวดนี้ผ่านทั้งหมดแล้ว"])
+    moment = dt.datetime.now(dt.timezone(dt.timedelta(hours=7)))
+    lines.extend(["", f"🕒 {moment:%d/%m/%Y %H:%M:%S} (เวลาไทย)"])
     return {
-        "text": "\n".join(lines),
-        "host": where,
-        "broken": [c["name"] for c in broken],
-        "checks": checks,
+        "text": "\n".join(lines), "host": where, "scope": scope,
+        "embed": {
+            "title": status.replace("**", ""),
+            "description": "\n".join(lines[1:-2]).strip(),
+            "color": 0xE74C3C if broken else 0x2ECC71,
+            "footer": {"text": lines[-1]},
+        },
+        "broken": [c["name"] for c in broken], "checks": checks,
         "previous_state": previous,
     }
+
+
+def notify_routes(checks: list[dict], state: dict, secret: dict, *,
+                  label: str = "", dry_run: bool = False) -> tuple[dict, bool]:
+    """Acknowledge each destination separately, after successful delivery only."""
+    saved = {}
+    failed = False
+    for scope in ("newbiegrader", "homeserver"):
+        selected = [c for c in checks if _check_scope(c["name"]) == scope]
+        previous = state.get("routes", {}).get(scope)
+        if previous is None:
+            # Migrate an already-reported legacy incident without repeating it.
+            previous = {"broken": [n for n in state.get("broken", [])
+                                    if _check_scope(n) == scope]}
+        before = sorted(previous.get("broken", []))
+        broken = sorted(c["name"] for c in selected if not c["ok"])
+        saved[scope] = {"broken": before, "notified": False}
+        if broken == before:
+            continue
+        payload = build_payload(selected, previous, label or secret.get("label", ""), scope)
+        if dry_run:
+            print(json.dumps({"route": scope, "text": payload["text"]}, ensure_ascii=False))
+            continue
+        routes = secret.get("routes") or {}
+        route = routes.get(scope) if routes else secret
+        if not route:
+            print(f"alert delivery failed ({scope}): destination missing", file=sys.stderr)
+            failed = True
+            continue
+        payload["line_to"] = secret.get("to", "")
+        try:
+            _post_json(route["url"], payload, secret.get("token", ""))
+        except (urllib.error.URLError, OSError) as exc:
+            # Exception text may contain credential-bearing webhook URLs.
+            print(f"alert delivery failed ({scope}): {type(exc).__name__}", file=sys.stderr)
+            failed = True
+            continue
+        saved[scope] = {"broken": broken, "notified": True}
+        print(f"alert sent ({scope}, {len(broken)} failing check(s))")
+    return {"routes": saved,
+            "broken": sorted(n for route in saved.values() for n in route["broken"])}, failed
 
 
 def _load_state(path: Path) -> dict:
@@ -416,40 +562,22 @@ def main(argv=None) -> int:
     checks = collect_checks()
     broken = sorted(c["name"] for c in checks if not c["ok"])
     state = _load_state(args.state_file)
-    was_broken = state.get("broken", [])
     healthy = not broken
 
     for check in checks:
         mark = "ok  " if check["ok"] else "FAIL"
         print(f"{mark} {check['name']}: {check['detail']}")
 
-    # Alert on the transition into a broken state, and once on recovery.
-    transition = broken != was_broken
-    if healthy and was_broken:
-        print(f"recovered from: {', '.join(was_broken)}")
-    elif broken:
-        print(f"broken: {', '.join(broken)}"
-              + ("" if transition else " (already reported, not repeating)"))
-
     if args.check_only:
         return 0 if healthy else 1
-    if transition:
-        payload = build_payload(checks, state,
-                                args.label or _secret_label(args.webhook_file))
-        if args.dry_run:
-            print(json.dumps(payload, ensure_ascii=False, indent=2))
-        else:
-            secret = _read_secret(args.webhook_file)
-            payload["line_to"] = secret.get("to", "")
-            try:
-                _post_json(secret["url"], payload, secret.get("token", ""))
-                print(f"alert sent ({len(broken)} failing check(s))")
-            except (urllib.error.URLError, OSError) as exc:
-                print(f"alert delivery failed: {type(exc).__name__}: {exc}", file=sys.stderr)
-                _save_state(args.state_file, {"broken": was_broken, "notified": False})
-                return 1
-    _save_state(args.state_file, {"broken": broken, "notified": transition})
-    return 0 if healthy else 1
+    # A preview never changes notification acknowledgements or contacts Discord.
+    if args.dry_run:
+        notify_routes(checks, state, {}, label=args.label, dry_run=True)
+        return 0 if healthy else 1
+    secret = _read_secret(args.webhook_file)
+    updated, failed = notify_routes(checks, state, secret, label=args.label)
+    _save_state(args.state_file, updated)
+    return 0 if healthy and not failed else 1
 
 
 if __name__ == "__main__":

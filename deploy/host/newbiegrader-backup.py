@@ -52,6 +52,11 @@ CONFIG_FILES = (
     "etc/newbiegrader/api.env",
     "etc/newbiegrader/worker.env",
     "etc/newbiegrader/host.env",
+    "etc/newbiegrader/fleet-observer.json",
+    "etc/nginx/newbiegrader-fleet.conf",
+    "etc/systemd/system/newbiegrader-fleet-metrics.service",
+    "etc/systemd/system/newbiegrader-fleet-observer.service",
+    "etc/systemd/system/newbiegrader-fleet-observer.timer",
     "etc/newbiegrader/backup-recipient",
     "etc/newbiegrader/alert-webhook",
     "etc/newbiegrader/problem-files.env",
@@ -190,14 +195,25 @@ def backup_timestamp(name: str):
         return None
 
 
-def prune(base: str, key: str, bucket: str, keep: int, days: int = 30) -> list[str]:
+def object_prefix(value: str) -> str:
+    """Isolate one host's uploads and retention inside the shared private bucket."""
+    if not value:
+        return ''
+    if len(value) > 100 or not re.fullmatch(r'[a-z0-9][a-z0-9-]*(?:/[a-z0-9][a-z0-9-]*)*', value):
+        raise ValueError('invalid backup object prefix')
+    return value + '/'
+
+
+def prune(base: str, key: str, bucket: str, keep: int, days: int = 30, *, prefix: str = "") -> list[str]:
+    if prefix:
+        prefix = object_prefix(prefix.rstrip("/"))
     headers = {"apikey": key, "Authorization": "Bearer " + key,
                "Content-Type": "application/json"}
     objects = []
     for offset in range(0, 100000, 1000):
         request = urllib.request.Request(
             f"{base.rstrip('/')}/storage/v1/object/list/{bucket}",
-            data=json.dumps({"prefix": "", "limit": 1000, "offset": offset,
+            data=json.dumps({"prefix": prefix, "limit": 1000, "offset": offset,
                              "sortBy": {"column": "name", "order": "asc"}}).encode(),
             method="POST", headers=headers)
         with urllib.request.urlopen(request, timeout=60) as response:
@@ -219,16 +235,18 @@ def prune(base: str, key: str, bucket: str, keep: int, days: int = 30) -> list[s
     for name in sorted(stale):
         remove = urllib.request.Request(
             f"{base.rstrip('/')}/storage/v1/object/{bucket}",
-            data=json.dumps({"prefixes": [name]}).encode(),
+            data=json.dumps({"prefixes": [prefix + name]}).encode(),
             method="DELETE", headers=headers)
         with urllib.request.urlopen(remove, timeout=60) as response:
             response.read()
-    return sorted(stale)
+    return [prefix + name for name in sorted(stale)]
 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bucket", default="judge-backups")
+    parser.add_argument("--object-prefix", default="",
+                        help="optional host namespace; isolates upload and retention")
     parser.add_argument("--keep", type=int, default=14,
                         help="how many encrypted backups to retain in the bucket")
     parser.add_argument("--retention-days", type=int, default=30,
@@ -244,6 +262,10 @@ def main(argv=None) -> int:
     if args.retention_days < 1 or args.retention_days > 30 or args.keep < 0:
         parser.error("retention-days must be 1-30; keep must be nonnegative")
 
+    try:
+        prefix = object_prefix(args.object_prefix)
+    except ValueError as error:
+        parser.error(str(error))
     os.umask(0o077)
     env = read_env(args.env_file)
     base, key = env.get("SUPABASE_URL"), env.get("SUPABASE_KEY")
@@ -294,13 +316,13 @@ def main(argv=None) -> int:
         digest = encrypt(plain, encrypted, recipient)
         print(f"encrypted: {encrypted.stat().st_size} bytes sha256={digest[:16]}")
 
-        name = f"{stamp}-backup.tar.age"
+        name = prefix + f"{stamp}-backup.tar.age"
         if args.dry_run:
             print(f"dry-run: would upload {name} to bucket {args.bucket}")
         else:
             upload(base, key, args.bucket, encrypted, name)
             print(f"uploaded: {args.bucket}/{name}")
-            removed = prune(base, key, args.bucket, args.keep, args.retention_days)
+            removed = prune(base, key, args.bucket, args.keep, args.retention_days, prefix=prefix)
             if removed:
                 print(f"pruned {len(removed)} old backup(s)")
             args.marker_file.write_text(

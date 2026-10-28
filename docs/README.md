@@ -1,14 +1,15 @@
 # Documentation
 
-Current production is Cloudflare Pages with a private tunnel to the homeserver API,
-ten isolated workers on ubuntu-pc and two on the homeserver. The PC also hosts
-private monitoring and personal cloud services maintained in a separate
-homeserver repository. Supabase
-retains metadata, identities, history and the durable queue. The engine remains
-2.0.8 / Python 3.13.17. The fleet-reporting source fingerprint is
-`15cd08f34384a26e6c8217102be4a2580b47d7810b16b40d6059ca026f511b12`; the [fleet qualification](releases/worker-fleet-2026-10-25.json)
-records tests and deployment separately. Earlier release records retain their
-historical scope. See [fleet observation and monitoring](WORKER_FLEET.md).
+Current production is Cloudflare Pages with a private bridge that selects the
+restored primary API and automatically uses the homeserver when it is unhealthy.
+All sixteen workers are observed ready: four on the primary, two on the
+homeserver and ten on ubuntu-pc, after correcting the private peer-metrics relay. Personal monitoring/cloud services remain in the separate homeserver
+repository. Supabase retains metadata, identities, history and the durable queue.
+The engine remains 2.0.8 / Python 3.13.17. Backend source fingerprint:
+`89b92d53b936bae1c0351910fb72c173c861517d5c10ca5ade20d5bec50e2868`.
+See [disclosure qualification](releases/submission-disclosure-2026-10-26.json) and
+[primary/failover activation](releases/primary-failover-2026-10-27.json). Earlier
+release records retain their historical scope. See [fleet monitoring](WORKER_FLEET.md).
 
 ## Operating the current deployment
 
@@ -39,6 +40,12 @@ historical scope. See [fleet observation and monitoring](WORKER_FLEET.md).
 | Production dependencies and licenses | [Dependency licenses](DEPENDENCY_LICENSES.md) |
 
 ## Checkpoint records
+
+- [Submission disclosure rollout](releases/submission-disclosure-2026-10-26.json)
+  records the shared disclosure module, 689 full / 399 critical Linux tests with
+  zero skips, native checks on both hosts, all twelve worker preflights and real
+  Python/C/C++ HTTPS submissions. Existing resource budgets and Discord routing
+  remain unchanged.
 
 - [Homeserver recovery](releases/homeserver-recovery-2026-10-25.json) records
   the unchanged 2.0.8 backend, two bounded workers, 613 full / 380 critical Linux
@@ -79,3 +86,5 @@ Private audit/release reports retain their original checkpoint scope and remain
 outside public Git. Consult current guides before acting on an old command.
 No private problem fixtures, references, credentials, catalogs, session headers,
 backups or operator handoff files belong in documentation commits.
+
+Latest backend rollout: [architecture qualification, 2026-10-28](releases/backend-architecture-2026-10-28.json).

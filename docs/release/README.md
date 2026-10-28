@@ -1,8 +1,12 @@
 # Release and recovery checks
 
 The [documentation index](../README.md) identifies current guides and dated
-qualification records. The verified application is release `c3ba9ad` (grader 2.0.8 / Python 3.13.17); subsequent
-documentation-only commits do not imply another application rollout.
+qualification records. The running snapshot is
+`architecture-20261028-1bf56506a130` (grader 2.0.8 / Python 3.13.17);
+see [architecture qualification](../releases/backend-architecture-2026-10-28.json).
+All three hosts share this fingerprint, with four primary, two homeserver and ten
+auxiliary-PC workers. The [primary/failover activation](../releases/primary-failover-2026-10-27.json)
+remains the transport baseline. Documentation-only changes do not imply a rollout.
 
 Use the [host runbook](../HOST_DEPLOYMENT.md),
 [current architecture](../PRODUCTION_ARCHITECTURE.md) and
@@ -29,7 +33,8 @@ packages/PDFs/samples. A table-row export is not a transactional database backup
 or proof of hosted Auth/Storage recovery. Do not claim those guarantees without
 a separate isolated restore and comparison.
 
-Enable backup and watchdog timers only on the active host. Use watchdog
+Give host backups separate object namespaces; retain one watchdog, presence and
+account-retention owner on the homeserver. Use watchdog
 `--check-only` for validation without sending messages. After activation, verify
 reboot recovery and the absence of orphan processes, workspaces and live leases
 on the previous consumer. Rollback uses the current host's compatible verified

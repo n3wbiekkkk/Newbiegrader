@@ -8,6 +8,20 @@ See [file storage](BACKEND_PROBLEM_FILES.md).
 
 ## Browser and server caches
 
+`problem_catalog.py` owns the metadata snapshot, numeric index, test hashes,
+statement carry-forward and refresh gate. Readers get a read-only mapping while
+background refresh retains the previous metadata. Refresh coordinates the
+existing problem store's full-suite/PDF invalidation before installing new
+metadata; failures retain the old snapshot and advance the retry timestamp.
+The existing local and remote problem-store paths still load bytes on demand.
+This refactor does not make installation of every dictionary an atomic read
+transaction or change the documented stale-read policy.
+
+Catalog presence is an observation, not authorization. The existing current
+publication/contest checks remain independent, including Submission disclosure's
+fresh publication read. Admission uses a metadata-only cached hash; it never
+downloads a private suite just to admit work.
+
 The public landing uses `/api/home`, which returns at most three problem
 previews per difficulty and aggregate submission totals. Full catalogs, details,
 samples, PDFs, statistics, contests and submission endpoints require a verified
