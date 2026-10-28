@@ -27,6 +27,12 @@ private identity or publish configuration, catalogs, test bytes or backups.
   scheduled backup covers the fleet configuration. `backup_storage.py` reads an
   explicitly selected legacy Storage recovery source, not active local file bytes.
 
+For verified delivery of an existing encrypted archive across mounts, use
+[`deliver_backup.py`](../deploy/host/deliver_backup.py) with a trusted SHA256;
+see the [operator checks](release/README.md#operator-checks) for usage and failure
+handling. Byte delivery does not replace authenticated decryption or restore
+qualification.
+
 Private operator artifacts default to `~/.local/share/newbiegrader-private/host-backups/`.
 Preserve the existing identity when changing directories; a newly generated key
 cannot decrypt earlier archives. Archive names and detailed recovery evidence

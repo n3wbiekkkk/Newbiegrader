@@ -117,6 +117,7 @@ For the production topology, see [`docs/PRODUCTION_ARCHITECTURE.md`](docs/PRODUC
 Tests live in `tests/`. The Python suite uses `unittest` (no `pytest` dependency is installed), and the frontend tests use the Node.js test runner. These are the same commands CI runs; [`.github/workflows/ci.yml`](.github/workflows/ci.yml) is the exact source of truth if they ever differ:
 
 ```bash
+python tools/check_test_environment.py
 python -m compileall -q grader.py server.py submission_disclosure.py account_deletion.py judge_lifecycle.py problem_catalog.py judge_runner.py judge_execution.py worker.py container_entrypoint.py job_sandbox.py job_resources.py email_auth.py problem_store.py tools deploy/host
 node --check static/app.js
 node tools/check_frontend.js

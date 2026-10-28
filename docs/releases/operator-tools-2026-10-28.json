@@ -1,0 +1,32 @@
+{
+  "date": "2026-10-28T10:26:41.709540+00:00",
+  "scope": "Operator tools, checks and documentation only; no backend service restart or configuration change",
+  "operator_release": "retro-20261028-224547c3ef7e",
+  "installed_pointer": "/opt/newbiegrader/operator-current",
+  "nodes": [
+    "primary",
+    "homeserver",
+    "auxiliary-pc"
+  ],
+  "root_controlled_files": true,
+  "application_release_unchanged": "architecture-20261028-1bf56506a130",
+  "application_build_sha256": "1bf56506a13088f1cf6d73f12b95083bb4a6d8c1cedbfa0ee88ef2862fa20c76",
+  "linux_runtime": "Python 3.13.17",
+  "critical_tests": 406,
+  "full_tests": 733,
+  "failures": 0,
+  "errors": 0,
+  "skips": 0,
+  "qualification": "Offline bounded Linux container with private fixtures mounted separately; no production configuration mounted",
+  "runner_preflight_passed": true,
+  "real_cross_filesystem_backup_delivery_passed": true,
+  "existing_backup_target_refused": true,
+  "public_https_checks": 22,
+  "active_workers_observed": 16,
+  "operator_archive_sha256": "7bd5304c4da3f3865763240053b05593cd050388fe2fb052e7dc5e028d41a58c",
+  "rollback": "Select a previously verified operator-releases directory using operator-current; application current is independent. First operator release has no previous pointer.",
+  "limits": [
+    "No new reboot, failover, sustained-load or disaster-recovery rehearsal",
+    "Byte delivery is not authenticated decryption or restore qualification"
+  ]
+}

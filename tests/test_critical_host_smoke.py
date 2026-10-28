@@ -19,7 +19,8 @@ SPEC.loader.exec_module(smoke)
 
 
 class SmokeCredentialBoundary(unittest.TestCase):
-    def exercise(self, production, expected_count=89, reported_count=None):
+    def exercise(self, production, expected_count=89, reported_count=None,
+                 manifest=False, reported_build=None, cookie_samesite='none'):
         requests = []
         if reported_count is None:
             reported_count = expected_count
@@ -41,7 +42,8 @@ class SmokeCredentialBoundary(unittest.TestCase):
             if path == '/api/health':
                 body = {'ok': True, 'count': reported_count}
             elif path == '/api/version':
-                body = {'problems': reported_count, 'system': {'role': 'api', 'queue_mode': 'database'}}
+                body = {'problems': reported_count, 'system': {'role': 'api', 'queue_mode': 'database'},
+                        'build_sha256': reported_build or 'a' * 64}
             elif path == '/api/auth/me':
                 body = {'user': None, 'is_admin': False}
                 headers.append(('Cache-Control', 'no-store'))
@@ -59,7 +61,7 @@ class SmokeCredentialBoundary(unittest.TestCase):
                 headers.extend([
                     ('Location', 'https://accounts.google.com/o/oauth2/v2/auth?redirect_uri='
                      'https%3A%2F%2Fnewbiegrader.pages.dev%2Fapi%2Fauth%2Fcallback'),
-                    ('Set-Cookie', 'ng_session=synthetic; Path=/; Secure; HttpOnly; SameSite=none'),
+                    ('Set-Cookie', 'ng_session=synthetic; Path=/; Secure; HttpOnly; SameSite=' + cookie_samesite),
                 ])
             elif path == '/api/auth/callback':
                 status = 307
@@ -88,8 +90,13 @@ class SmokeCredentialBoundary(unittest.TestCase):
                 access.write_text(json.dumps({'STAGING_ACCESS_KEY': key}))
                 access.chmod(0o600)
             argv = ['smoke_https.py', '--access-file', str(access), '--expected-samesite', 'none']
-            if expected_count != 89:
-                argv.extend(['--expected-problems', str(expected_count)])
+            argv.extend(['--expected-problems', str(expected_count)])
+            if manifest:
+                release = Path(directory) / 'release.json'
+                release.write_text(json.dumps({'build_sha256': 'a' * 64,
+                    'problems': expected_count, 'session_samesite': 'none'}))
+                argv = ['smoke_https.py', '--access-file', str(access),
+                        '--release-manifest', str(release)]
             if production:
                 argv.append('--production')
             output = io.StringIO()
@@ -104,10 +111,44 @@ class SmokeCredentialBoundary(unittest.TestCase):
             finally:
                 os.umask(previous_umask)
             report = json.loads(output.getvalue())
-        self.assertEqual(report['passed'], 21 if production else 23)
+        self.assertEqual(report['passed'], (21 if production else 23) + int(manifest))
         self.assertFalse(report['real_login_verified'])
         self.assertFalse(report['authenticated_job_submitted'])
         self.assertTrue(requests)
+
+    def test_release_manifest_checks_fingerprint(self):
+        self.exercise(True, manifest=True)
+        with self.assertRaisesRegex(RuntimeError, 'release fingerprint'):
+            self.exercise(True, manifest=True, reported_build='b' * 64)
+
+    def test_cookie_mismatch_fails_manifest_gate(self):
+        with self.assertRaisesRegex(RuntimeError, 'cookie flags'):
+            self.exercise(True, manifest=True, cookie_samesite='lax')
+
+    def test_invalid_manifest_fails_before_network(self):
+        valid = {'build_sha256': 'a' * 64, 'problems': 100, 'session_samesite': 'none'}
+        for data in ({}, [], None, valid | {'build_sha256': 'bad'},
+                     valid | {'problems': True}, valid | {'session_samesite': 'invalid'}):
+            with self.subTest(data=data), tempfile.TemporaryDirectory() as directory:
+                manifest = Path(directory) / 'release.json'
+                manifest.write_text(json.dumps(data))
+                with patch('sys.argv', ['smoke_https.py', '--production',
+                         '--release-manifest', str(manifest)]), \
+                        patch.object(smoke.subprocess, 'run') as request, \
+                        contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                    smoke.main()
+                request.assert_not_called()
+
+    def test_explicit_expectations_are_required_and_cannot_override_manifest(self):
+        for arguments in (['--expected-problems', '100'],
+                          ['--expected-samesite', 'none'],
+                          ['--release-manifest', '/absent', '--expected-problems', '100']):
+            with self.subTest(arguments=arguments), \
+                    patch('sys.argv', ['smoke_https.py', '--production', *arguments]), \
+                    patch.object(smoke.subprocess, 'run') as request, \
+                    contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                smoke.main()
+            request.assert_not_called()
 
     def test_production_never_requires_or_transmits_staging_secret(self):
         self.exercise(True)

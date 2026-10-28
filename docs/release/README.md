@@ -39,3 +39,56 @@ account-retention owner on the homeserver. Use watchdog
 reboot recovery and the absence of orphan processes, workspaces and live leases
 on the previous consumer. Rollback uses the current host's compatible verified
 release and preserved file generation, without an external-host fallback.
+
+## Operator checks
+
+Before the full Python suite, run `python tools/check_test_environment.py` with
+its intended interpreter and isolation settings. It checks interpreter placement
+and executes a synthetic playground through the real supervised runner. Create
+virtual environments in the project or user cache, outside temporary roots.
+Failure is an environment prerequisite failure; retain the sandbox controls.
+This probe does not qualify production isolation; Linux/root and native host
+qualification remain required.
+
+For HTTPS release checks, prepare a reviewed JSON manifest containing:
+
+```json
+{
+  "build_sha256": "<64 lowercase hexadecimal characters from the candidate build>",
+  "problems": 100,
+  "session_samesite": "none"
+}
+```
+
+Take the fingerprint from the candidate release artifact and confirm the count
+and cookie policy against the intended deployment configuration. Expected values
+must be independent of the HTTP response being checked. Keep this manifest with
+the private release evidence; the example count and policy are not defaults.
+
+```sh
+python deploy/host/smoke_https.py --production --release-manifest /private/release-check.json
+```
+
+The command fails on a fingerprint, catalog count or cookie-policy mismatch.
+For anonymous checks without release fingerprint qualification, explicitly pass
+both `--expected-problems` and `--expected-samesite` instead. Staging continues to
+use its private access file; production never loads or sends that credential.
+The smoke command does not authenticate or submit jobs; those checks remain
+separate release steps. Shell wrappers must propagate its exit status, including
+when capturing logs with a pipeline (`set -o pipefail` in Bash).
+
+To deliver an already encrypted archive to another private operator directory,
+including across filesystem mounts, use:
+
+```sh
+python deploy/host/deliver_backup.py /private/source.tar.age /private/destination/backup.tar.age --expected-sha256 <trusted-sha256>
+```
+
+Run as the destination directory owner. The source must be a private regular
+`.age` file. The helper retains the source, stages with mode `0600` on the
+destination filesystem, verifies the expected hash and copied bytes, then
+publishes without overwriting an existing path. Copy/hash failures remove the
+staging file. An error after publication (for example directory fsync failure)
+may leave the complete target in place: inspect it before retrying. This verifies
+byte delivery only; authenticated decryption and isolated restore checks remain
+required under the backup guide.

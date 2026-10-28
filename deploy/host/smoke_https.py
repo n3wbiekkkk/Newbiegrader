@@ -9,6 +9,7 @@ from email.parser import Parser
 import json
 import os
 from pathlib import Path
+import re
 import stat
 import subprocess
 import tempfile
@@ -24,15 +25,32 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--access-file', type=Path, default=Path.home() /
                         '.local/share/newbiegrader-private/cloudflare-staging/access-secrets.json')
-    parser.add_argument('--expected-samesite', choices=('lax', 'strict', 'none'), default='lax',
+    parser.add_argument('--expected-samesite', choices=('lax', 'strict', 'none'),
                         help='Explicit expected value of the existing API session setting')
     parser.add_argument('--production', action='store_true',
                         help='Probe the fixed production URL without any staging credential')
-    parser.add_argument('--expected-problems', type=int, default=89,
-                        help='Reviewed expected catalog size (default: %(default)s)')
+    parser.add_argument('--expected-problems', type=int,
+                        help='Reviewed expected catalog size; required without a manifest')
+    parser.add_argument('--release-manifest', type=Path,
+                        help='Reviewed JSON: build_sha256, problems and session_samesite')
     args = parser.parse_args()
-    if args.expected_problems < 1:
+    expected_build = None
+    if args.release_manifest:
+        if args.expected_problems is not None or args.expected_samesite is not None:
+            parser.error('Use a manifest or explicit expectations, not both')
+        try:
+            manifest = json.loads(args.release_manifest.read_text())
+            expected_build = manifest['build_sha256']
+            args.expected_problems = manifest['problems']
+            args.expected_samesite = manifest['session_samesite']
+            if not isinstance(expected_build, str) or not re.fullmatch('[0-9a-f]{64}', expected_build):
+                raise ValueError()
+        except (OSError, ValueError, KeyError, TypeError):
+            parser.error('Invalid release manifest')
+    if type(args.expected_problems) is not int or args.expected_problems < 1:
         parser.error('--expected-problems must be positive')
+    if args.expected_samesite not in ('lax', 'strict', 'none'):
+        parser.error('Provide --expected-samesite or session_samesite in the manifest')
     base = CANONICAL if args.production else BASE
     access = None
     if not args.production:
@@ -92,6 +110,8 @@ def main():
         version = json.loads(body)
         check('host API/database role', status == 200 and version['system']['role'] == 'api'
               and version['system']['queue_mode'] == 'database' and version['problems'] == args.expected_problems)
+        if expected_build is not None:
+            check('release fingerprint matches manifest', version.get('build_sha256') == expected_build)
         status, headers, body = request('/api/auth/me')
         me = json.loads(body)
         check('anonymous identity and auth cache', status == 200 and me.get('user') is None
@@ -146,7 +166,7 @@ def main():
                   for name in ('ng_session', 'ng_remember')))
     print(json.dumps({'base': base, 'vantage': 'operator host via curl, normal TLS validation',
                       'passed': len(passed), 'checks': passed, 'real_login_verified': False,
-                      'session_samesite': args.expected_samesite,
+                      'session_samesite': args.expected_samesite, 'build_sha256': expected_build,
                       'authenticated_job_submitted': False}, indent=2))
 
 
