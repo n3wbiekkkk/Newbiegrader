@@ -140,14 +140,40 @@ To roll back queue mode, stop every database consumer and resolve/drain in-fligh
 
 ## Measuring load
 
-`tools/load_test.py` uses the standard library and requires explicit `--execute --test-installation`. Its default target is loopback; remote installations require `--allow-remote`. Use a disposable test database and accounts, never production credentials. Existing test accounts can be supplied through `NG_LOAD_ACCOUNTS`; `--register` creates throwaway accounts on the test installation.
+`tools/load_test.py` uses the standard library and requires explicit
+`--execute --test-installation`. Its default target is loopback; remote
+installations also require `--allow-remote`. Use a disposable database with
+seeded, email-verified test accounts and synthetic passwords supplied through
+`NG_LOAD_ACCOUNTS` (a JSON list of email/password objects). Never use production
+credentials. `--register` is refused: the current registration endpoint sends an
+OTP and does not create an authenticated load-test session.
 
 ```sh
-python tools/load_test.py --execute --test-installation --register \
-  --target http://127.0.0.1:8094 --users 4 --bursts 2 \
-  --job-timeout 90 --playground-every 3
+python tools/load_test.py --execute --test-installation \
+  --target http://127.0.0.1:8094 --users 50 --duration 900 \
+  --ramp-seconds 60 --think-time 30 --browse --playground-every 4 \
+  --poll-interval 1 --poll-max-interval 1 --workload /private/workload.json
 ```
 
-The JSON report includes API latency percentiles, admitted/completed attempts, throughput, HTTP/error counts, and submission queue/service durations. Timings use server timestamps where available and label polling estimates otherwise. Read completion counts alongside latency; quick rejected requests do not establish judging throughput. Use host/container monitoring for peak RSS, throttling, and OOM events.
+Duration mode runs independent users; each user browses, runs/submits, polls to
+completion and pauses for a jittered think time. It stops starting work at the
+deadline and drains existing attempts within their job timeout. Thus 50 active
+learners does not mean 50 simultaneous execution slots or continuous submissions.
+Without `--duration`, `--bursts` retains the synchronized-burst measurement.
+
+An optional workload JSON list selects weighted scenarios with `language`,
+`problem`, a local `source` file, `stdin`, `weight`, `expected_verdict` (default
+`AC`) and `expected_playground_verdict` (default `OK`). Source paths are relative
+to the workload JSON or absolute. Source bytes and credentials are not reported.
+
+The JSON report separates admitted, completed and correct attempts, reports
+429/503 rejections, HTTP and actor errors, successful latency percentiles and
+per-language outcomes. Ambiguous requests stop that actor; the tool does not
+replay a possibly admitted POST. Read completion/correct counts alongside latency:
+fast rejection is not judging throughput. Queue/service durations use server
+timestamps when available and label polling estimates otherwise. Verify duration
+was reached and all actors remained viable. Use host/container telemetry for CPU
+throttling, peak RSS and OOM events. Match resource budgets and document differences
+in hardware, database latency, network path and isolation before extrapolating.
 
 The committed CI workflow includes normal Python/Node checks plus a disposable PostgreSQL job that applies the migration twice and exercises real SQL admission, quotas, leases, fencing, priority, and completion behavior. Running CI remotely and Linux deployment validation remain separate from local checks.

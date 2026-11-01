@@ -307,18 +307,19 @@ def load_meta(slug: str, client=None) -> tuple:
 
 
 def serialize_problem(prob: grader.Problem) -> dict:
-    """Embed a fully-resolved problem for the isolated judge subprocess.
+    """Embed a fully-resolved suite on the trusted runner stdin channel."""
+    return {**serialize_problem_metadata(prob),
+            "tests": [{"name": t.name, "input": t.input, "expected": t.expected}
+                      for t in prob.tests]}
 
-    Trusted server-side channel only (payload stdin of judge_runner --job),
-    never client-supplied. Lets the runner judge without disk or Supabase.
-    """
+
+def serialize_problem_metadata(prob: grader.Problem) -> dict:
+    """Embed limits/identity for custom input without visiting private tests."""
     return {
         "pid": prob.pid, "title": prob.title,
         "time_limit": prob.time_limit, "memory_limit": prob.memory_limit,
         "checker": prob.checker, "tolerance": prob.tolerance,
         "description": prob.description,
-        "tests": [{"name": t.name, "input": t.input, "expected": t.expected}
-                  for t in prob.tests],
         "difficulty": prob.difficulty, "level": int(prob.level),
         "tags": list(prob.tags),
         "samples": list(prob.samples), "hidden": bool(prob.hidden),
@@ -327,15 +328,26 @@ def serialize_problem(prob: grader.Problem) -> dict:
 
 
 def deserialize_problem(data: dict) -> grader.Problem:
+    """Decode a submission suite; an empty suite always fails closed."""
+    return _deserialize_problem(data, include_tests=True)
+
+
+def deserialize_problem_metadata(data: dict) -> grader.Problem:
+    """Decode custom-input metadata, deliberately ignoring embedded test bytes."""
+    return _deserialize_problem(data, include_tests=False)
+
+
+def _deserialize_problem(data: dict, *, include_tests: bool) -> grader.Problem:
     try:
         pid = str(data["pid"])
-        tests = [grader.TestCase(name=str(t["name"]), input=str(t.get("input", "")),
+        tests = ([grader.TestCase(name=str(t["name"]), input=str(t.get("input", "")),
                                  expected=str(t.get("expected", "")))
-                 for t in (data.get("tests") or [])]
+                  for t in (data.get("tests") or [])] if include_tests else [])
     except (KeyError, TypeError, AttributeError) as e:
         raise ProblemUnavailable(f"invalid embedded problem payload: {e}")
-    if not pid or not tests:
-        # Never judge an empty suite as success.
+    if not pid:
+        raise ProblemUnavailable("embedded problem has no id")
+    if include_tests and not tests:
         raise ProblemUnavailable("embedded problem has no tests (refusing to judge)")
     return grader.Problem(
         pid=pid, title=str(data.get("title") or pid),

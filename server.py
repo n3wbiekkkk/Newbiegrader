@@ -1287,8 +1287,8 @@ async def _prepare_and_judge(job: dict, execute) -> Completion:
         payload["problem_data"] = problem_store.serialize_problem(prob)
     if playground:
         payload.update(job.get("payload") or {})
-        if PROBLEM_SOURCE == "supabase" and prob is not None:
-            payload["problem_data"] = problem_store.serialize_problem(prob)
+        if prob is not None:
+            payload["problem_data"] = problem_store.serialize_problem_metadata(prob)
     try:
         result = await execute(
             "playground" if playground else "submission", payload,

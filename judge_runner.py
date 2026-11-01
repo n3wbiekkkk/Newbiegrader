@@ -384,9 +384,11 @@ def _job() -> int:
             max(1, int(payload["judge_jobs"])), grader.CPU_QUOTA, grader.RAM_MB)
         grader.COMPILE_MEMORY_MB = max(256, settings.memory_cap_mb)
         if payload.get("problem_data"):
-            # Supabase mode: trusted embedded tests from the backend (no disk
-            # or Storage access here). Client-supplied paths are never trusted.
-            problem = problem_store.deserialize_problem(payload["problem_data"])
+            # Trusted server payload: custom input uses limits metadata;
+            # submissions require a nonempty suite. Neither needs DB/file reads.
+            problem = (problem_store.deserialize_problem_metadata(payload["problem_data"])
+                       if message["kind"] == "playground" else
+                       problem_store.deserialize_problem(payload["problem_data"]))
         else:
             problem = grader.load_problem(payload["problem"]) if payload.get("problem") else None
         if message["kind"] == "submission":

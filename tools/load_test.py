@@ -17,7 +17,6 @@ import math
 import os
 from pathlib import Path
 import random
-import secrets
 import socket
 import statistics
 import threading
@@ -121,7 +120,8 @@ class Metrics:
 
     def record(self, kind: str, response: Response):
         with self.lock:
-            self.latencies[kind].append(response.elapsed_s)
+            if not response.error and 200 <= response.status < 300:
+                self.latencies[kind].append(response.elapsed_s)
             self.responses[f"{kind}:{response.status}"] += 1
             if response.error:
                 self.errors[f"{kind}:{response.error}"] += 1
@@ -189,31 +189,46 @@ class Client:
         return result
 
 
-def run_attempt(client: Client, args, source: str, playground: bool) -> dict:
+def run_attempt(client: Client, args, source: str, playground: bool, *, workload=None) -> dict:
     started = time.monotonic()
     deadline = started + args.job_timeout
-    fields = {"problem": args.problem, "language": args.language, "code": source}
+    item = workload or {}
+    expected = item.get("expected_playground_verdict", "OK") if playground else item.get("expected_verdict", "AC")
+    outcome = {"kind": "playground" if playground else "submission", "admitted": False,
+               "completed": False, "correct": False, "error": "", "fatal": False,
+               "expected_verdict": expected, "timing_source": "unavailable"}
+    fields = {"problem": item.get("problem", args.problem),
+              "language": item.get("language", args.language), "code": source}
+    outcome["language"] = fields["language"]
     if playground:
-        fields["input"] = args.stdin
-        response = client.request("playground", "/api/run", fields=fields,
-                                  timeout=min(client.timeout, args.job_timeout))
-        completed = response.status == 200 and not response.error
-        verdict = response.data.get("verdict", "unknown")
-        error = response.error or ("playground_execution_error" if completed and verdict != "OK" else "")
-        return {"kind": "playground", "admitted": response.status == 200 and not response.error,
-                "completed": completed,
-                "end_to_end_s": time.monotonic() - started,
-                "error": error, "verdict": str(verdict), "timing_source": "unavailable"}
+        fields["input"] = item.get("stdin", args.stdin)
+        # /api/run holds this request while a durable worker executes the job.
+        # Its entire queue/execution budget must survive beyond admission's timeout.
+        response = client.request("playground", "/api/run", fields=fields, timeout=args.job_timeout)
+        outcome["admitted"] = response.status == 200 and not response.error
+        outcome["completed"] = outcome["admitted"]
+        verdict = str(response.data.get("verdict", "unknown"))
+        outcome["verdict"] = verdict
+        outcome["correct"] = outcome["completed"] and verdict == expected
+        outcome["error"] = response.error or ("playground_execution_error" if not outcome["correct"] else "")
+        outcome["fatal"] = bool(response.error) and response.status not in (400, 401, 403, 404, 409, 413, 422, 429)
+        if response.status in (429, 503):
+            outcome["rejection_status"] = response.status
+        outcome["end_to_end_s"] = time.monotonic() - started
+        return outcome
     response = client.request("submit", "/api/submit", fields=fields,
                               timeout=min(client.timeout, args.job_timeout))
-    outcome = {"kind": "submission", "admitted": False, "completed": False,
-               "error": response.error, "timing_source": "unavailable"}
     if response.status != 202 or response.error:
         outcome["error"] = response.error or "unexpected_submit_status"
+        # A failed/ambiguous POST may already have created a durable job. End
+        # this actor rather than issuing another attempt under that account.
+        outcome["fatal"] = response.status not in (400, 401, 403, 404, 409, 413, 422, 429)
+        if response.status in (429, 503):
+            outcome["rejection_status"] = response.status
     else:
         jid = response.data.get("job_id")
         if not isinstance(jid, str) or not jid:
-            outcome["error"] = "missing_job_id"
+            outcome["error"], outcome["fatal"] = "missing_job_id", True
         else:
             outcome["admitted"] = True
             first_running = None
@@ -222,7 +237,7 @@ def run_attempt(client: Client, args, source: str, playground: bool) -> dict:
                 response = client.request("status", "/api/jobs/" + urllib.parse.quote(jid, safe=""),
                     timeout=min(client.timeout, max(0.001, deadline - time.monotonic())))
                 if response.error:
-                    outcome["error"] = response.error
+                    outcome["error"], outcome["fatal"] = response.error, True
                     break
                 job = response.data
                 status = job.get("status")
@@ -232,75 +247,178 @@ def run_attempt(client: Client, args, source: str, playground: bool) -> dict:
                     delay = args.poll_interval
                 if status in {"done", "error"}:
                     result = job.get("result")
-                    if status == "done" and not isinstance(result, dict):
+                    if status == "done" and (not isinstance(result, dict) or not isinstance(result.get("verdict"), str)):
                         outcome["error"] = "invalid_job_result"
                         break
                     outcome["completed"] = status == "done"
-                    outcome["error"] = "terminal_job_error" if status == "error" else ""
                     outcome["verdict"] = str((result or {}).get("verdict", "unknown")) if isinstance(result, dict) else "unknown"
+                    outcome["correct"] = outcome["completed"] and outcome["verdict"] == expected
+                    outcome["error"] = ("terminal_job_error" if status == "error" else
+                                        "unexpected_verdict" if not outcome["correct"] else "")
                     outcome.update(job_durations(job, first_running_s=first_running, elapsed_s=elapsed))
                     break
                 if status not in {"queued", "running"}:
-                    outcome["error"] = "invalid_job_status"
+                    outcome["error"], outcome["fatal"] = "invalid_job_status", True
                     break
-                time.sleep(min(max(0, deadline - time.monotonic()), delay * random.uniform(0.8, 1.2)))
-                delay = min(2.0, delay * 1.4)
+                time.sleep(min(max(0, deadline - time.monotonic()),
+                               getattr(args, "poll_max_interval", 2.0),
+                               delay * random.uniform(0.8, 1.2)))
+                delay = min(getattr(args, "poll_max_interval", 2.0), delay * 1.4)
             else:
-                outcome["error"] = "job_timeout"
+                outcome["error"], outcome["fatal"] = "job_timeout", True
     outcome["end_to_end_s"] = time.monotonic() - started
     return outcome
+
+
+def read_source(path: Path) -> str:
+    if path.stat().st_size > 256 * 1024:
+        raise ValueError("source exceeds 262144 bytes")
+    source = path.read_text(encoding="utf-8")
+    if not source.strip() or len(source.encode("utf-8")) > 256 * 1024:
+        raise ValueError("source must contain between 1 and 262144 bytes of code")
+    return source
+
+
+def load_workload(path: Path) -> list[dict]:
+    if path.stat().st_size > 1024 * 1024:
+        raise ValueError("workload JSON exceeds 1 MiB")
+    rows = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(rows, list) or not 1 <= len(rows) <= 100:
+        raise ValueError("workload must be a JSON list of 1-100 entries")
+    result = []
+    for row in rows:
+        if (not isinstance(row, dict) or row.get("language") not in ("python", "c", "cpp")
+                or not isinstance(row.get("problem"), str) or not row["problem"]
+                or not isinstance(row.get("source"), str) or not row["source"]
+                or type(row.get("weight", 1)) not in (int, float)
+                or not 0 < row.get("weight", 1) <= 10000
+                or not isinstance(row.get("stdin", ""), str)
+                or len(row.get("stdin", "").encode()) > 256 * 1024
+                or row.get("expected_verdict", "AC") not in ("AC", "REJECTED", "WA", "TLE", "MLE", "OLE", "RE", "CE")
+                or row.get("expected_playground_verdict", "OK") not in ("OK", "TLE", "MLE", "OLE", "RE", "CE")):
+            raise ValueError("invalid workload entry")
+        source_path = Path(row["source"])
+        if not source_path.is_absolute():
+            source_path = path.parent / source_path
+        # These are operator-selected local files; URL strings are never fetched.
+        result.append({**row, "source": read_source(source_path), "weight": row.get("weight", 1)})
+    return result
 
 
 def run_load(args, accounts: list[dict], source: str) -> dict:
     metrics = Metrics()
     clients = [Client(args.target, args.request_timeout, metrics) for _ in accounts]
-    # Authentication is outside measured workload duration; fail before load if
-    # any disposable account cannot log in. Never print server error bodies.
     for client, account in zip(clients, accounts):
-        response = client.request("auth", "/api/auth/register" if args.register else "/api/auth/password",
-                                  body={**account, "name": "Load test"})
+        # Disposable verified accounts are seeded in the test database by its
+        # operator. Registration now starts OTP delivery and cannot log in here.
+        response = client.request("auth", "/api/auth/password", body={**account, "name": "Load test"})
         if response.error or response.status != 200:
             return {"setup_error": response.error or "authentication_failed", **metrics.report()}
     stop = threading.Event()
+    outcomes, actor_errors = [], Counter()
+    outcome_lock = threading.Lock()
+    workloads = getattr(args, "workloads", None)
+    duration = getattr(args, "duration", None)
 
     def health_probe():
         client = Client(args.target, args.request_timeout, metrics)
         while not stop.is_set():
-            client.request("health", "/api/health")
+            response = client.request("health", "/api/health")
+            if response.status == 200 and not response.error and response.data.get("ok") is not True:
+                with metrics.lock:
+                    metrics.errors["health:unhealthy_payload"] += 1
             stop.wait(args.health_interval * random.uniform(0.8, 1.2))
 
+    def attempt(index, sequence):
+        client = clients[index]
+        item = random.choices(workloads, weights=[row["weight"] for row in workloads])[0] if workloads else None
+        problem = item["problem"] if item else args.problem
+        if getattr(args, "browse", False):
+            for kind, path in (("catalog", "/api/problems"),
+                               ("detail", "/api/problems/" + urllib.parse.quote(problem, safe=""))):
+                if deadline is not None and time.monotonic() >= deadline:
+                    return False
+                response = client.request(kind, path)
+                if response.error or response.status != 200:
+                    with outcome_lock:
+                        actor_errors["browse_failed"] += 1
+                    return True
+        if deadline is not None and time.monotonic() >= deadline:
+            return False
+        outcome = run_attempt(client, args, item["source"] if item else source,
+            bool(args.playground_every and sequence % args.playground_every == 0), workload=item)
+        with outcome_lock:
+            outcomes.append(outcome)
+        return outcome["fatal"]
+
     probes = [threading.Thread(target=health_probe, daemon=True) for _ in range(args.health_clients)]
-    outcomes = []
     started = time.monotonic()
+    deadline = started + duration if duration else None
     for probe in probes:
         probe.start()
     try:
         with ThreadPoolExecutor(max_workers=len(clients)) as pool:
-            for burst in range(args.bursts):
-                pending = [pool.submit(run_attempt, client, args, source,
-                    bool(args.playground_every and (burst * len(clients) + index + 1) % args.playground_every == 0))
-                    for index, client in enumerate(clients)]
-                outcomes.extend(future.result() for future in pending)
-                if burst + 1 < args.bursts:
-                    stop.wait(args.burst_interval)
+            if duration:
+                def actor(index):
+                    ramp = getattr(args, "ramp_seconds", 0) * index / max(1, len(clients) - 1)
+                    if ramp:
+                        stop.wait(ramp)
+                    sequence = index + 1
+                    while time.monotonic() < deadline:
+                        if attempt(index, sequence):
+                            with outcome_lock:
+                                actor_errors["actor_stopped"] += 1
+                            break
+                        sequence += len(clients)
+                        delay = getattr(args, "think_time", 0)
+                        if delay:
+                            stop.wait(min(delay * random.uniform(0.8, 1.2), max(0, deadline - time.monotonic())))
+                list(pool.map(actor, range(len(clients))))
+            else:
+                for burst in range(args.bursts):
+                    pending = [pool.submit(attempt, index, burst * len(clients) + index + 1)
+                               for index in range(len(clients))]
+                    stopped = [future.result() for future in pending]
+                    # No new burst can safely reuse an account whose last POST
+                    # or job state was ambiguous, even when other actors finished.
+                    if any(stopped):
+                        actor_errors["actor_stopped"] += sum(stopped)
+                        break
+                    if burst + 1 < args.bursts:
+                        stop.wait(args.burst_interval)
     finally:
         elapsed = time.monotonic() - started
         stop.set()
         for probe in probes:
             probe.join(timeout=args.request_timeout + 1)
     completed = sum(outcome["completed"] for outcome in outcomes)
-    report = {"duration_s": elapsed, "attempts": len(outcomes),
+    report = {"duration_s": elapsed, "requested_duration_s": duration,
+              "duration_reached": elapsed >= duration if duration else None,
+              "drain_s": max(0, elapsed - duration) if duration else 0,
+              "requested_users": len(clients), "attempts": len(outcomes),
               "admitted": sum(outcome["admitted"] for outcome in outcomes),
-              "completed": completed, "throughput_completed_per_s": completed / max(elapsed, 0.001),
+              "completed": completed, "correct": sum(outcome["correct"] for outcome in outcomes),
+              "throughput_completed_per_s": completed / max(elapsed, 0.001),
+              "actor_errors": dict(actor_errors),
+              "http_rejections": dict(Counter(str(outcome["rejection_status"]) for outcome in outcomes if "rejection_status" in outcome)),
               "outcome_errors": dict(Counter(outcome["error"] for outcome in outcomes if outcome["error"])),
               "timing_sources": dict(Counter(outcome["timing_source"] for outcome in outcomes)),
               "verdicts": dict(Counter(outcome["verdict"] for outcome in outcomes if "verdict" in outcome)),
               **metrics.report()}
+    report["languages"] = {}
+    for language in sorted({outcome["language"] for outcome in outcomes}):
+        selected = [outcome for outcome in outcomes if outcome["language"] == language]
+        report["languages"][language] = {
+            "attempts": len(selected), "completed": sum(outcome["completed"] for outcome in selected),
+            "correct": sum(outcome["correct"] for outcome in selected),
+            "completed_end_to_end_s": summarize([outcome["end_to_end_s"] for outcome in selected if outcome["completed"]])}
     for kind in ("submission", "playground"):
         selected = [outcome for outcome in outcomes if outcome["kind"] == kind]
         report[kind] = {"attempts": len(selected), "completed": sum(outcome["completed"] for outcome in selected)}
         for key in ("end_to_end_s", "queue_wait_s", "service_s"):
             report[kind][key] = summarize([outcome[key] for outcome in selected if outcome.get(key) is not None])
+        report[kind]["completed_end_to_end_s"] = summarize([
+            outcome["end_to_end_s"] for outcome in selected if outcome["completed"]])
     return report
 
 
@@ -320,6 +438,13 @@ def positive_float(raw):
     return value
 
 
+def nonnegative_float(raw):
+    value = float(raw)
+    if not math.isfinite(value) or value < 0:
+        raise argparse.ArgumentTypeError("must be a finite nonnegative number")
+    return value
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--execute", action="store_true", help="explicitly start HTTP load")
@@ -328,14 +453,21 @@ def main(argv=None):
     parser.add_argument("--target", default="http://127.0.0.1:8000")
     parser.add_argument("--allow-remote", action="store_true", help="explicit authorization to load a remote test installation")
     auth = parser.add_mutually_exclusive_group()
-    auth.add_argument("--register", action="store_true", help="create disposable random accounts in the test database")
+    auth.add_argument("--register", action="store_true", help="unsupported: registration starts email verification; seed test accounts instead")
     auth.add_argument("--accounts-env", default="NG_LOAD_ACCOUNTS", help="environment variable with JSON email/password objects")
     parser.add_argument("--users", type=bounded_int(100), default=4, help="concurrent users per burst (max 100)")
+    parser.add_argument("--duration", type=positive_float, help="seconds of independent-user sustained load, then bounded job drain")
+    parser.add_argument("--think-time", type=nonnegative_float, default=0, help="mean per-user pause between jobs in duration mode")
+    parser.add_argument("--ramp-seconds", type=nonnegative_float, default=0, help="spread user starts across this interval")
+    parser.add_argument("--browse", action="store_true", help="read catalog and problem detail before each job")
+    parser.add_argument("--workload", type=Path, help="local JSON list of weighted language/problem/source/expected-verdict entries")
     parser.add_argument("--bursts", type=bounded_int(1000), default=3)
     parser.add_argument("--burst-interval", type=positive_float, default=0.5, help="seconds between completed bursts")
     parser.add_argument("--health-clients", type=bounded_int(20), default=2)
     parser.add_argument("--health-interval", type=positive_float, default=0.25)
     parser.add_argument("--poll-interval", type=positive_float, default=0.25, help="initial status polling interval, then backs off to 2s")
+    parser.add_argument("--poll-max-interval", type=positive_float, default=2.0,
+                        help="status polling cap in seconds (max 2; use 1 for frontend-like active polling)")
     parser.add_argument("--request-timeout", type=positive_float, default=10.0)
     parser.add_argument("--job-timeout", type=positive_float, default=240.0)
     parser.add_argument("--problem", default="thai_time")
@@ -346,29 +478,31 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if not args.execute or not args.test_installation:
         parser.error("requires --execute --test-installation; confirm a disposable database before running")
+    if args.register:
+        parser.error("--register is incompatible with OTP signup; seed verified disposable accounts and use --accounts-env")
+    if args.duration and args.ramp_seconds >= args.duration:
+        parser.error("--ramp-seconds must be shorter than --duration")
     try:
         args.target = validate_target(args.target, args.allow_remote)
-        if args.poll_interval > 2:
-            raise ValueError("--poll-interval must be at most 2 seconds")
-        if args.register:
-            token = secrets.token_hex(8)
-            accounts = [{"email": f"load-{token}-{index}@example.invalid", "password": secrets.token_urlsafe(24)}
-                        for index in range(args.users)]
-        else:
-            accounts = load_accounts(args.accounts_env)
-            if len(accounts) < args.users:
-                raise ValueError("accounts environment variable has fewer accounts than --users")
-            accounts = accounts[:args.users]
-        source = args.source.read_text(encoding="utf-8")
-        if not source.strip() or len(source.encode("utf-8")) > 256 * 1024:
-            raise ValueError("source must contain between 1 and 262144 bytes of code")
+        if args.poll_max_interval > 2:
+            raise ValueError("--poll-max-interval must be at most 2 seconds")
+        if args.poll_interval > args.poll_max_interval:
+            raise ValueError("--poll-interval must not exceed --poll-max-interval")
+        accounts = load_accounts(args.accounts_env)
+        if len(accounts) < args.users:
+            raise ValueError("accounts environment variable has fewer accounts than --users")
+        accounts = accounts[:args.users]
+        args.workloads = load_workload(args.workload) if args.workload else None
+        source = "" if args.workloads else read_source(args.source)
     except OSError:
         parser.error("source file cannot be read")
     except (ValueError, UnicodeError) as exc:
         parser.error(str(exc))
     report = run_load(args, accounts, source)
     print(json.dumps(report, indent=2, sort_keys=True))
-    return 1 if report.get("setup_error") or report.get("outcome_errors") or report.get("request_errors") else 0
+    return 1 if (report.get("setup_error") or report.get("outcome_errors")
+                 or report.get("request_errors") or report.get("actor_errors")
+                 or not report.get("attempts") or report.get("duration_reached") is False) else 0
 
 
 if __name__ == "__main__":
