@@ -5,19 +5,96 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  merge_group:
+    branches: [main]
+  workflow_dispatch:
 
 # Untrusted pull-request code runs in these jobs. The workflow only needs to
 # read the checkout, and every checkout explicitly avoids persisting the token.
 permissions:
   contents: read
 
-# Cancel superseded runs of the same ref.
+# Supersede older runs of the same pull request. Pushes, merge groups and
+# manual runs keep their results so a merge queue never loses a required check.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  validate:
+  changes:
+    name: Select checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      groups: ${{ steps.select.outputs.groups }}
+      static: ${{ steps.select.outputs.static }}
+      python: ${{ steps.select.outputs.python }}
+      frontend: ${{ steps.select.outputs.frontend }}
+      image: ${{ steps.select.outputs.image }}
+      security: ${{ steps.select.outputs.security }}
+      sql: ${{ steps.select.outputs.sql }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: List changed files
+        env:
+          CI_EVENT_NAME: ${{ github.event_name }}
+          CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -eu
+          : > "$RUNNER_TEMP/changed-files.txt"
+          if [ "$CI_EVENT_NAME" != "pull_request" ] && [ "$CI_EVENT_NAME" != "push" ]; then
+            exit 0
+          fi
+          if [ "$CI_EVENT_NAME" = "push" ] && [ -n "$CI_BASE_SHA" ] && [ "${CI_BASE_SHA//0/}" = "" ]; then
+            git ls-tree -r --name-only HEAD > "$RUNNER_TEMP/changed-files.txt"
+          elif git cat-file -e "$CI_BASE_SHA^{commit}" 2>/dev/null; then
+            git diff --name-only "$CI_BASE_SHA" HEAD > "$RUNNER_TEMP/changed-files.txt"
+          else
+            git ls-tree -r --name-only HEAD > "$RUNNER_TEMP/changed-files.txt"
+          fi
+
+      - name: Select check groups
+        id: select
+        env:
+          CI_EVENT_NAME: ${{ github.event_name }}
+        run: python3 tools/ci_changed_paths.py --files "$RUNNER_TEMP/changed-files.txt" --event "$CI_EVENT_NAME" >> "$GITHUB_OUTPUT"
+
+  static-checks:
+    needs: changes
+    if: ${{ needs.changes.outputs.static == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+
+      - name: Byte-compile Python sources
+        run: python3 -m compileall -q grader.py server.py submission_disclosure.py account_deletion.py judge_lifecycle.py problem_catalog.py judge_runner.py judge_execution.py worker.py worker_fleet.py problem_store.py backend_problem_files.py container_entrypoint.py job_sandbox.py job_resources.py email_auth.py database_client.py tools deploy/host
+
+      - name: Syntax check frontend
+        run: node --check static/app.js
+
+      - name: Check frontend id references
+        run: node tools/check_frontend.js
+
+      - name: Check design tokens (no colour literals, dark-mode coverage)
+        run: node tools/check_styles.js
+
+  python-tests:
+    needs: changes
+    if: ${{ needs.changes.outputs.python == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -31,7 +108,9 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
-          cache-dependency-path: requirements.txt
+          cache-dependency-path: |
+            requirements.txt
+            deploy/host/requirements.lock
 
       - name: Install dependencies
         run: pip install -r requirements.txt
@@ -41,21 +120,6 @@ jobs:
           pip install pip-audit==2.10.1
           pip-audit -r requirements.txt
           pip-audit -r deploy/host/requirements.lock
-
-      - name: Byte-compile Python sources
-        run: python3 -m compileall -q grader.py server.py submission_disclosure.py account_deletion.py judge_lifecycle.py problem_catalog.py judge_runner.py judge_execution.py worker.py container_entrypoint.py job_sandbox.py job_resources.py email_auth.py problem_store.py tools deploy/host
-
-      - name: Syntax check frontend
-        run: node --check static/app.js
-
-      - name: Check frontend id references
-        run: node tools/check_frontend.js
-
-      - name: Check design tokens (no colour literals, dark-mode coverage)
-        run: node tools/check_styles.js
-
-      - name: Test frontend requests and adaptive job polling
-        run: node --test tests/test_*.js
 
       - name: Validate problems
         run: python3 tools/validate_problem.py
@@ -72,6 +136,45 @@ jobs:
       - name: API end-to-end tests
         run: python3 -m unittest discover -s tests -v
 
+  frontend-tests:
+    needs: changes
+    if: ${{ needs.changes.outputs.frontend == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Test frontend requests and adaptive job polling
+        run: node --test tests/test_*.js
+
+  image-checks:
+    needs: changes
+    if: ${{ needs.changes.outputs.image == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            deploy/host/requirements.lock
+
+      - name: Install dependencies and audit tool
+        run: |
+          pip install -r requirements.txt
+          pip install pip-audit==2.10.1
+
       - name: Verify packaged backend and plagiarism checker (no production data)
         run: |
           docker build -t newbiegrader-ci .
@@ -80,12 +183,32 @@ jobs:
           docker run --rm --network none newbiegrader-ci python -m pip list --format freeze > "$RUNNER_TEMP/image-packages.txt"
           pip-audit --disable-pip --no-deps -r "$RUNNER_TEMP/image-packages.txt"
 
+  validate:
+    name: validate
+    needs: [changes, static-checks, python-tests, frontend-tests, image-checks]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check grouped results
+        env:
+          CI_RESULTS: ${{ toJSON(needs) }}
+          CI_EXPECTED_JOBS: static-checks,python-tests,frontend-tests,image-checks
+          CI_PRIMARY_JOB: changes
+        run: python3 tools/check_ci_results.py
+
   critical-security:
+    needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # Root is required to exercise the real setgroups/setgid/setuid boundary.
     # Default container capabilities suffice; no privileged mode or cap_add.
-    container: python:3.13-slim
+    container: python:3.13-slim@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90 # pinned 2026-11-21
     env:
       GRADER_RUNNER_CHILD: "1"
       SESSION_SECRET: "synthetic-critical-ci-secret"
@@ -96,19 +219,35 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            deploy/host/requirements.lock
+
       - name: Install synthetic-test toolchain
+        if: ${{ needs.changes.outputs.security == 'true' }}
         run: apt-get update && apt-get install -y --no-install-recommends gcc g++
+
       - name: Install test dependencies
+        if: ${{ needs.changes.outputs.security == 'true' }}
         run: pip install -r requirements.txt httpx
+
       - name: Run critical canaries (any skip fails)
+        if: ${{ needs.changes.outputs.security == 'true' }}
         run: python tools/run_critical_tests.py
 
   queue-sql:
+    needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 30
     services:
       postgres:
-        image: postgres:17
+        image: postgres:17@sha256:b60e90042aa6b8dbecd58e224b3e36114dbf8ad754465264c2476ad58a86e45c # pinned 2026-11-21
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: newbiegrader_test
@@ -130,27 +269,47 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            deploy/host/requirements.lock
+
       - name: Install PostgreSQL client
+        if: ${{ needs.changes.outputs.sql == 'true' }}
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
       - name: Create Supabase roles in disposable database
+        if: ${{ needs.changes.outputs.sql == 'true' }}
         run: |
           psql -X -v ON_ERROR_STOP=1 -c 'CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS;'
           psql -X -v ON_ERROR_STOP=1 -c 'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;'
+
       - name: Apply schema twice to verify idempotence
+        if: ${{ needs.changes.outputs.sql == 'true' }}
         run: |
           psql -X -v ON_ERROR_STOP=1 -f supabase/schema.sql
           psql -X -v ON_ERROR_STOP=1 -f supabase/schema.sql
+
       - name: Upgrade a legacy schema without losing history
+        if: ${{ needs.changes.outputs.sql == 'true' }}
         run: |
           createdb -h 127.0.0.1 -U postgres newbiegrader_legacy
           psql -X -v ON_ERROR_STOP=1 -d newbiegrader_legacy -f tests/legacy_schema.sql
           psql -X -v ON_ERROR_STOP=1 -d newbiegrader_legacy -f supabase/schema.sql
           psql -X -v ON_ERROR_STOP=1 -d newbiegrader_legacy -f supabase/schema.sql
           psql -X -v ON_ERROR_STOP=1 -d newbiegrader_legacy -f tests/legacy_schema_verify.sql
+
       - name: Verify queue RPCs against PostgreSQL
+        if: ${{ needs.changes.outputs.sql == 'true' }}
         run: psql -X -v ON_ERROR_STOP=1 -f tests/queue_sql.sql
 
       - name: Verify account deletion, revocation and audit
+        if: ${{ needs.changes.outputs.sql == 'true' }}
         run: |
           psql -X -v ON_ERROR_STOP=1 -f tests/account_lifecycle_sql.sql
           psql -X -v ON_ERROR_STOP=1 -f tests/account_write_fences_sql.sql
@@ -159,19 +318,43 @@ jobs:
           python3 tests/account_restore_sql.py
 
       - name: Verify server-only database privileges and RLS
+        if: ${{ needs.changes.outputs.sql == 'true' }}
         run: psql -X -v ON_ERROR_STOP=1 -f tests/security_sql.sql
 
       - name: Verify email identity claims, revocation and shared budgets
+        if: ${{ needs.changes.outputs.sql == 'true' }}
         run: psql -X -v ON_ERROR_STOP=1 -f tests/auth_sql.sql
 
       - name: Verify concurrent email budgets and identity claims
+        if: ${{ needs.changes.outputs.sql == 'true' }}
         run: python3 tests/auth_concurrency.py
 
       - name: Verify revocable browser sessions and concurrent handoffs
+        if: ${{ needs.changes.outputs.sql == 'true' }}
         run: |
           psql -X -v ON_ERROR_STOP=1 -f tests/session_sql.sql
           psql -X -v ON_ERROR_STOP=1 -f tests/live_roles_submission_time_sql.sql
           python3 tests/session_concurrency.py
 
       - name: Verify concurrent queue claims and crashed-worker lease recovery
+        if: ${{ needs.changes.outputs.sql == 'true' }}
         run: python3 tests/queue_concurrency.py
+
+  ci:
+    name: ci
+    needs: [changes, validate, critical-security, queue-sql]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check CI results
+        env:
+          CI_RESULTS: ${{ toJSON(needs) }}
+          CI_EXPECTED_JOBS: validate,critical-security,queue-sql
+          CI_PRIMARY_JOB: changes
+        run: python3 tools/check_ci_results.py

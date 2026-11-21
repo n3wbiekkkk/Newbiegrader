@@ -132,6 +132,24 @@ python tools/validate_problem.py
 clone has no private catalog, so an empty or skipped run is not catalog
 qualification. State which packages and references were actually available.
 
+### Required checks
+
+The CI workflow reports `validate`, `critical-security`, `queue-sql` and `ci`.
+Use `ci` as the required check for `main`. It fails when one of the other jobs
+fails or is cancelled. Keeping the three job names as required checks also
+works, because each one reports a result on every run.
+
+On pull requests, CI selects checks from the changed files. A documentation-only
+change runs the fast checks. Pushes to `main`, merge groups and manual runs
+select every check.
+
+| Check | What it gates |
+| --- | --- |
+| `validate` | Dependency and image audits, Python compile, frontend checks and tests, problem validation, authoring tests, plagiarism self-test and the API suite. |
+| `critical-security` | `tools/run_critical_tests.py` on Linux with zero skips. macOS checks do not qualify. |
+| `queue-sql` | Schema idempotence, legacy upgrade, privileges, RLS, queue, auth and session concurrency on disposable PostgreSQL. |
+| `ci` | Aggregate result of the three jobs above. |
+
 Choose checks that match the change:
 
 | Change | Validation |
@@ -232,7 +250,7 @@ Key points:
 2. Make your changes in small, logical commits with clear messages.
 3. Run the tests and confirm they pass.
 4. Push your branch and open a pull request against `main`.
-5. In the description, explain **what** changed and **why**, link the related issue (for example `Closes #123`), and note any testing you did. Include screenshots for UI changes.
+5. Use a short title in the form `type(scope): subject`. Fill in `.github/PULL_REQUEST_TEMPLATE.md`, delete empty sections, and link long logs in a comment. Explain **what** changed and **why**, link the related issue (for example `Closes #123`), and add screenshots for UI changes.
 6. Be responsive to review feedback. The maintainer may ask for changes before merging.
 
 Pull requests that touch judging, sandboxing, visibility/redaction, authentication or the queue receive extra scrutiny. Please explain the security and correctness implications in your description.
