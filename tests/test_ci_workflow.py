@@ -167,6 +167,9 @@ class WorkflowContract(unittest.TestCase):
         self.assertRegex(self.text, r"postgres:17@sha256:[0-9a-f]{64}")
         self.assertNotIn("image: postgres:17\n", self.text)
 
+    def test_container_job_uses_the_container_python(self):
+        self.assertNotIn("uses: actions/setup-python", "\n".join(self.jobs["critical-security"]))
+
     def test_every_job_has_a_timeout(self):
         for name, block in self.jobs.items():
             with self.subTest(job=name):
